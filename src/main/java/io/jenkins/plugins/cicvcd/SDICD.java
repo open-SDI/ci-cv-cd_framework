@@ -1,4 +1,4 @@
-package io.jenkins.plugins.sample;
+package io.jenkins.plugins.cicvcd;
 
 import hudson.EnvVars;
 import hudson.Extension;
@@ -10,21 +10,26 @@ import hudson.model.TaskListener;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.Builder;
 import hudson.util.FormValidation;
-import java.io.IOException;
+
+import java.io.*;
 import javax.servlet.ServletException;
 import jenkins.tasks.SimpleBuildStep;
+
+import org.apache.commons.io.IOUtils;
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
 
-public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
+public class SDICD extends Builder implements SimpleBuildStep {
 
     private final String name;
-    private boolean useFrench;
+
 
     @DataBoundConstructor
-    public HelloWorldBuilder(String name) {
+    public SDICD(String name) {
         this.name = name;
     }
 
@@ -32,22 +37,24 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
         return name;
     }
 
-    public boolean isUseFrench() {
-        return useFrench;
-    }
-
-    @DataBoundSetter
-    public void setUseFrench(boolean useFrench) {
-        this.useFrench = useFrench;
-    }
 
     @Override
     public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
             throws InterruptedException, IOException {
-        if (useFrench) {
-            listener.getLogger().println("Bonjour, " + name + "!");
-        } else {
-            listener.getLogger().println("Hello, " + name + "!");
+
+        try {
+            InputStream fis = new FileInputStream(workspace.getRemote()+"/result.json");
+            String jsonText = IOUtils.toString(fis);
+            JSONArray jsonArray = new JSONArray(jsonText);
+            for(int i = 0; i < jsonArray.length(); i++){
+                JSONObject composition = (JSONObject) jsonArray.get(0);
+                listener.getLogger().println("Deploying composition " + (i+1));
+            }
+
+            listener.getLogger().println("CD success");
+        } catch(Exception e) {
+            e.printStackTrace();
+            listener.getLogger().println("CD failed");
         }
     }
 
@@ -74,7 +81,7 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
 
         @Override
         public String getDisplayName() {
-            return Messages.HelloWorldBuilder_DescriptorImpl_DisplayName();
+            return "SDI-CD";
         }
     }
 }
