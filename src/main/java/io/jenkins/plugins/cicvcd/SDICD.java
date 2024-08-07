@@ -13,6 +13,9 @@ import hudson.util.FormValidation;
 
 import java.io.*;
 import javax.servlet.ServletException;
+
+import io.kubernetes.client.util.ClientBuilder;
+import io.kubernetes.client.util.KubeConfig;
 import jenkins.tasks.SimpleBuildStep;
 
 import org.apache.commons.io.IOUtils;
@@ -22,6 +25,15 @@ import org.kohsuke.stapler.QueryParameter;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+
+
+import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.ApiException;
+import io.kubernetes.client.openapi.Configuration;
+import io.kubernetes.client.openapi.apis.CoreV1Api;
+import io.kubernetes.client.openapi.models.V1Pod;
+import io.kubernetes.client.openapi.models.V1PodList;
+import io.kubernetes.client.util.Config;
 
 public class SDICD extends Builder implements SimpleBuildStep {
 
@@ -41,14 +53,25 @@ public class SDICD extends Builder implements SimpleBuildStep {
     @Override
     public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
             throws InterruptedException, IOException {
-
+        //String kubeConfigPath = "src/main/resources/kube.config";
         try {
-            InputStream fis = new FileInputStream(workspace.getRemote()+"/result.json");
+            //ApiClient client = ClientBuilder.kubeconfig(KubeConfig.loadKubeConfig(new FileReader(kubeConfigPath))).build();
+            //Configuration.setDefaultApiClient(client);
+
+            //CoreV1Api api = new CoreV1Api();
+            //V1PodList list =
+            //       api.listPodForAllNamespaces(null, null, null, null, null, null, null, null, null,  null);
+            //for (V1Pod item : list.getItems()) {
+            //    System.out.println(item.getMetadata().getName());
+            //}
+
+            InputStream fis = new FileInputStream(workspace.getRemote()+"/CV_output.json");
             String jsonText = IOUtils.toString(fis);
             JSONArray jsonArray = new JSONArray(jsonText);
             for(int i = 0; i < jsonArray.length(); i++){
-                JSONObject composition = (JSONObject) jsonArray.get(0);
+                JSONObject composition_json = (JSONObject) jsonArray.get(0);
                 listener.getLogger().println("Deploying composition " + (i+1));
+                JSONArray composition = new JSONArray(composition_json.getJSONArray("composition"));
             }
 
             listener.getLogger().println("CD success");
