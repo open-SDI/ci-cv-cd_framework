@@ -38,8 +38,8 @@ public class SDICV extends Builder implements SimpleBuildStep {
         FileOutputStream fos = null;
 
         try (PrintWriter p = new PrintWriter(new FileOutputStream(workspace.getRemote()+"/CV_output.json", false))){
-            p.println("Test");
-            listener.getLogger().println("CV success");
+                p.println("Test");
+                listener.getLogger().println("CV success");
         } catch(Exception e) {
             e.printStackTrace();
             listener.getLogger().println("CV failed");

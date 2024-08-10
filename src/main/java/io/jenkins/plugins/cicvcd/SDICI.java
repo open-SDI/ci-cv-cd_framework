@@ -65,6 +65,7 @@ public class SDICI extends Builder implements SimpleBuildStep {
             listener.getLogger().println("CI Phase successful");
         } else {
             listener.getLogger().println("CI Phase failed");
+            throw new InterruptedException("CI failed");
         }
     }
 
