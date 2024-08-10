@@ -83,6 +83,21 @@ public class SDICD extends Builder implements SimpleBuildStep {
             p.println("RUN apt-get update");
             p.println("CMD [\"/bin/bash\"]");
             listener.getLogger().println("Docker files generated");
+
+            listener.getLogger().println("Creating docker-compose");
+            PrintWriter p2 = new PrintWriter(new FileOutputStream(workspace.getRemote()+"/docker-compose.yml", false));
+            p2.println("version: 3.9");
+            p2.println();
+            p2.println("services:");
+            p2.println("  service1:");
+            p2.println("    image: image1");
+            p2.println("  service2:");
+            p2.println("    image: image2");
+            p2.println("  service3:");
+            p2.println("    image: image3");
+            p2.close();
+
+            listener.getLogger().println("Docker-compose created");
             listener.getLogger().println("Deploying composition to Kubernetes Cluster");
             listener.getLogger().println("CD success");
         } catch(Exception e) {
