@@ -85,7 +85,6 @@ public class SDICV extends Builder implements SimpleBuildStep {
         } else {
             listener.getLogger().println("CV Phase failed");
         }
-
     }
 
     public Composition readComposition(String fileName) {
@@ -273,7 +272,7 @@ public class SDICV extends Builder implements SimpleBuildStep {
     private boolean printResultFile(FilePath workspace, TaskListener listener, String testResult)
             throws IOException {
         boolean success = true;
-        String fileName = "cv_output.json";
+        String fileName = "CV_output.json";
         try {
             writeFile(workspace, fileName, testResult, listener);
         } catch (IOException e) {

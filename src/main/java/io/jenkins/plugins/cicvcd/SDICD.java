@@ -54,7 +54,9 @@ public class SDICD extends Builder implements SimpleBuildStep {
     public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
             throws InterruptedException, IOException {
         //String kubeConfigPath = "src/main/resources/kube.config";
-        try {
+
+        try (PrintWriter p = new PrintWriter(new FileOutputStream(workspace.getRemote()+"/Dockerfile", false)))
+        {
             //ApiClient client = ClientBuilder.kubeconfig(KubeConfig.loadKubeConfig(new FileReader(kubeConfigPath))).build();
             //Configuration.setDefaultApiClient(client);
 
@@ -68,12 +70,35 @@ public class SDICD extends Builder implements SimpleBuildStep {
             InputStream fis = new FileInputStream(workspace.getRemote()+"/CV_output.json");
             String jsonText = IOUtils.toString(fis);
             JSONArray jsonArray = new JSONArray(jsonText);
+
+            listener.getLogger().println("Creating Docker files");
             for(int i = 0; i < jsonArray.length(); i++){
                 JSONObject composition_json = (JSONObject) jsonArray.get(0);
-                listener.getLogger().println("Deploying composition " + (i+1));
+
                 JSONArray composition = new JSONArray(composition_json.getJSONArray("composition"));
             }
+            p.println("FROM ubuntu:22.04");
+            p.println("ENV TERM linux");
+            p.println("ENV DEBIAN_FRONTEND noninteractive");
+            p.println("RUN apt-get update");
+            p.println("CMD [\"/bin/bash\"]");
+            listener.getLogger().println("Docker files generated");
 
+            listener.getLogger().println("Creating docker-compose");
+            PrintWriter p2 = new PrintWriter(new FileOutputStream(workspace.getRemote()+"/docker-compose.yml", false));
+            p2.println("version: 3.9");
+            p2.println();
+            p2.println("services:");
+            p2.println("  service1:");
+            p2.println("    image: image1");
+            p2.println("  service2:");
+            p2.println("    image: image2");
+            p2.println("  service3:");
+            p2.println("    image: image3");
+            p2.close();
+
+            listener.getLogger().println("Docker-compose created");
+            listener.getLogger().println("Deploying composition to Kubernetes Cluster");
             listener.getLogger().println("CD success");
         } catch(Exception e) {
             e.printStackTrace();
