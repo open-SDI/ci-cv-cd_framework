@@ -103,6 +103,7 @@ public class SDICD extends Builder implements SimpleBuildStep {
         } catch(Exception e) {
             e.printStackTrace();
             listener.getLogger().println("CD failed");
+            throw new InterruptedException("CD failed");
         }
     }
 

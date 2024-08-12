@@ -84,6 +84,7 @@ public class SDICV extends Builder implements SimpleBuildStep {
             listener.getLogger().println("CV Phase successful");
         } else {
             listener.getLogger().println("CV Phase failed");
+            throw new InterruptedException("CV failed");
         }
     }
 
