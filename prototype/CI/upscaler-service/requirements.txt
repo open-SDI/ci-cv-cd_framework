@@ -1,0 +1,10 @@
+fastapi
+transformers
+uvicorn
+pillow
+requests
+diffusers
+scipy
+safetensors
+accelerate
+python-multipart
