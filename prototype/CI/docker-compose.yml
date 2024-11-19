@@ -1,0 +1,46 @@
+services:
+  object-detection-service:
+    build:
+      context: ./object-detection-service
+    ports:
+      - "8001:8001"
+    restart: always
+    depends_on:
+      - upscaler-service
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            device_ids: ['0']
+            capabilities: [gpu]
+
+  upscaler-service:
+    build:
+      context: ./upscaler-service
+    ports:
+      - "8002:8002"
+    restart: always
+    depends_on:
+      - image-classification-service
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            device_ids: ['1']
+            capabilities: [gpu]
+
+  image-classification-service:
+    build:
+      context: ./image-classification-service
+    ports:
+      - "8003:8003"
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            device_ids: ['2']
+            capabilities: [gpu]
