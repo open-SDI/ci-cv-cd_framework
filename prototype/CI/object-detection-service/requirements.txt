@@ -1,0 +1,6 @@
+fastapi
+transformers
+uvicorn
+opencv-python-headless
+pillow
+requests
