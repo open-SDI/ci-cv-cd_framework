@@ -19,7 +19,10 @@ Main features of this pipeline framework is:
 ## 2. Design
 
 [Software Requirement Specification](https://docs.google.com/spreadsheets/d/1P-EfpCEkrHRfhBJHL3unYKW5okFbLe2h5jsJ6gXnRrw/edit?usp=sharing)
+
 [Software Designs (Models)](https://drive.google.com/drive/folders/1rNpvV7xWhPPySddRkV-D2rOdhiFWtSDM?usp=drive_link)
+- Component diagram
+- Sequence diagram
 
 ## 3. Manual
 
