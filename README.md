@@ -24,6 +24,9 @@ Main features of this pipeline framework is:
 - Component diagram
 - Sequence diagram
 
-## 3. Manual
+## 3. Scenario
+![Year 2 Scenario]("assets/year2-scenario.png")
 
+
+## 4. Manual
 To be updated.
