@@ -1,22 +1,14 @@
-[build-system]
-requires = ["setuptools>=75.6.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "ci_core"
+name = "ci"
 version = "0.1.0"
-description = "Source code for Continuous Integration Phase for SDI"
+description = "Add your description here"
 readme = "README.md"
-license = {text = "Apache License 2.0"}  # Adjust as needed
 authors = [
-  { name = "Arogya Kharel", email = "akharel@kaist.ac.kr" },
-  { name = "Juyoung Yang", email = "didwndud3299@kaist.ac.kr" }
+    { name = "Arogya Kharel", email = "25946015+gurkhaman@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
-dependencies = [
-  # your requirements.txt content goes here
-]
+requires-python = ">=3.13"
+dependencies = []
 
-[project.urls]
-Homepage = "https://github.com/open-sdi/ci-cv-cd_framework"
-
+[build-system]
+requires = ["uv_build>=0.8.10,<0.9.0"]
+build-backend = "uv_build"
