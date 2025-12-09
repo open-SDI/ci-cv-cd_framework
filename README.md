@@ -4,7 +4,8 @@
 **Table of contents** 
 - [1. Introduction](#1-introduction)
 - [2. Design](#2-design)
-- [3. Manual](#3-manual)
+- [3. Scenario](#3-scenario)
+- [4. Manual](#4-manual)
 
 
 ## 1. Introduction
@@ -32,4 +33,4 @@ For more details please check the APSEC'25 Tools Paper - [OrchestML](/CI/APSEC_2
 
 
 ## 4. Manual
-To be updated.
+For more details regarding the usage of the CI tool, please visit the original repo of OrchestML [here](https://github.com/gurkhaman/OrchestML).
