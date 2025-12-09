@@ -11,10 +11,13 @@
 This is a CI/CV/CD pipeline framework for software-defined future mobility.
 
 Main features of this pipeline framework is:
-* **Continuous Integration (CI)**: Automated service integration of AI-enabled mobility service (e.g., ROS2, Autoware) 
-* **Continuous Validation (CV)**: Simulation(e.g., Gazebo, CARLA)-based virtual validation of autonomous driving software 
+* **Continuous Integration (CI)**: Automated service integration of AI-enabled mobility service (e.g., ROS2, Autoware)
+![CI Flow](assets/CI_main.png)
+* **Continuous Validation (CV)**: Simulation(e.g., Gazebo, CARLA)-based virtual validation of autonomous driving software
+![Gazebo Simulation](assets/gazebo_office_world.png) 
 * **Continuous Deployment (CD)**: Split deployment of moiblity software to mobility device and infrastrucutre (e.g., edge or cloud servers) 
 
+For more details please check the APSEC'25 Tools Paper - [OrchestML](/CI/APSEC_2025_Tools.pdf).
 
 ## 2. Design
 
