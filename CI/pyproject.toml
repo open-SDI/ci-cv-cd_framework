@@ -1,0 +1,10 @@
+[project]
+name = "ci"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.121.0",
+    "langgraph>=1.0.2",
+]
