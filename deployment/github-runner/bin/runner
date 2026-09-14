@@ -1,0 +1,372 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+INSTALLATION="$ROOT/deployment/installation.env"
+RUNNER_VERSION="2.337.0"
+RUNNER_SHA256="70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"
+RUNNER_ARCHIVE="actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
+RUNNER_URL="https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/$RUNNER_ARCHIVE"
+RUNNER_HOME="$HOME/.local/share/sdi-github-runner"
+SERVICE_DIRECTORY="$HOME/.config/systemd/user"
+SERVICE_PATH="$SERVICE_DIRECTORY/sdi-github-runner.service"
+
+fail() {
+    printf 'github-runner: %s\n' "$1" >&2
+    exit 1
+}
+
+usage() {
+    printf '%s\n' \
+        "usage: $0 <preflight|install|configure|install-service|start|stop|status|unregister|remove-service|remove>"
+}
+
+load_installation() {
+    [ -f "$INSTALLATION" ] || fail "reviewed installation authority is missing"
+    SDI_SUPPORTED_UBUNTU_LTS=
+    SDI_GIT_MIN_MAJOR=
+    SDI_REQUIRED_HTTPS_URLS=
+    SDI_GITHUB_RUNNER_VERSION=
+    SDI_GITHUB_RUNNER_SHA256=
+    SDI_GITHUB_RUNNER_LABEL=
+    while IFS='=' read -r key value; do
+        case "$key" in
+            SDI_SUPPORTED_UBUNTU_LTS) SDI_SUPPORTED_UBUNTU_LTS=$value ;;
+            SDI_GIT_MIN_MAJOR) SDI_GIT_MIN_MAJOR=$value ;;
+            SDI_REQUIRED_HTTPS_URLS) SDI_REQUIRED_HTTPS_URLS=$value ;;
+            SDI_GITHUB_RUNNER_VERSION) SDI_GITHUB_RUNNER_VERSION=$value ;;
+            SDI_GITHUB_RUNNER_SHA256) SDI_GITHUB_RUNNER_SHA256=$value ;;
+            SDI_GITHUB_RUNNER_LABEL) SDI_GITHUB_RUNNER_LABEL=$value ;;
+        esac
+    done < "$INSTALLATION"
+    for value in \
+        "$SDI_SUPPORTED_UBUNTU_LTS" \
+        "$SDI_GIT_MIN_MAJOR" \
+        "$SDI_REQUIRED_HTTPS_URLS" \
+        "$SDI_GITHUB_RUNNER_VERSION" \
+        "$SDI_GITHUB_RUNNER_SHA256" \
+        "$SDI_GITHUB_RUNNER_LABEL"
+    do
+        [ -n "$value" ] || fail "reviewed installation authority is incomplete"
+    done
+    [ "$RUNNER_VERSION" = "$SDI_GITHUB_RUNNER_VERSION" ] || \
+        fail "runner version does not match the reviewed installation authority"
+    [ "$RUNNER_SHA256" = "$SDI_GITHUB_RUNNER_SHA256" ] || \
+        fail "runner digest does not match the reviewed installation authority"
+    [ "$SDI_GITHUB_RUNNER_LABEL" = sdi-jenkins-handoff ] || \
+        fail "runner label does not match the reviewed handoff-only label"
+}
+
+check_host() {
+    [ "$(id -u)" -ne 0 ] || fail "the runner account must not be root"
+    case "$HOME" in
+        "" | *[!A-Za-z0-9_./-]*) fail "the runner account home path is unsupported" ;;
+    esac
+    for group in $(id -nG); do
+        case "$group" in
+            sudo | wheel | docker)
+                fail "the runner account must not belong to $group"
+                ;;
+        esac
+    done
+    if [ -r /var/run/docker.sock ] || [ -w /var/run/docker.sock ]; then
+        fail "the runner account must not have Docker socket access"
+    fi
+    for name in \
+        JENKINS_HOME \
+        SDI_JENKINS_API_TOKEN \
+        SDI_JENKINS_PASSWORD; do
+        if printenv "$name" >/dev/null 2>&1; then
+            fail "$name must not be present while managing the runner service"
+        fi
+    done
+}
+
+preflight() {
+    load_installation
+    check_host
+    [ "$(uname -s)" = Linux ] || fail "supported Ubuntu LTS is required"
+    [ "$(uname -m)" = x86_64 ] || fail "an x86_64 host is required"
+    os_id=
+    version_id=
+    while IFS='=' read -r key value; do
+        value=${value#\"}
+        value=${value%\"}
+        case "$key" in
+            ID) os_id=$value ;;
+            VERSION_ID) version_id=$value ;;
+        esac
+    done < /etc/os-release
+    [ "$os_id" = ubuntu ] || fail "supported Ubuntu LTS is required"
+    case ",$SDI_SUPPORTED_UBUNTU_LTS," in
+        *",$version_id,"*) ;;
+        *) fail "Ubuntu $version_id is not in the reviewed LTS support set" ;;
+    esac
+    for command_name in curl git sha256sum systemctl tar; do
+        command -v "$command_name" >/dev/null 2>&1 || \
+            fail "$command_name is required; host administration must install it"
+    done
+    git_version=$(git --version 2>/dev/null) || fail "Git version detection failed"
+    case "$git_version" in
+        "git version "*) ;;
+        *) fail "Git returned an invalid version" ;;
+    esac
+    git_major=${git_version#git version }
+    git_major=${git_major%%.*}
+    case "$git_major" in
+        "" | *[!0-9]*) fail "Git returned an invalid version" ;;
+    esac
+    [ "$git_major" -ge "$SDI_GIT_MIN_MAJOR" ] || \
+        fail "Git does not meet the reviewed minimum major version"
+    checkout_status=$(git -C "$ROOT" status --porcelain=v1 \
+        --untracked-files=all 2>/dev/null) || \
+        fail "the approved repository checkout state cannot be read"
+    [ -z "$checkout_status" ] || \
+        fail "the approved repository checkout contains uncommitted material"
+    systemctl --user show-environment >/dev/null 2>&1 || \
+        fail "the systemd user manager is unavailable; an administrator must enable lingering"
+    old_ifs=$IFS
+    IFS=,
+    for endpoint in $SDI_REQUIRED_HTTPS_URLS; do
+        IFS=$old_ifs
+        case "$endpoint" in
+            https://*) ;;
+            *) fail "reviewed installation authority contains a non-HTTPS endpoint" ;;
+        esac
+        curl --silent --show-error --output /dev/null \
+            --connect-timeout 10 --max-time 20 "$endpoint" 2>/dev/null || \
+            fail "required upstream HTTPS access is unavailable"
+        IFS=,
+    done
+    IFS=$old_ifs
+    parent=$(dirname "$RUNNER_HOME")
+    probe_parent=$HOME
+    [ -d "$parent" ] && probe_parent=$parent
+    probe=$(mktemp "$probe_parent/.sdi-runner-preflight.XXXXXX" 2>/dev/null) || \
+        fail "the runner installation parent is not writable"
+    rm -f "$probe"
+}
+
+install_runner() {
+    load_installation
+    check_host
+    [ ! -e "$RUNNER_HOME" ] || fail "runner installation already exists"
+    parent=$(dirname "$RUNNER_HOME")
+    mkdir -p -m 700 "$parent"
+    staging=$(mktemp -d "$parent/.sdi-github-runner.XXXXXX")
+    archive="$staging/$RUNNER_ARCHIVE"
+    trap 'rm -rf "$staging"' EXIT HUP INT TERM
+    curl --fail --location --proto '=https' --tlsv1.2 \
+        --output "$archive" "$RUNNER_URL"
+    printf '%s  %s\n' "$RUNNER_SHA256" "$RUNNER_ARCHIVE" \
+        | (cd "$staging" && sha256sum --check -)
+    mkdir "$staging/runner"
+    tar --extract --gzip --file "$archive" --directory "$staging/runner"
+    rm "$archive"
+    mv "$staging/runner" "$RUNNER_HOME"
+    chmod 700 "$RUNNER_HOME"
+    trap - EXIT HUP INT TERM
+    rmdir "$staging"
+}
+
+configure_runner() {
+    load_installation
+    check_host
+    [ -x "$RUNNER_HOME/config.sh" ] || fail "install the pinned runner first"
+    [ ! -e "$RUNNER_HOME/.runner" ] || fail "runner is already configured"
+    repository_url=${SDI_GITHUB_RUNNER_REPOSITORY-}
+    runner_name=${SDI_GITHUB_RUNNER_NAME-}
+    registration_token=${SDI_GITHUB_RUNNER_REGISTRATION_TOKEN-}
+    case "$repository_url" in
+        https://github.com/*/*) ;;
+        *) fail "SDI_GITHUB_RUNNER_REPOSITORY must be an HTTPS GitHub repository URL" ;;
+    esac
+    repository=${repository_url#https://github.com/}
+    owner=${repository%%/*}
+    name=${repository#*/}
+    case "$owner" in
+        "" | *[!A-Za-z0-9_.-]*)
+            fail "runner repository owner contains unsupported material"
+            ;;
+    esac
+    case "$name" in
+        "" | */* | *\?* | *\#* | *@* | *[!A-Za-z0-9_.-]*)
+            fail "runner repository name contains unsupported material"
+            ;;
+    esac
+    case "$runner_name" in
+        "" | *[!A-Za-z0-9_.-]*) fail "SDI_GITHUB_RUNNER_NAME is invalid" ;;
+    esac
+    [ -n "$registration_token" ] \
+        || fail "SDI_GITHUB_RUNNER_REGISTRATION_TOKEN is required"
+    (
+        cd "$RUNNER_HOME"
+        ./config.sh \
+            --unattended \
+            --url "$repository_url" \
+            --token "$registration_token" \
+            --name "$runner_name" \
+            --labels sdi-jenkins-handoff \
+            --no-default-labels \
+            --work _work \
+            --disableupdate
+    )
+    unset registration_token SDI_GITHUB_RUNNER_REGISTRATION_TOKEN
+}
+
+install_service() {
+    load_installation
+    check_host
+    [ -x "$RUNNER_HOME/bin/runsvc.sh" ] || fail "install the pinned runner first"
+    [ -f "$RUNNER_HOME/.runner" ] || fail "configure the runner first"
+    mkdir -p -m 700 "$RUNNER_HOME/_diag" "$RUNNER_HOME/_work"
+    mkdir -p -m 700 "$SERVICE_DIRECTORY"
+    temporary="$SERVICE_PATH.tmp.$$"
+    trap 'rm -f "$temporary"' EXIT HUP INT TERM
+    umask 077
+    {
+        printf '%s\n' \
+            '[Unit]' \
+            'Description=SDI GitHub Actions Jenkins handoff runner' \
+            'After=network-online.target' \
+            'Wants=network-online.target' \
+            '' \
+            '[Service]' \
+            'Type=simple' \
+            "WorkingDirectory=$RUNNER_HOME" \
+            "ExecStart=$RUNNER_HOME/bin/runsvc.sh" \
+            'Restart=always' \
+            'RestartSec=5' \
+            'KillMode=mixed' \
+            'NoNewPrivileges=true' \
+            'PrivateDevices=true' \
+            'PrivateTmp=true' \
+            'ProtectControlGroups=true' \
+            'ProtectKernelModules=true' \
+            'ProtectKernelTunables=true' \
+            'ProtectSystem=strict' \
+            'ProtectHome=read-only' \
+            "ReadWritePaths=$RUNNER_HOME/_diag $RUNNER_HOME/_work" \
+            'LockPersonality=true' \
+            'UMask=0077' \
+            'UnsetEnvironment=JENKINS_HOME SDI_JENKINS_BASE_URL SDI_JENKINS_JOB_PATH SDI_JENKINS_REPOSITORY SDI_JENKINS_USERNAME SDI_JENKINS_API_TOKEN SDI_JENKINS_PASSWORD' \
+            '' \
+            '[Install]' \
+            'WantedBy=default.target'
+    } > "$temporary"
+    mv "$temporary" "$SERVICE_PATH"
+    trap - EXIT HUP INT TERM
+    systemctl --user daemon-reload
+    systemctl --user enable sdi-github-runner.service
+}
+
+runner_service_active() {
+    service_status=0
+    systemctl --user is-active --quiet sdi-github-runner.service \
+        2>/dev/null || service_status=$?
+    case "$service_status" in
+        0) return 0 ;;
+        3) return 1 ;;
+        4)
+            [ ! -e "$SERVICE_PATH" ] && return 1
+            fail "the runner service state is indeterminate"
+            ;;
+        *) fail "the systemd user manager could not determine runner state" ;;
+    esac
+}
+
+unregister_runner() {
+    load_installation
+    check_host
+    [ -x "$RUNNER_HOME/config.sh" ] || fail "runner installation does not exist"
+    [ -f "$RUNNER_HOME/.runner" ] || fail "runner is not configured"
+    [ "${SDI_GITHUB_HANDOFF_QUIESCED-}" = true ] || \
+        fail "confirm no workflow is active with SDI_GITHUB_HANDOFF_QUIESCED=true"
+    removal_token=${SDI_GITHUB_RUNNER_REMOVAL_TOKEN-}
+    [ -n "$removal_token" ] || fail "SDI_GITHUB_RUNNER_REMOVAL_TOKEN is required"
+    if runner_service_active; then
+        fail "stop the runner before unregistering it"
+    fi
+    (
+        cd "$RUNNER_HOME"
+        ./config.sh remove --unattended --token "$removal_token"
+    )
+    unset removal_token SDI_GITHUB_RUNNER_REMOVAL_TOKEN
+}
+
+remove_service() {
+    check_host
+    [ "${SDI_GITHUB_HANDOFF_QUIESCED-}" = true ] || \
+        fail "confirm no workflow is active with SDI_GITHUB_HANDOFF_QUIESCED=true"
+    if runner_service_active; then
+        systemctl --user stop sdi-github-runner.service || \
+            fail "the runner service could not be stopped"
+        if runner_service_active; then
+            fail "the runner service remained active after stop"
+        fi
+    fi
+    if [ -e "$SERVICE_PATH" ]; then
+        systemctl --user disable sdi-github-runner.service || \
+            fail "the runner service could not be disabled"
+    fi
+    rm -f "$SERVICE_PATH"
+    systemctl --user daemon-reload
+}
+
+remove_runner() {
+    check_host
+    [ "${SDI_GITHUB_HANDOFF_QUIESCED-}" = true ] || \
+        fail "confirm no workflow is active with SDI_GITHUB_HANDOFF_QUIESCED=true"
+    if runner_service_active; then
+        fail "remove the runner service before removing the installation"
+    fi
+    [ ! -e "$RUNNER_HOME/.runner" ] || fail "unregister the runner before removing it"
+    [ ! -e "$SERVICE_PATH" ] || fail "remove the user service before removing the runner"
+    [ -d "$RUNNER_HOME" ] || fail "runner installation does not exist"
+    rm -rf -- "$RUNNER_HOME"
+}
+
+command=${1-}
+case "$command" in
+    preflight)
+        preflight
+        ;;
+    install)
+        install_runner
+        ;;
+    configure)
+        configure_runner
+        ;;
+    install-service)
+        install_service
+        ;;
+    start)
+        load_installation
+        check_host
+        systemctl --user start sdi-github-runner.service
+        ;;
+    stop)
+        check_host
+        systemctl --user stop sdi-github-runner.service
+        ;;
+    status)
+        check_host
+        systemctl --user status sdi-github-runner.service
+        ;;
+    unregister)
+        unregister_runner
+        ;;
+    remove-service)
+        remove_service
+        ;;
+    remove)
+        remove_runner
+        ;;
+    -h | --help | help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

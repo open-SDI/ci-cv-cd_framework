@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+for command_file in /proc/[0-9]*/cmdline; do
+    command=$(tr '\000' ' ' < "$command_file" 2>/dev/null || true)
+    case "$command" in
+        *agent.jar*'-webSocket'*) exit 0 ;;
+    esac
+done
+
+exit 1

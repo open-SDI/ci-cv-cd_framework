@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+uv_version=$(uv --version)
+case "$uv_version" in
+    'uv 0.12.1 '*) ;;
+    *)
+        printf '%s\n' 'verify: uv 0.12.1 is required' >&2
+        exit 2
+        ;;
+esac
+printf 'Acceptance tool pin: %s\n' "$uv_version"
+
+uv lock --check
+uv sync --frozen --all-groups
+uv run --frozen sdi-integration schemas --check --directory schemas
+uv run --frozen check-jsonschema --quiet --builtin-schema \
+    vendor.github-workflows ../.github/workflows/pipeline-integration.yml
+uv run --frozen ruff format --check .
+uv run --frozen ruff check .
+uv run --frozen basedpyright
+uv run --frozen pytest
+
+printf '%s\n' 'Locked Python dependency closure:'
+uv tree --frozen --all-groups
+printf '%s\n' 'Reviewed installation pin authority:'
+while IFS= read -r line; do
+    printf '%s\n' "$line"
+done < ../deployment/installation.env
+printf '%s\n' 'Jenkins plugin lock:'
+while IFS= read -r line; do
+    printf '%s\n' "$line"
+done < ../deployment/jenkins/controller/plugins.txt
+
+../deployment/jenkins/bin/stack smoke
+
+printf '%s\n' \
+    'Repository acceptance passed.' \
+    'Passing proves only the permanent integration scaffold and Fixture behavior.' \
+    'Real Domain stages, KPI evaluation, product security assurance, availability, and deferred infrastructure remain out of scope.'

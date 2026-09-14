@@ -1,0 +1,408 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository_root=$(CDPATH= cd -- "$root/../.." && pwd)
+installation=$repository_root/deployment/installation.env
+config=$root/config/local/controller.env
+project_name=${COMPOSE_PROJECT_NAME:-sdi-jenkins}
+stack_command=$root/bin/stack
+stack_command=${SDI_RECOVERY_STACK_COMMAND:-$stack_command}
+checker=$root/bin/smoke-check
+checker=${SDI_RECOVERY_SMOKE_CHECK_COMMAND:-$checker}
+
+fail() {
+    printf 'recovery: %s\n' "$1" >&2
+    exit 2
+}
+
+usage() {
+    printf '%s\n' \
+        'usage: recovery [--config PATH] [--project-name NAME] snapshot --destination DIR --encrypted-destination --handoff-quiesced' \
+        '       recovery [--config PATH] [--project-name NAME] restore --archive PATH --manifest PATH --fresh-credentials-ready' \
+        '       recovery verify --archive PATH --manifest PATH'
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ "$#" -ge 2 ] || fail '--config requires a path'
+            config=$2
+            shift 2
+            ;;
+        --project-name)
+            [ "$#" -ge 2 ] || fail '--project-name requires a value'
+            project_name=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *) break ;;
+    esac
+done
+
+case "$project_name" in
+    ''|[-_]*|*[!a-z0-9_-]*)
+        fail 'project name must start with a lowercase letter or digit and contain only lowercase letters, digits, underscores, and hyphens'
+        ;;
+esac
+[ "$#" -ge 1 ] || fail 'an operation is required'
+operation=$1
+shift
+
+archive=
+destination=
+manifest=
+handoff_quiesced=false
+fresh_credentials_ready=false
+encrypted_destination=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --archive)
+            [ "$#" -ge 2 ] || fail '--archive requires a path'
+            archive=$2
+            shift 2
+            ;;
+        --destination)
+            [ "$#" -ge 2 ] || fail '--destination requires a path'
+            destination=$2
+            shift 2
+            ;;
+        --manifest)
+            [ "$#" -ge 2 ] || fail '--manifest requires a path'
+            manifest=$2
+            shift 2
+            ;;
+        --handoff-quiesced)
+            handoff_quiesced=true
+            shift
+            ;;
+        --encrypted-destination)
+            encrypted_destination=true
+            shift
+            ;;
+        --fresh-credentials-ready)
+            fresh_credentials_ready=true
+            shift
+            ;;
+        *) fail "unknown argument: $1" ;;
+    esac
+done
+
+command -v git >/dev/null 2>&1 || fail 'Git is required'
+command -v uv >/dev/null 2>&1 || fail 'uv is required'
+
+authority() {
+    uv run --project "$repository_root/integration" --frozen \
+        sdi-integration validate-installation \
+        --repository "$repository_root" --installation "$installation" \
+        2>/dev/null || \
+        fail 'reviewed installation authority validation failed'
+}
+
+manifest_operation() {
+    action=$1
+    shift
+    uv run --project "$repository_root/integration" --frozen python -m \
+        sdi_pipeline_integration._recovery_contracts "$action" \
+        --installation "$installation" "$@" 2>/dev/null
+}
+
+outside_repository() {
+    candidate=$(realpath -m -- "$1")
+    case "$candidate" in
+        "$repository_root"|"$repository_root"/*) fail 'recovery material must be outside the repository' ;;
+    esac
+}
+
+outside_controller_volume() {
+    candidate=$(realpath -m -- "$1")
+    mountpoint=$(docker volume inspect --format '{{.Mountpoint}}' "$volume" 2>/dev/null) || \
+        fail 'controller volume does not exist'
+    mountpoint=$(realpath -m -- "$mountpoint")
+    case "$candidate" in
+        "$mountpoint"|"$mountpoint"/*)
+            fail 'snapshot destination must be outside the controller volume'
+            ;;
+    esac
+}
+
+repository_commit=$(git -C "$repository_root" rev-parse HEAD) || \
+    fail 'cannot identify the approved repository commit'
+case "$repository_commit" in
+    *[!0-9a-f]*) fail 'repository HEAD is not a commit' ;;
+    *) ;;
+esac
+[ "${#repository_commit}" -eq 40 ] || fail 'repository HEAD is not a full commit'
+checkout_status=$(git -C "$repository_root" status --porcelain=v1 \
+    --untracked-files=all 2>/dev/null) || \
+    fail 'the approved repository checkout state cannot be read'
+[ -z "$checkout_status" ] || \
+    fail 'the approved repository checkout contains uncommitted material'
+authority
+
+controller_image=
+while IFS='=' read -r key value; do
+    case "$key" in
+        SDI_JENKINS_CONTROLLER_IMAGE) controller_image=$value ;;
+    esac
+done < "$installation"
+[ -n "$controller_image" ] || fail 'controller image is absent from the installation authority'
+volume=${project_name}_jenkins-home
+
+remove_archived_api_tokens() {
+    restored_volume=$1
+    docker run --rm --user 0:0 --volume "$restored_volume:/target" \
+        --volume "$root/libexec/RemoveArchivedApiTokens.java:/RemoveArchivedApiTokens.java:ro" \
+        "$controller_image" java /RemoveArchivedApiTokens.java \
+        /target/users || fail 'historical Jenkins API token removal failed'
+}
+
+case "$operation" in
+    snapshot)
+        command -v docker >/dev/null 2>&1 || fail 'Docker Engine is required'
+        [ -n "$destination" ] || fail 'snapshot requires --destination'
+        [ "$encrypted_destination" = true ] || \
+            fail 'confirm an operator-encrypted destination with --encrypted-destination'
+        [ "$handoff_quiesced" = true ] || \
+            fail 'confirm that workflow handoff is quiesced with --handoff-quiesced'
+        outside_repository "$destination"
+        [ -d "$destination" ] || fail 'snapshot destination must be an existing directory'
+        [ -w "$destination" ] || fail 'snapshot destination must be writable'
+        [ -z "$archive$manifest" ] && [ "$fresh_credentials_ready" = false ] || \
+            fail 'snapshot received an option for a different operation'
+        outside_controller_volume "$destination"
+
+        "$stack_command" --config "$config" --project-name "$project_name" preflight
+        "$stack_command" --config "$config" --project-name "$project_name" quiesce
+        "$stack_command" --config "$config" --project-name "$project_name" stop
+        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+        archive=$destination/jenkins-home-$timestamp-$(printf '%.12s' "$repository_commit").tar.gz
+        manifest=$destination/jenkins-home-$timestamp-$(printf '%.12s' "$repository_commit").manifest.json
+        [ ! -e "$archive" ] && [ ! -e "$manifest" ] || fail 'snapshot output already exists'
+        temporary=
+        cleanup_snapshot() {
+            [ -z "$temporary" ] || rm -f -- "$temporary"
+        }
+        trap cleanup_snapshot EXIT
+        trap 'exit 130' HUP INT TERM
+        umask 077
+        temporary=$(mktemp "$destination/.jenkins-home-snapshot-XXXXXX" 2>/dev/null) || \
+            fail 'cannot create a private snapshot staging file'
+        docker run --rm --user 0:0 --volume "$volume:/source:ro" \
+            "$controller_image" tar --create --gzip --numeric-owner \
+            --directory /source --file - . > "$temporary" || \
+            fail 'controller volume archive failed'
+        [ -s "$temporary" ] || fail 'controller volume archive is empty'
+        mv "$temporary" "$archive"
+        trap - EXIT HUP INT TERM
+        manifest_operation write --archive "$archive" \
+            --repository-commit "$repository_commit" --manifest "$manifest" || {
+            rm -f -- "$archive"
+            fail 'recovery manifest creation failed'
+        }
+        printf '%s\n%s\n' "$archive" "$manifest"
+        ;;
+    verify)
+        [ -n "$archive" ] && [ -n "$manifest" ] || \
+            fail 'verify requires --archive and --manifest'
+        [ -z "$destination" ] && [ "$handoff_quiesced" = false ] && \
+            [ "$encrypted_destination" = false ] && \
+            [ "$fresh_credentials_ready" = false ] || \
+            fail 'verify received an option for a different operation'
+        outside_repository "$archive"
+        outside_repository "$manifest"
+        manifest_operation check --archive "$archive" \
+            --repository-commit "$repository_commit" --manifest "$manifest" || \
+            fail 'archive does not match its recovery manifest'
+        ;;
+    restore)
+        command -v docker >/dev/null 2>&1 || fail 'Docker Engine is required'
+        [ -n "$archive" ] && [ -n "$manifest" ] || \
+            fail 'restore requires --archive and --manifest'
+        [ "$fresh_credentials_ready" = true ] || \
+            fail 'restore requires staged fresh credentials and --fresh-credentials-ready'
+        [ -z "$destination" ] && [ "$handoff_quiesced" = false ] && \
+            [ "$encrypted_destination" = false ] || \
+            fail 'restore received an option for a different operation'
+        outside_repository "$archive"
+        outside_repository "$manifest"
+        manifest_operation check --archive "$archive" \
+            --repository-commit "$repository_commit" --manifest "$manifest" || \
+            fail 'archive does not match its recovery manifest'
+        manifest_operation credentials --config "$config" --manifest "$manifest" || \
+            fail 'fresh credential staging does not satisfy the recovery contract'
+        "$stack_command" --config "$config" --project-name "$project_name" preflight
+
+        target_volume_exists=true
+        if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+            target_volume_exists=false
+        else
+            docker run --rm --user 0:0 --volume "$volume:/target" \
+                "$controller_image" sh -c \
+                'test -z "$(find /target -mindepth 1 -print -quit)"' || \
+                fail 'restore requires an empty controller volume'
+        fi
+
+        staging=
+        staging_config=
+        staging_project=
+        staging_volume=
+        staging_started=false
+        staging_volume_created=false
+        target_started=false
+        cleanup_staging() {
+            operation_status=$?
+            trap - EXIT HUP INT TERM
+            if [ "$staging_started" = true ]; then
+                "$stack_command" --config "$staging_config" \
+                    --project-name "$staging_project" stop >/dev/null 2>&1 || {
+                    [ "$operation_status" -ne 0 ] || operation_status=1
+                }
+            fi
+            if [ "$target_started" = true ]; then
+                "$stack_command" --config "$config" \
+                    --project-name "$project_name" stop >/dev/null 2>&1 || {
+                    [ "$operation_status" -ne 0 ] || operation_status=1
+                }
+            fi
+            if [ "$staging_volume_created" = true ]; then
+                docker volume rm "$staging_volume" >/dev/null 2>&1 || {
+                    [ "$operation_status" -ne 0 ] || operation_status=1
+                }
+            fi
+            [ -z "$staging" ] || rm -rf -- "$staging"
+            exit "$operation_status"
+        }
+        trap cleanup_staging EXIT
+        trap 'exit 130' HUP INT TERM
+        umask 077
+        staging=$(mktemp -d "${TMPDIR:-/tmp}/sdi-recovery-credentials-XXXXXX" \
+            2>/dev/null) || fail 'cannot create private credential staging material'
+        generated=$staging/agent-secrets
+        staging_config=$staging/controller.env
+        agent_key=$staging/jenkins-agent-hmac-key
+        mkdir -m 700 "$generated"
+        staging_suffix=$(printf '%s' "${staging##*/}" | tr '[:upper:]' '[:lower:]')
+        staging_project=$project_name-$staging_suffix
+        staging_volume=${staging_project}_jenkins-home
+
+        JENKINS_HTTP_PORT=
+        JENKINS_ADMIN_ID=
+        JENKINS_ADMIN_PASSWORD_FILE=
+        JENKINS_INTEGRATION_AGENT_SECRET_FILE=
+        JENKINS_CI_AGENT_SECRET_FILE=
+        JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=
+        JENKINS_CV_AGENT_SECRET_FILE=
+        JENKINS_CD_AGENT_SECRET_FILE=
+        while IFS='=' read -r key value; do
+            case "$key" in
+                JENKINS_HTTP_PORT) JENKINS_HTTP_PORT=$value ;;
+                JENKINS_ADMIN_ID) JENKINS_ADMIN_ID=$value ;;
+                JENKINS_ADMIN_PASSWORD_FILE) JENKINS_ADMIN_PASSWORD_FILE=$value ;;
+                JENKINS_INTEGRATION_AGENT_SECRET_FILE) JENKINS_INTEGRATION_AGENT_SECRET_FILE=$value ;;
+                JENKINS_CI_AGENT_SECRET_FILE) JENKINS_CI_AGENT_SECRET_FILE=$value ;;
+                JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE) JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$value ;;
+                JENKINS_CV_AGENT_SECRET_FILE) JENKINS_CV_AGENT_SECRET_FILE=$value ;;
+                JENKINS_CD_AGENT_SECRET_FILE) JENKINS_CD_AGENT_SECRET_FILE=$value ;;
+            esac
+            case "$key" in
+                JENKINS_INTEGRATION_AGENT_SECRET_FILE)
+                    value=$generated/integration-agent-secret
+                    ;;
+                JENKINS_CI_AGENT_SECRET_FILE) value=$generated/ci-agent-secret ;;
+                JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE)
+                    value=$generated/image-build-agent-secret
+                    ;;
+                JENKINS_CV_AGENT_SECRET_FILE) value=$generated/cv-agent-secret ;;
+                JENKINS_CD_AGENT_SECRET_FILE) value=$generated/cd-agent-secret ;;
+            esac
+            printf '%s=%s\n' "$key" "$value" >> "$staging_config"
+        done < "$config"
+
+        if docker volume inspect "$staging_volume" >/dev/null 2>&1; then
+            fail 'credential staging volume name is already in use'
+        fi
+        docker volume create \
+            --label "com.docker.compose.project=$staging_project" \
+            --label com.docker.compose.volume=jenkins-home \
+            "$staging_volume" >/dev/null || fail 'cannot create credential staging volume'
+        staging_volume_created=true
+        docker run --interactive --rm --user 0:0 \
+            --volume "$staging_volume:/target" "$controller_image" \
+            tar --extract --gzip --numeric-owner --directory /target --file - \
+            < "$archive" || fail 'credential staging restore failed'
+        remove_archived_api_tokens "$staging_volume"
+        docker run --rm --user 0:0 --volume "$staging_volume:/target" \
+            "$controller_image" sh -c \
+            'rm -f -- /target/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret' || \
+            fail 'historical agent credential removal failed in staging'
+        staging_started=true
+        "$stack_command" --config "$staging_config" \
+            --project-name "$staging_project" start-controller
+        "$checker" provision-secrets \
+            --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
+            --admin-id "$JENKINS_ADMIN_ID" \
+            --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE" \
+            --agent-secret-directory "$generated" || \
+            fail 'Jenkins did not issue fresh agent credentials'
+        "$stack_command" --config "$staging_config" \
+            --project-name "$staging_project" start
+        "$stack_command" --config "$staging_config" \
+            --project-name "$staging_project" verify-live
+        "$stack_command" --config "$staging_config" \
+            --project-name "$staging_project" stop
+        staging_started=false
+        docker run --rm --user 0:0 --volume "$staging_volume:/source:ro" \
+            "$controller_image" sh -c \
+            'cat /source/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret' \
+            > "$agent_key" || fail 'fresh Jenkins agent key capture failed'
+        [ -s "$agent_key" ] || fail 'fresh Jenkins agent key is empty'
+
+        install -m 600 "$generated/integration-agent-secret" \
+            "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" 2>/dev/null || \
+            fail 'cannot install the integration agent credential'
+        install -m 600 "$generated/ci-agent-secret" \
+            "$JENKINS_CI_AGENT_SECRET_FILE" 2>/dev/null || \
+            fail 'cannot install the ci agent credential'
+        install -m 600 "$generated/image-build-agent-secret" \
+            "$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE" 2>/dev/null || \
+            fail 'cannot install the image-build agent credential'
+        install -m 600 "$generated/cv-agent-secret" \
+            "$JENKINS_CV_AGENT_SECRET_FILE" 2>/dev/null || \
+            fail 'cannot install the cv agent credential'
+        install -m 600 "$generated/cd-agent-secret" \
+            "$JENKINS_CD_AGENT_SECRET_FILE" 2>/dev/null || \
+            fail 'cannot install the cd agent credential'
+
+        if [ "$target_volume_exists" = false ]; then
+            docker volume create \
+                --label "com.docker.compose.project=$project_name" \
+                --label com.docker.compose.volume=jenkins-home \
+                "$volume" >/dev/null || fail 'cannot create controller volume'
+        fi
+        docker run --rm --user 0:0 --volume "$volume:/target" \
+            "$controller_image" sh -c \
+            'test -z "$(find /target -mindepth 1 -print -quit)"' || \
+            fail 'target controller volume changed during credential staging'
+        docker run --interactive --rm --user 0:0 --volume "$volume:/target" \
+            "$controller_image" tar --extract --gzip --numeric-owner \
+            --directory /target --file - < "$archive" || \
+            fail 'controller volume restore failed; destroy the partial volume before retrying'
+        remove_archived_api_tokens "$volume"
+        docker run --interactive --rm --user 0:0 --volume "$volume:/target" \
+            "$controller_image" sh -c \
+            'test -f /target/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret && cat > /target/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret && chmod 600 /target/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret' \
+            < "$agent_key" || fail 'fresh Jenkins agent key installation failed'
+        target_started=true
+        "$stack_command" --config "$config" --project-name "$project_name" start
+        "$stack_command" --config "$config" --project-name "$project_name" verify-live
+        target_started=false
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

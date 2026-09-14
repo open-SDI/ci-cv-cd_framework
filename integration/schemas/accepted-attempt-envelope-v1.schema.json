@@ -1,0 +1,395 @@
+{
+  "$defs": {
+    "AcceptedDiagnosticFile": {
+      "additionalProperties": false,
+      "description": "One bounded sanitized diagnostic accepted by the integration runtime.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "media_type": {
+          "const": "text/plain; charset=utf-8",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "const": "diagnostic",
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "const": "diagnostic",
+          "title": "Slot",
+          "type": "string"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "role",
+        "slot",
+        "path",
+        "media_type",
+        "byte_size",
+        "sha256",
+        "truncated"
+      ],
+      "title": "AcceptedDiagnosticFile",
+      "type": "object"
+    },
+    "AcceptedDomainFile": {
+      "additionalProperties": false,
+      "description": "One schema-valid Domain file accepted by the integration runtime.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "const": "domain_output",
+          "title": "Role",
+          "type": "string"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "AcceptedDomainFile",
+      "type": "object"
+    },
+    "AcceptedFile": {
+      "discriminator": {
+        "mapping": {
+          "diagnostic": "#/$defs/AcceptedDiagnosticFile",
+          "domain_output": "#/$defs/AcceptedDomainFile"
+        },
+        "propertyName": "role"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AcceptedDomainFile"
+        },
+        {
+          "$ref": "#/$defs/AcceptedDiagnosticFile"
+        }
+      ]
+    },
+    "AcceptedInput": {
+      "additionalProperties": false,
+      "description": "Exact declared input accepted for this attempt.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        },
+        "source_path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "source_path",
+        "schema_version",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "AcceptedInput",
+      "type": "object"
+    },
+    "Correlation": {
+      "additionalProperties": false,
+      "description": "Stable project correlation carried across one Stage attempt.",
+      "properties": {
+        "attempt_number": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt Number",
+          "type": "integer"
+        },
+        "execution_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        }
+      },
+      "required": [
+        "execution_id",
+        "stage",
+        "attempt_number"
+      ],
+      "title": "Correlation",
+      "type": "object"
+    },
+    "DomainOutcome": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "not_evaluated"
+      ],
+      "type": "string"
+    },
+    "ExecutionConclusion": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "timed_out",
+        "skipped"
+      ],
+      "type": "string"
+    },
+    "ImplementationMode": {
+      "enum": [
+        "fixture",
+        "implemented",
+        "not_implemented"
+      ],
+      "type": "string"
+    },
+    "ProcessFacts": {
+      "additionalProperties": false,
+      "description": "Authoritative process observations recorded by the runtime.",
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Signal"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "termination": {
+          "enum": [
+            "exited",
+            "signaled",
+            "timed_out",
+            "lost"
+          ],
+          "title": "Termination",
+          "type": "string"
+        }
+      },
+      "required": [
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "termination"
+      ],
+      "title": "ProcessFacts",
+      "type": "object"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "description": "Bounded, sanitized process or Domain reason.",
+      "properties": {
+        "category": {
+          "enum": [
+            "fixture",
+            "input",
+            "dependency",
+            "tool",
+            "adapter",
+            "domain"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 127,
+          "pattern": "^sdi\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$",
+          "title": "Code",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "summary"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Transactional record created only after whole-bundle acceptance.",
+  "properties": {
+    "accepted_files": {
+      "items": {
+        "$ref": "#/$defs/AcceptedFile"
+      },
+      "title": "Accepted Files",
+      "type": "array"
+    },
+    "accepted_inputs": {
+      "items": {
+        "$ref": "#/$defs/AcceptedInput"
+      },
+      "title": "Accepted Inputs",
+      "type": "array"
+    },
+    "adapter_response_accepted": {
+      "title": "Adapter Response Accepted",
+      "type": "boolean"
+    },
+    "correlation": {
+      "$ref": "#/$defs/Correlation"
+    },
+    "domain_outcome": {
+      "$ref": "#/$defs/DomainOutcome"
+    },
+    "execution_conclusion": {
+      "$ref": "#/$defs/ExecutionConclusion"
+    },
+    "implementation_mode": {
+      "$ref": "#/$defs/ImplementationMode"
+    },
+    "lifecycle_state": {
+      "enum": [
+        "completed",
+        "skipped"
+      ],
+      "title": "Lifecycle State",
+      "type": "string"
+    },
+    "process": {
+      "$ref": "#/$defs/ProcessFacts",
+      "title": "Process"
+    },
+    "reason": {
+      "$ref": "#/$defs/Reason"
+    },
+    "schema_version": {
+      "const": "sdi.accepted-attempt-envelope/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "correlation",
+    "lifecycle_state",
+    "execution_conclusion",
+    "implementation_mode",
+    "domain_outcome",
+    "adapter_response_accepted",
+    "accepted_inputs",
+    "accepted_files"
+  ],
+  "title": "AcceptedAttemptEnvelope",
+  "type": "object"
+}

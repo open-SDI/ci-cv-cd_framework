@@ -1,0 +1,241 @@
+name: sdi-jenkins
+
+services:
+  controller:
+    image: sdi-jenkins-controller:2.568.3
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
+    restart: "no"
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID}
+      JENKINS_HANDOFF_ID: ${JENKINS_HANDOFF_ID}
+      JENKINS_REPOSITORY_URL: ${JENKINS_REPOSITORY_URL}
+      JENKINS_PIPELINE_RUN_LIMIT_SECONDS: ${JENKINS_PIPELINE_RUN_LIMIT_SECONDS}
+      JENKINS_COMPOSITION_WORK_LIMIT_SECONDS: ${JENKINS_COMPOSITION_WORK_LIMIT_SECONDS}
+      JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS: ${JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS}
+      JENKINS_CV_WORK_LIMIT_SECONDS: ${JENKINS_CV_WORK_LIMIT_SECONDS}
+      JENKINS_CD_WORK_LIMIT_SECONDS: ${JENKINS_CD_WORK_LIMIT_SECONDS}
+    ports:
+      - "127.0.0.1:${JENKINS_HTTP_PORT}:8080"
+    volumes:
+      - jenkins-home:/var/jenkins_home
+    secrets:
+      - jenkins-admin-password
+      - jenkins-handoff-password
+    networks:
+      - controller-integration
+      - controller-ci
+      - controller-image-build
+      - controller-cv
+      - controller-cd
+      - controller-egress
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 30s
+
+  integration:
+    image: sdi-jenkins-agent-integration:3391.va-37fa-305d6d-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/agents/Dockerfile
+      args:
+        RUNTIME_IMAGE: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+        SDI_JENKINS_AGENT_LABEL: ""
+        SDI_JENKINS_AGENT_ROLE: integration
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      JENKINS_URL: ${JENKINS_AGENT_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: integration
+      JENKINS_AGENT_SECRET_FILE: /run/secrets/integration-agent-secret
+      JENKINS_WEB_SOCKET: "true"
+    secrets: [integration-agent-secret]
+    tmpfs:
+      - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,mode=1777
+    networks: [controller-integration]
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, jenkins-agent-health]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  ci:
+    image: sdi-jenkins-agent-ci:3391.va-37fa-305d6d-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/agents/Dockerfile
+      args:
+        RUNTIME_IMAGE: ${JENKINS_COMPOSITION_AGENT_IMAGE}
+        SDI_JENKINS_AGENT_LABEL: composition
+        SDI_JENKINS_AGENT_ROLE: domain
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      JENKINS_URL: ${JENKINS_AGENT_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: ci
+      JENKINS_AGENT_SECRET_FILE: /run/secrets/ci-agent-secret
+      JENKINS_WEB_SOCKET: "true"
+    secrets: [ci-agent-secret]
+    tmpfs:
+      - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,mode=1777
+    networks: [controller-ci]
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, jenkins-agent-health]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  image-build:
+    image: sdi-jenkins-agent-image-build:3391.va-37fa-305d6d-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/agents/Dockerfile
+      args:
+        RUNTIME_IMAGE: ${JENKINS_IMAGE_BUILD_AGENT_IMAGE}
+        SDI_JENKINS_AGENT_LABEL: image-build
+        SDI_JENKINS_AGENT_ROLE: domain
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      JENKINS_URL: ${JENKINS_AGENT_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: image-build
+      JENKINS_AGENT_SECRET_FILE: /run/secrets/image-build-agent-secret
+      JENKINS_WEB_SOCKET: "true"
+    secrets: [image-build-agent-secret]
+    tmpfs:
+      - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,mode=1777
+    networks: [controller-image-build]
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, jenkins-agent-health]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  cv:
+    image: sdi-jenkins-agent-cv:3391.va-37fa-305d6d-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/agents/Dockerfile
+      args:
+        RUNTIME_IMAGE: ${JENKINS_CV_AGENT_IMAGE}
+        SDI_JENKINS_AGENT_LABEL: cv
+        SDI_JENKINS_AGENT_ROLE: domain
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      JENKINS_URL: ${JENKINS_AGENT_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: cv
+      JENKINS_AGENT_SECRET_FILE: /run/secrets/cv-agent-secret
+      JENKINS_WEB_SOCKET: "true"
+    secrets: [cv-agent-secret]
+    tmpfs:
+      - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,mode=1777
+    networks: [controller-cv]
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, jenkins-agent-health]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  cd:
+    image: sdi-jenkins-agent-cd:3391.va-37fa-305d6d-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/agents/Dockerfile
+      args:
+        RUNTIME_IMAGE: ${JENKINS_CD_AGENT_IMAGE}
+        SDI_JENKINS_AGENT_LABEL: cd
+        SDI_JENKINS_AGENT_ROLE: domain
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      JENKINS_URL: ${JENKINS_AGENT_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: cd
+      JENKINS_AGENT_SECRET_FILE: /run/secrets/cd-agent-secret
+      JENKINS_WEB_SOCKET: "true"
+    secrets: [cd-agent-secret]
+    tmpfs:
+      - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,nosuid,nodev,mode=1777
+    networks: [controller-cd]
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, jenkins-agent-health]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+volumes:
+  jenkins-home:
+
+networks:
+  controller-integration:
+    internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
+  controller-ci:
+    internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
+  controller-image-build:
+    internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
+  controller-cv:
+    internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
+  controller-cd:
+    internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
+  controller-egress:
+
+secrets:
+  jenkins-admin-password:
+    file: ${JENKINS_ADMIN_PASSWORD_FILE}
+  jenkins-handoff-password:
+    file: ${JENKINS_HANDOFF_PASSWORD_FILE}
+  integration-agent-secret:
+    file: ${JENKINS_INTEGRATION_AGENT_SECRET_FILE}
+  ci-agent-secret:
+    file: ${JENKINS_CI_AGENT_SECRET_FILE}
+  image-build-agent-secret:
+    file: ${JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE}
+  cv-agent-secret:
+    file: ${JENKINS_CV_AGENT_SECRET_FILE}
+  cd-agent-secret:
+    file: ${JENKINS_CD_AGENT_SECRET_FILE}

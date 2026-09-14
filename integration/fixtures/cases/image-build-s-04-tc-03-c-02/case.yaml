@@ -1,0 +1,28 @@
+schema_version: sdi.fixture-case/v1
+case_id: image-build-s-04-tc-03-c-02
+stage: image_build
+match_inputs:
+  - slot: target_profile
+    byte_size: 202
+    sha256: 60ca8bd502407f163481a90f77d711591a19e8d83e7dc695d0966e11c8f26666
+  - slot: composition_blueprint
+    byte_size: 1405
+    sha256: 547af8111d24019b197fdee23454faec32a2d6ff1826ac9f885d8bbafaa98bcc
+  - slot: deployment_schema
+    byte_size: 1150
+    sha256: 55053d3f120edc5a8a924283427174d37c40202d98eb93a7100ea6cd96be2c0f
+execution_conclusion: succeeded
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.image-build-executed
+  summary: Deterministic pipeline-interface Fixture executed; no image build was evaluated.
+outputs:
+  - slot: image_build_result
+    source_path: image-build-result.json
+    byte_size: 1573
+    sha256: 88b3364436aceb49ced615b3073ab8c77da1f4b1742719e55500c968b84e9696
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 93
+  sha256: 0f48c681ec61d2738039a978290401462803cbefbf0e2d4d948a50d11193f95f

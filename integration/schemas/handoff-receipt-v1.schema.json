@@ -1,0 +1,311 @@
+{
+  "$defs": {
+    "CancelledTerminal": {
+      "additionalProperties": false,
+      "description": "A cancelled handoff with the bounded observation available at exit.",
+      "properties": {
+        "jenkins_result": {
+          "$ref": "#/$defs/JenkinsResult",
+          "title": "Jenkins Result"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "cancelled",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "observed_at"
+      ],
+      "title": "CancelledTerminal",
+      "type": "object"
+    },
+    "FailedTerminal": {
+      "additionalProperties": false,
+      "description": "A sanitized typed handoff failure.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/FailureCode"
+        },
+        "elapsed_seconds": {
+          "minimum": 0,
+          "title": "Elapsed Seconds",
+          "type": "number"
+        },
+        "jenkins_result": {
+          "$ref": "#/$defs/JenkinsResult",
+          "title": "Jenkins Result"
+        },
+        "last_known_state": {
+          "$ref": "#/$defs/HandoffPhase",
+          "title": "Last Known State"
+        },
+        "limit_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Limit Seconds",
+          "type": "integer"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "failed",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/HandoffPhase"
+        }
+      },
+      "required": [
+        "outcome",
+        "observed_at",
+        "code",
+        "phase"
+      ],
+      "title": "FailedTerminal",
+      "type": "object"
+    },
+    "FailureCode": {
+      "enum": [
+        "input_validation",
+        "configuration",
+        "reachability",
+        "authentication",
+        "authorization",
+        "http_operation",
+        "submission_deadline",
+        "indeterminate_submission",
+        "queue_deadline",
+        "queue_cancelled",
+        "queue_unavailable",
+        "build_deadline",
+        "retrieval_deadline",
+        "outer_deadline",
+        "jenkins_failure",
+        "jenkins_aborted",
+        "jenkins_unstable",
+        "missing_artifact",
+        "invalid_artifact",
+        "identity_mismatch"
+      ],
+      "type": "string"
+    },
+    "GitHubRunReference": {
+      "additionalProperties": false,
+      "description": "GitHub workflow provenance for this handoff.",
+      "properties": {
+        "run_attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Run Attempt",
+          "type": "integer"
+        },
+        "run_id": {
+          "exclusiveMinimum": 0,
+          "title": "Run Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "run_attempt"
+      ],
+      "title": "GitHubRunReference",
+      "type": "object"
+    },
+    "HandoffPhase": {
+      "enum": [
+        "validating",
+        "preflighting",
+        "submitting",
+        "queued",
+        "running",
+        "retrieving",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "HandoffTerminal": {
+      "discriminator": {
+        "mapping": {
+          "cancelled": "#/$defs/CancelledTerminal",
+          "failed": "#/$defs/FailedTerminal",
+          "succeeded": "#/$defs/SuccessfulTerminal"
+        },
+        "propertyName": "outcome"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SuccessfulTerminal"
+        },
+        {
+          "$ref": "#/$defs/FailedTerminal"
+        },
+        {
+          "$ref": "#/$defs/CancelledTerminal"
+        }
+      ]
+    },
+    "HandoffTransition": {
+      "additionalProperties": false,
+      "description": "One accepted, sanitized handoff phase transition.",
+      "properties": {
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/HandoffPhase"
+        }
+      },
+      "required": [
+        "phase",
+        "observed_at"
+      ],
+      "title": "HandoffTransition",
+      "type": "object"
+    },
+    "JenkinsBuildReference": {
+      "additionalProperties": false,
+      "description": "The exact executable assigned to the correlated queue item.",
+      "properties": {
+        "build_number": {
+          "exclusiveMinimum": 0,
+          "title": "Build Number",
+          "type": "integer"
+        },
+        "relative_url": {
+          "pattern": "^job/[A-Za-z0-9_.-]+(?:/job/[A-Za-z0-9_.-]+)*/[1-9][0-9]*/$",
+          "title": "Relative Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "build_number",
+        "relative_url"
+      ],
+      "title": "JenkinsBuildReference",
+      "type": "object"
+    },
+    "JenkinsQueueReference": {
+      "additionalProperties": false,
+      "description": "The exact Jenkins queue item returned by submission.",
+      "properties": {
+        "queue_id": {
+          "exclusiveMinimum": 0,
+          "title": "Queue Id",
+          "type": "integer"
+        },
+        "relative_url": {
+          "pattern": "^queue/item/[1-9][0-9]*/$",
+          "title": "Relative Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue_id",
+        "relative_url"
+      ],
+      "title": "JenkinsQueueReference",
+      "type": "object"
+    },
+    "JenkinsResult": {
+      "enum": [
+        "SUCCESS",
+        "FAILURE",
+        "ABORTED",
+        "UNSTABLE",
+        "NOT_BUILT"
+      ],
+      "type": "string"
+    },
+    "SuccessfulTerminal": {
+      "additionalProperties": false,
+      "description": "A handoff that returned one validated complete bundle.",
+      "properties": {
+        "jenkins_result": {
+          "const": "SUCCESS",
+          "title": "Jenkins Result",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "succeeded",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "observed_at",
+        "jenkins_result"
+      ],
+      "title": "SuccessfulTerminal",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Accumulating non-secret GitHub and exact Jenkins correlation facts.",
+  "properties": {
+    "build": {
+      "$ref": "#/$defs/JenkinsBuildReference",
+      "title": "Build"
+    },
+    "execution_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "github": {
+      "$ref": "#/$defs/GitHubRunReference"
+    },
+    "phase": {
+      "$ref": "#/$defs/HandoffPhase"
+    },
+    "queue": {
+      "$ref": "#/$defs/JenkinsQueueReference",
+      "title": "Queue"
+    },
+    "schema_version": {
+      "const": "sdi.github-jenkins-handoff-receipt/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "terminal": {
+      "$ref": "#/$defs/HandoffTerminal",
+      "title": "Terminal"
+    },
+    "transitions": {
+      "items": {
+        "$ref": "#/$defs/HandoffTransition"
+      },
+      "minItems": 1,
+      "title": "Transitions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "execution_id",
+    "github",
+    "phase",
+    "transitions"
+  ],
+  "title": "HandoffReceipt",
+  "type": "object"
+}

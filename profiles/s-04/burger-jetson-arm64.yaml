@@ -1,0 +1,9 @@
+schema_version: sdi.target-execution-profile/v1
+profile_id: burger-jetson-arm64
+target:
+  target_id: turtlebot3-burger
+  kind: sdr
+platform:
+  platform_id: jetson-nano
+  kind: edge
+  architecture: arm64

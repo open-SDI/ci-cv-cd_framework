@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-03-composition",
+  "combination_id": "C-03",
+  "deployment_schema_id": "s-04-tc-03-c-03-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "burger-native",
+      "resource_id": "burger-native-system",
+      "tier": "mobility"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "burger-native",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "burger-native",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "burger-native",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "burger-native-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "1d3039f745dc532cfc42b0de4a182a94d8c551db130c6cda4516534fa1fe4022",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "a3485648fc8126551e036dd3ab2f8f59afcee0e9c084c5fa3a1347bc71144303",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

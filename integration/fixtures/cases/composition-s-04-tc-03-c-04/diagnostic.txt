@@ -1,0 +1,1 @@
+Pipeline-interface Fixture selected by exact input digests; no Domain capability was evaluated.

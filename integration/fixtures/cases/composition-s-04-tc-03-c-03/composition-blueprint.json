@@ -1,0 +1,53 @@
+{
+  "blueprint_id": "s-04-tc-03-c-03-composition",
+  "combination_id": "C-03",
+  "evidence_basis": "fixture",
+  "profile_id": "burger-native-arm64",
+  "requirement_ids": [
+    "deliver-book-to-joe"
+  ],
+  "scenario_id": "S-04",
+  "schema_version": "sdi.composition-blueprint/v1",
+  "services": [
+    {
+      "capability": "localization",
+      "depends_on": [],
+      "fixture_source": "pipeline-interface-fixture",
+      "service_id": "fixture-localization",
+      "version": "1"
+    },
+    {
+      "capability": "navigation",
+      "depends_on": [
+        "fixture-localization"
+      ],
+      "fixture_source": "pipeline-interface-fixture",
+      "service_id": "fixture-navigation",
+      "version": "1"
+    },
+    {
+      "capability": "delivery-mission-control",
+      "depends_on": [
+        "fixture-navigation"
+      ],
+      "fixture_source": "pipeline-interface-fixture",
+      "service_id": "fixture-mission-control",
+      "version": "1"
+    }
+  ],
+  "source_inputs": [
+    {
+      "sha256": "1d3039f745dc532cfc42b0de4a182a94d8c551db130c6cda4516534fa1fe4022",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "a3485648fc8126551e036dd3ab2f8f59afcee0e9c084c5fa3a1347bc71144303",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

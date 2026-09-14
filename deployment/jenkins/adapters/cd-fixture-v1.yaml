@@ -1,0 +1,11 @@
+schema_version: sdi.adapter-descriptor/v1
+stage: cd
+implementation_mode: fixture
+image: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+entrypoint: sdi-fixture-adapter
+process_contract_version: sdi.stage-adapter-process/v1
+stage_profile: integration/stage-profiles/cd-v1.yaml
+stage_profile_version: sdi.cd-stage-profile/v1
+stage_profile_sha256: 8409acb384d73fb555f737615030060f3dbf499450a27c7c5b4ed7360487c09d
+agent_label: cd
+secret_bindings: []

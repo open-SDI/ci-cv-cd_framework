@@ -1,0 +1,15 @@
+**
+!deployment/
+!deployment/jenkins/
+!deployment/jenkins/agents/
+!deployment/jenkins/agents/Dockerfile
+!deployment/jenkins/agents/jenkins-agent-entrypoint
+!deployment/jenkins/agents/jenkins-agent-health
+!integration/
+!integration/README.md
+!integration/pyproject.toml
+!integration/uv.lock
+!integration/src/
+!integration/src/**
+!integration/fixtures/
+!integration/fixtures/**

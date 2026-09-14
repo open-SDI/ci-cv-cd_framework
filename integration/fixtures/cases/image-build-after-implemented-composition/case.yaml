@@ -1,0 +1,29 @@
+schema_version: sdi.fixture-case/v1
+case_id: image-build-after-implemented-composition
+stage: image_build
+match_inputs:
+  - slot: target_profile
+    byte_size: 214
+    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+  - slot: composition_blueprint
+    byte_size: 1410
+    sha256: cb08bd3919604fb9c0e59f641228d9f60296d3445e69b66945f1a3ea82835ef4
+  - slot: deployment_schema
+    byte_size: 1174
+    sha256: 178d6851e77ea857c87021150f804a685ad257612af0b87d02d3283e413e356e
+behavior: response
+execution_conclusion: succeeded
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.image-build-after-implemented-composition
+  summary: Deterministic Fixture consumed implemented composition output; no image build was evaluated.
+outputs:
+  - slot: image_build_result
+    source_path: image-build-result.json
+    byte_size: 1604
+    sha256: 55653a740a969f7b3de2a751ba152fbe8306399dc47f42b615325f0931f0a462
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 93
+  sha256: 727f84635f61cf92de7de2f0d431fb285164f3d5e01ee9a75077aca47e5d5fe5

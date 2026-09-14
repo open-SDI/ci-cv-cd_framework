@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "AdapterExecutionConclusion": {
+      "enum": [
+        "succeeded",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "Correlation": {
+      "additionalProperties": false,
+      "description": "Stable project correlation carried across one Stage attempt.",
+      "properties": {
+        "attempt_number": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt Number",
+          "type": "integer"
+        },
+        "execution_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        }
+      },
+      "required": [
+        "execution_id",
+        "stage",
+        "attempt_number"
+      ],
+      "title": "Correlation",
+      "type": "object"
+    },
+    "DiagnosticResponse": {
+      "additionalProperties": false,
+      "description": "Adapter-reported diagnostic publication facts.",
+      "properties": {
+        "present": {
+          "title": "Present",
+          "type": "boolean"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "present",
+        "truncated"
+      ],
+      "title": "DiagnosticResponse",
+      "type": "object"
+    },
+    "DomainOutcome": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "not_evaluated"
+      ],
+      "type": "string"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "description": "Bounded, sanitized process or Domain reason.",
+      "properties": {
+        "category": {
+          "enum": [
+            "fixture",
+            "input",
+            "dependency",
+            "tool",
+            "adapter",
+            "domain"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 127,
+          "pattern": "^sdi\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$",
+          "title": "Code",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "summary"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Untrusted candidate response published by an adapter.",
+  "properties": {
+    "consumed_inputs": {
+      "items": {
+        "maxLength": 63,
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Consumed Inputs",
+      "type": "array"
+    },
+    "correlation": {
+      "$ref": "#/$defs/Correlation"
+    },
+    "diagnostic": {
+      "$ref": "#/$defs/DiagnosticResponse"
+    },
+    "domain_outcome": {
+      "$ref": "#/$defs/DomainOutcome"
+    },
+    "execution_conclusion": {
+      "$ref": "#/$defs/AdapterExecutionConclusion"
+    },
+    "produced_outputs": {
+      "items": {
+        "maxLength": 63,
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Produced Outputs",
+      "type": "array"
+    },
+    "reason": {
+      "$ref": "#/$defs/Reason"
+    },
+    "schema_version": {
+      "const": "sdi.stage-adapter-response/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "correlation",
+    "execution_conclusion",
+    "domain_outcome",
+    "consumed_inputs",
+    "produced_outputs",
+    "diagnostic"
+  ],
+  "title": "AdapterResponse",
+  "type": "object"
+}

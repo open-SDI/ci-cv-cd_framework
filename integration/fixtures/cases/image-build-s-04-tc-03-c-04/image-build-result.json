@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-04-composition",
+  "combination_id": "C-04",
+  "deployment_schema_id": "s-04-tc-03-c-04-deployment",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-04-image-build",
+  "images": [
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-localization@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "service_id": "fixture-localization"
+    },
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-navigation@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-mission-control@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "burger-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.image-build-result/v1",
+  "source_inputs": [
+    {
+      "sha256": "6670debf0714bc1ae9cc4b33398f5b787df77d3f412b03a0fce499cbc3be32d6",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "0904223c1d3a920e512a9b9b4fa6a098c6a29a9d7f668f59988e81310cca74b1",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "9c7b2e756c1c78175446d48e7b134ea943798124e2e2a2b755b4ff7c498d1dea",
+      "slot": "deployment_schema"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

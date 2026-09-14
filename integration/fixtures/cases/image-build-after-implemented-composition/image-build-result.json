@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-01-composition",
+  "combination_id": "C-01",
+  "deployment_schema_id": "s-04-tc-03-c-01-deployment",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-01-image-build-after-implemented-composition",
+  "images": [
+    {
+      "architecture": "arm64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-localization@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "service_id": "fixture-localization"
+    },
+    {
+      "architecture": "arm64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-navigation@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "architecture": "arm64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-mission-control@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "waffle-native-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.image-build-result/v1",
+  "source_inputs": [
+    {
+      "sha256": "f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "cb08bd3919604fb9c0e59f641228d9f60296d3445e69b66945f1a3ea82835ef4",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "178d6851e77ea857c87021150f804a685ad257612af0b87d02d3283e413e356e",
+      "slot": "deployment_schema"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

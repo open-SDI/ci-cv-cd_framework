@@ -1,0 +1,7 @@
+schema_version: sdi.pipeline-integration-run-request/v1
+scenario_id: S-04
+testcase_id: TC-03
+requirements_specification: requirements/s-04/deliver-book-to-joe.yaml
+combination:
+  combination_id: C-04
+  target_profile: profiles/s-04/burger-xycar-amd64.yaml

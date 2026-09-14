@@ -1,0 +1,147 @@
+name: Pipeline integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_request_path:
+        description: Committed Pipeline integration run-request path
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  handoff:
+    if: github.ref == 'refs/heads/main'
+    environment: pipeline-integration-jenkins
+    runs-on: sdi-jenkins-handoff
+    timeout-minutes: 110
+    steps:
+      - name: Check out immutable protected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up locked Python environment
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+        with:
+          version: 0.12.1
+          enable-cache: false
+
+      - name: Validate input and assign Execution ID
+        id: identify
+        shell: bash
+        env:
+          RUN_REQUEST_PATH: ${{ inputs.run_request_path }}
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+        run: |
+          set -euo pipefail
+          OUTPUT_ROOT="$RUNNER_TEMP/pipeline-integration-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$OUTPUT_ROOT"
+          mkdir -m 700 "$OUTPUT_ROOT"
+          git update-ref refs/heads/main "$GITHUB_SHA"
+          IDENTIFIED_RUN="$OUTPUT_ROOT/identified-run.json"
+          uv run --frozen --project integration sdi-integration identify-run \
+            --repository . \
+            --requested-ref refs/heads/main \
+            --resolved-commit "$GITHUB_SHA" \
+            --run-request-path "$RUN_REQUEST_PATH" > "$IDENTIFIED_RUN"
+          EXECUTION_ID="$(uv run --frozen --project integration python - "$IDENTIFIED_RUN" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          print(json.loads(Path(sys.argv[1]).read_bytes())["execution_id"])
+          PY
+          )"
+          rm "$IDENTIFIED_RUN"
+          {
+            printf 'execution_id=%s\n' "$EXECUTION_ID"
+            printf 'output_root=%s\n' "$OUTPUT_ROOT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Handoff to Jenkins
+        id: handoff
+        continue-on-error: true
+        shell: bash
+        env:
+          EXECUTION_ID: ${{ steps.identify.outputs.execution_id }}
+          OUTPUT_ROOT: ${{ steps.identify.outputs.output_root }}
+          RUN_REQUEST_PATH: ${{ inputs.run_request_path }}
+          SDI_JENKINS_BASE_URL: ${{ vars.SDI_JENKINS_BASE_URL }}
+          SDI_JENKINS_JOB_PATH: ${{ vars.SDI_JENKINS_JOB_PATH }}
+          SDI_JENKINS_REPOSITORY: ${{ vars.SDI_JENKINS_REPOSITORY }}
+          SDI_JENKINS_USERNAME: ${{ vars.SDI_JENKINS_USERNAME }}
+          SDI_JENKINS_API_TOKEN: ${{ secrets.SDI_JENKINS_API_TOKEN }}
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+        run: |
+          set -euo pipefail
+          HANDOFF_RESULT="$OUTPUT_ROOT/handoff-result.json"
+          exec integration/.venv/bin/sdi-integration handoff-jenkins \
+            --repository . \
+            --requested-ref refs/heads/main \
+            --resolved-commit "$GITHUB_SHA" \
+            --run-request-path "$RUN_REQUEST_PATH" \
+            --execution-id "$EXECUTION_ID" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --bundle-root "$OUTPUT_ROOT/bundle" \
+            --receipt-path "$OUTPUT_ROOT/handoff-receipt.json" > "$HANDOFF_RESULT"
+
+      - name: Publish accepted evidence
+        id: publication
+        if: always() && steps.identify.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pipeline-integration-${{ steps.identify.outputs.execution_id }}
+          path: |
+            ${{ steps.identify.outputs.output_root }}/bundle
+            ${{ steps.identify.outputs.output_root }}/handoff-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+
+      - name: Render final summary
+        if: always() && steps.identify.outcome == 'success'
+        shell: bash
+        env:
+          ARTIFACT_URL: ${{ steps.publication.outputs.artifact-url }}
+          EXECUTION_ID: ${{ steps.identify.outputs.execution_id }}
+          HANDOFF_OUTCOME: ${{ steps.handoff.outcome }}
+          JOB_STATUS: ${{ job.status }}
+          OUTPUT_ROOT: ${{ steps.identify.outputs.output_root }}
+          PUBLICATION_OUTCOME: ${{ steps.publication.outcome }}
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+        run: |
+          set -euo pipefail
+          SUMMARY_ARGUMENTS=(
+            --execution-id "$EXECUTION_ID"
+            --github-run-id "$GITHUB_RUN_ID"
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT"
+            --receipt-path "$OUTPUT_ROOT/handoff-receipt.json"
+            --bundle-root "$OUTPUT_ROOT/bundle"
+            --handoff-outcome "$HANDOFF_OUTCOME"
+            --publication-outcome "$PUBLICATION_OUTCOME"
+            --artifact-name "pipeline-integration-$EXECUTION_ID"
+            --artifact-url "$ARTIFACT_URL"
+          )
+          if [ "$JOB_STATUS" = cancelled ]; then
+            SUMMARY_ARGUMENTS+=(--workflow-cancelled)
+          fi
+          uv run --frozen --project integration sdi-integration github-summary \
+            "${SUMMARY_ARGUMENTS[@]}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,95 @@
+schema_version: sdi.repository-acceptance-command-inventory/v1
+commands:
+  - id: github-cli-dispatch
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_github_examples_target_one_exact_run
+  - id: github-rest-dispatch
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_github_examples_target_one_exact_run
+  - id: s04-dispatch
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_github_actions.py::test_s04_helper_prints_exact_urls_waits_sequentially_and_stops_on_failure
+  - id: github-observe
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_github_examples_target_one_exact_run
+  - id: github-download
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_github_examples_target_one_exact_run
+  - id: downloaded-bundle-validation
+    document: docs/pipeline-integration-trigger.md
+    mode: automated
+    evidence: tests/test_local_dispatch.py::test_dispatches_a_contract_valid_deterministic_four_stage_fixture
+  - id: github-cancel
+    document: docs/pipeline-integration-trigger.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_github_examples_target_one_exact_run
+  - id: stack-setup-preflight
+    document: deployment/jenkins/README.md
+    mode: controlled_fake
+    evidence: tests/test_jenkins_controller.py::test_stack_validate_uses_compose_and_rejects_insecure_secret_files
+  - id: stack-lifecycle
+    document: deployment/jenkins/README.md
+    mode: ephemeral_docker
+    evidence: deployment/jenkins/bin/smoke
+  - id: stack-safe-shutdown
+    document: deployment/jenkins/README.md
+    mode: ephemeral_docker
+    evidence: deployment/jenkins/bin/smoke
+  - id: recovery-snapshot
+    document: deployment/jenkins/README.md
+    mode: controlled_fake
+    evidence: tests/test_operations.py::test_snapshot_quiesces_then_stops_and_writes_sanitized_manifest
+  - id: recovery-verify
+    document: deployment/jenkins/README.md
+    mode: controlled_fake
+    evidence: tests/test_operations.py::test_restore_verifies_before_writing_an_empty_volume
+  - id: recovery-restore
+    document: deployment/jenkins/README.md
+    mode: controlled_fake
+    evidence: tests/test_operations.py::test_restore_verifies_before_writing_an_empty_volume
+  - id: stack-smoke
+    document: deployment/jenkins/README.md
+    mode: ephemeral_docker
+    evidence: deployment/jenkins/bin/smoke
+  - id: runner-install
+    document: deployment/github-runner/README.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
+  - id: runner-configure-start
+    document: deployment/github-runner/README.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
+  - id: runner-stop
+    document: deployment/github-runner/README.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
+  - id: runner-remove
+    document: deployment/github-runner/README.md
+    mode: controlled_fake
+    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
+inline_commands:
+  - document: docs/scaffold-maintainer.md
+    command: integration/scripts/verify
+    mode: automated
+    evidence: tests/test_repository_acceptance.py::test_verification_is_the_complete_fail_fast_acceptance_gate
+  - document: docs/scaffold-maintainer.md
+    command: stack reconcile-agent <ci|image-build|cv|cd>
+    mode: controlled_fake
+    evidence: tests/test_jenkins_controller.py::test_stack_validate_uses_compose_and_rejects_insecure_secret_files
+  - document: docs/installation-readiness-checklist.md
+    command: integration/scripts/verify
+    mode: automated
+    evidence: tests/test_repository_acceptance.py::test_verification_is_the_complete_fail_fast_acceptance_gate
+  - document: docs/installation-readiness-checklist.md
+    command: exercise-live
+    mode: installation
+    evidence: docs/installation-readiness-checklist.md
+  - document: docs/installation-readiness-checklist.md
+    command: verify-live
+    mode: installation
+    evidence: docs/installation-readiness-checklist.md

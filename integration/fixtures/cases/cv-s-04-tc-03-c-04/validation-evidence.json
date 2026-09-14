@@ -1,0 +1,43 @@
+{
+  "blueprint_id": "s-04-tc-03-c-04-composition",
+  "combination_id": "C-04",
+  "deployment_schema_id": "s-04-tc-03-c-04-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-04-image-build",
+  "kpi_evaluation": "not_evaluated",
+  "profile_id": "burger-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.validation-evidence/v1",
+  "source_inputs": [
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "6670debf0714bc1ae9cc4b33398f5b787df77d3f412b03a0fce499cbc3be32d6",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "0904223c1d3a920e512a9b9b4fa6a098c6a29a9d7f668f59988e81310cca74b1",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "9c7b2e756c1c78175446d48e7b134ea943798124e2e2a2b755b4ff7c498d1dea",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "1d03c3c86fbe3b4582eabe43f0ae60392de44d4d74ff4e69aa6237ca623fb2a9",
+      "slot": "image_build_result"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-04-validation",
+  "validation_records": [
+    {
+      "description": "Delivery-navigation interface evidence placeholder; no simulation was run.",
+      "evaluation_status": "not_evaluated",
+      "validation_case_id": "fixture-delivery-navigation"
+    }
+  ]
+}

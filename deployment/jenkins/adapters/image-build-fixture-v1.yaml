@@ -1,0 +1,11 @@
+schema_version: sdi.adapter-descriptor/v1
+stage: image_build
+implementation_mode: fixture
+image: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+entrypoint: sdi-fixture-adapter
+process_contract_version: sdi.stage-adapter-process/v1
+stage_profile: integration/stage-profiles/image-build-v1.yaml
+stage_profile_version: sdi.image-build-stage-profile/v1
+stage_profile_sha256: 6257cb67ec169eee35b447ed58d0b2eb4f914ea083968b98c6c6c1ccdb73729c
+agent_label: image-build
+secret_bindings: []

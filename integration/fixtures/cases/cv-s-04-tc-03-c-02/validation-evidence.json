@@ -1,0 +1,43 @@
+{
+  "blueprint_id": "s-04-tc-03-c-02-composition",
+  "combination_id": "C-02",
+  "deployment_schema_id": "s-04-tc-03-c-02-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-02-image-build",
+  "kpi_evaluation": "not_evaluated",
+  "profile_id": "waffle-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.validation-evidence/v1",
+  "source_inputs": [
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "60ca8bd502407f163481a90f77d711591a19e8d83e7dc695d0966e11c8f26666",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "547af8111d24019b197fdee23454faec32a2d6ff1826ac9f885d8bbafaa98bcc",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "55053d3f120edc5a8a924283427174d37c40202d98eb93a7100ea6cd96be2c0f",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "88b3364436aceb49ced615b3073ab8c77da1f4b1742719e55500c968b84e9696",
+      "slot": "image_build_result"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-02-validation",
+  "validation_records": [
+    {
+      "description": "Delivery-navigation interface evidence placeholder; no simulation was run.",
+      "evaluation_status": "not_evaluated",
+      "validation_case_id": "fixture-delivery-navigation"
+    }
+  ]
+}

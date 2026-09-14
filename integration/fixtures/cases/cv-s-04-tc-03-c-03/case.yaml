@@ -1,0 +1,34 @@
+schema_version: sdi.fixture-case/v1
+case_id: cv-s-04-tc-03-c-03
+stage: cv
+match_inputs:
+  - slot: requirements_specification
+    byte_size: 2260
+    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+  - slot: target_profile
+    byte_size: 214
+    sha256: a3485648fc8126551e036dd3ab2f8f59afcee0e9c084c5fa3a1347bc71144303
+  - slot: composition_blueprint
+    byte_size: 1406
+    sha256: c79c8a1d9e3e35c1a298f0b199475bc1d0e419e22eb2eed796f9e973e56b938a
+  - slot: deployment_schema
+    byte_size: 1170
+    sha256: ae668fc561211101e10a59894acf434f46dc6efe246f63b8d66c0b164ed9e554
+  - slot: image_build_result
+    byte_size: 1574
+    sha256: 6b95e51efe94de9bf127e616ad8ab94c991f1a23c64c84785d91a74d0ebbe8dc
+execution_conclusion: succeeded
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.cv-executed
+  summary: Deterministic pipeline-interface Fixture executed; no CV capability was evaluated.
+outputs:
+  - slot: validation_evidence
+    source_path: validation-evidence.json
+    byte_size: 1432
+    sha256: b89a9858173494ceaa786b4d400797e597997d4c203466bbae3ee3d653548670
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 95
+  sha256: c5c97f93272eef99ae622adbc94a776315dafc7ff97262b4041ab6f5b4362388

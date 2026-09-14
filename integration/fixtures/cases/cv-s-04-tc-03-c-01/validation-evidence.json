@@ -1,0 +1,43 @@
+{
+  "blueprint_id": "s-04-tc-03-c-01-composition",
+  "combination_id": "C-01",
+  "deployment_schema_id": "s-04-tc-03-c-01-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-01-image-build",
+  "kpi_evaluation": "not_evaluated",
+  "profile_id": "waffle-native-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.validation-evidence/v1",
+  "source_inputs": [
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "369ec9f0b443cb87d647380d5f60b8b8805be31759fa72c48d447f5cfdf31a17",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "22ccf6a69398e10b3b025f5eeb85ae185dbfb7e33353f7e6ca9eb666d7b4d76f",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "e22d0cccb5d64e326d51fc2c6471c5b145da3e608e8cc9c370bd1024c7ad30ad",
+      "slot": "image_build_result"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-01-validation",
+  "validation_records": [
+    {
+      "description": "Delivery-navigation interface evidence placeholder; no simulation was run.",
+      "evaluation_status": "not_evaluated",
+      "validation_case_id": "fixture-delivery-navigation"
+    }
+  ]
+}

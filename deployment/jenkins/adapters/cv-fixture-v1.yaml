@@ -1,0 +1,11 @@
+schema_version: sdi.adapter-descriptor/v1
+stage: cv
+implementation_mode: fixture
+image: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+entrypoint: sdi-fixture-adapter
+process_contract_version: sdi.stage-adapter-process/v1
+stage_profile: integration/stage-profiles/cv-v1.yaml
+stage_profile_version: sdi.cv-stage-profile/v1
+stage_profile_sha256: 4379a09bb382d71eec75f1f978ca2d6892e20e586708f970e9b8d9906487cba9
+agent_label: cv
+secret_bindings: []

@@ -1,0 +1,760 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository_root=$(CDPATH= cd -- "$root/../.." && pwd)
+installation=$repository_root/deployment/installation.env
+config=$root/config/local/controller.env
+project_name=${COMPOSE_PROJECT_NAME:-sdi-jenkins}
+
+fail() {
+    printf 'stack: %s\n' "$1" >&2
+    exit 2
+}
+
+usage() {
+    printf '%s\n' \
+        'usage: stack [--config PATH] [--project-name NAME] setup|preflight|validate|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT'
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ "$#" -ge 2 ] || fail '--config requires a path'
+            config=$2
+            shift 2
+            ;;
+        --project-name)
+            [ "$#" -ge 2 ] || fail '--project-name requires a value'
+            project_name=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+case "$project_name" in
+    ''|[-_]*|*[!a-z0-9_-]*)
+        fail 'project name must start with a lowercase letter or digit and contain only lowercase letters, digits, underscores, and hyphens'
+        ;;
+esac
+
+[ "$#" -ge 1 ] || {
+    usage >&2
+    exit 2
+}
+action=$1
+shift
+
+reconcile_agent=
+if [ "$action" = reconcile-agent ]; then
+    [ "$#" -eq 1 ] || fail 'reconcile-agent requires one Domain agent name'
+    reconcile_agent=$1
+    case "$reconcile_agent" in
+        ci|image-build|cv|cd) ;;
+        *) fail 'reconcile-agent accepts ci, image-build, cv, or cd' ;;
+    esac
+elif [ "$#" -ne 0 ]; then
+    fail "$action accepts no arguments"
+fi
+
+if [ "$action" = smoke ]; then
+    exec "$root/bin/smoke"
+fi
+
+if [ "$action" = setup ]; then
+    local_config_directory=$(dirname "$config")
+    install -d -m 700 "$local_config_directory"
+    if [ ! -e "$config" ]; then
+        install -m 600 "$root/config/controller.env.example" "$config"
+        printf '%s\n' 'Created private scaffold configuration from the reviewed example.'
+    else
+        printf '%s\n' 'Scaffold configuration already exists; no files changed.'
+    fi
+    exit 0
+fi
+
+compose() {
+    docker compose \
+        --project-name "$project_name" \
+        --project-directory "$root" \
+        --env-file "$config" \
+        --file "$root/compose.yaml" \
+        "$@"
+}
+
+case "$action" in
+    stop|status|logs|destroy)
+        config=/dev/null
+        JENKINS_HTTP_PORT=1
+        JENKINS_ADMIN_ID=unused
+        JENKINS_HANDOFF_ID=unused
+        JENKINS_REPOSITORY_URL=https://github.com/unused/unused.git
+        JENKINS_AGENT_CONTROLLER_URL=http://controller:8080
+        JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400
+        JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600
+        JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=1800
+        JENKINS_CV_WORK_LIMIT_SECONDS=2700
+        JENKINS_CD_WORK_LIMIT_SECONDS=900
+        JENKINS_ADMIN_PASSWORD_FILE=/dev/null
+        JENKINS_HANDOFF_PASSWORD_FILE=/dev/null
+        JENKINS_INTEGRATION_AGENT_SECRET_FILE=/dev/null
+        JENKINS_CI_AGENT_SECRET_FILE=/dev/null
+        JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=/dev/null
+        JENKINS_CV_AGENT_SECRET_FILE=/dev/null
+        JENKINS_CD_AGENT_SECRET_FILE=/dev/null
+        JENKINS_COMPOSITION_AGENT_IMAGE=unused
+        JENKINS_IMAGE_BUILD_AGENT_IMAGE=unused
+        JENKINS_CV_AGENT_IMAGE=unused
+        JENKINS_CD_AGENT_IMAGE=unused
+        JENKINS_AGENT_NETWORK_INTERNAL=true
+        export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
+        export JENKINS_REPOSITORY_URL JENKINS_AGENT_CONTROLLER_URL
+        export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
+        export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
+        export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
+        export JENKINS_CD_WORK_LIMIT_SECONDS
+        export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
+        export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
+        export JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE JENKINS_CV_AGENT_SECRET_FILE
+        export JENKINS_CD_AGENT_SECRET_FILE
+        export JENKINS_COMPOSITION_AGENT_IMAGE JENKINS_IMAGE_BUILD_AGENT_IMAGE
+        export JENKINS_CV_AGENT_IMAGE JENKINS_CD_AGENT_IMAGE
+        export JENKINS_AGENT_NETWORK_INTERNAL
+        case "$action" in
+            stop)
+                container_ids=$(compose ps --all --quiet 2>/dev/null) || \
+                    fail 'cannot inspect the stack before shutdown'
+                compose stop --timeout 60 >/dev/null 2>&1 || \
+                    fail 'the stack did not stop cleanly within 60 seconds'
+                for container_id in $container_ids; do
+                    exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$container_id" 2>/dev/null) || \
+                        fail 'cannot verify container shutdown state'
+                    [ "$exit_code" -ne 137 ] || \
+                        fail 'a container required forced termination; inspect it before recovery'
+                done
+                compose down >/dev/null 2>&1 || fail 'stopped stack cleanup failed'
+                ;;
+            status) compose ps ;;
+            logs) compose logs ;;
+            destroy) compose down --volumes --remove-orphans ;;
+        esac
+        exit
+        ;;
+esac
+
+[ -f "$config" ] || fail 'configuration file was not found'
+
+JENKINS_HTTP_PORT=
+JENKINS_ADMIN_ID=
+JENKINS_HANDOFF_ID=
+JENKINS_REPOSITORY_URL=
+JENKINS_AGENT_CONTROLLER_URL=
+JENKINS_PIPELINE_RUN_LIMIT_SECONDS=
+JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=
+JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=
+JENKINS_CV_WORK_LIMIT_SECONDS=
+JENKINS_CD_WORK_LIMIT_SECONDS=
+JENKINS_ADMIN_PASSWORD_FILE=
+JENKINS_HANDOFF_PASSWORD_FILE=
+JENKINS_INTEGRATION_AGENT_SECRET_FILE=
+JENKINS_CI_AGENT_SECRET_FILE=
+JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=
+JENKINS_CV_AGENT_SECRET_FILE=
+JENKINS_CD_AGENT_SECRET_FILE=
+
+while IFS='=' read -r key value; do
+    case "$key" in
+        ''|'#'*) ;;
+        JENKINS_HTTP_PORT) JENKINS_HTTP_PORT=$value ;;
+        JENKINS_ADMIN_ID) JENKINS_ADMIN_ID=$value ;;
+        JENKINS_HANDOFF_ID) JENKINS_HANDOFF_ID=$value ;;
+        JENKINS_REPOSITORY_URL) JENKINS_REPOSITORY_URL=$value ;;
+        JENKINS_AGENT_CONTROLLER_URL) JENKINS_AGENT_CONTROLLER_URL=$value ;;
+        JENKINS_PIPELINE_RUN_LIMIT_SECONDS) JENKINS_PIPELINE_RUN_LIMIT_SECONDS=$value ;;
+        JENKINS_COMPOSITION_WORK_LIMIT_SECONDS) JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=$value ;;
+        JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS) JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=$value ;;
+        JENKINS_CV_WORK_LIMIT_SECONDS) JENKINS_CV_WORK_LIMIT_SECONDS=$value ;;
+        JENKINS_CD_WORK_LIMIT_SECONDS) JENKINS_CD_WORK_LIMIT_SECONDS=$value ;;
+        JENKINS_ADMIN_PASSWORD_FILE) JENKINS_ADMIN_PASSWORD_FILE=$value ;;
+        JENKINS_HANDOFF_PASSWORD_FILE) JENKINS_HANDOFF_PASSWORD_FILE=$value ;;
+        JENKINS_INTEGRATION_AGENT_SECRET_FILE) JENKINS_INTEGRATION_AGENT_SECRET_FILE=$value ;;
+        JENKINS_CI_AGENT_SECRET_FILE) JENKINS_CI_AGENT_SECRET_FILE=$value ;;
+        JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE) JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$value ;;
+        JENKINS_CV_AGENT_SECRET_FILE) JENKINS_CV_AGENT_SECRET_FILE=$value ;;
+        JENKINS_CD_AGENT_SECRET_FILE) JENKINS_CD_AGENT_SECRET_FILE=$value ;;
+        *) fail "unknown configuration key: $key" ;;
+    esac
+done < "$config"
+
+for value in \
+    "$JENKINS_HTTP_PORT" \
+    "$JENKINS_ADMIN_ID" \
+    "$JENKINS_HANDOFF_ID" \
+    "$JENKINS_REPOSITORY_URL" \
+    "$JENKINS_AGENT_CONTROLLER_URL" \
+    "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS" \
+    "$JENKINS_COMPOSITION_WORK_LIMIT_SECONDS" \
+    "$JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS" \
+    "$JENKINS_CV_WORK_LIMIT_SECONDS" \
+    "$JENKINS_CD_WORK_LIMIT_SECONDS" \
+    "$JENKINS_ADMIN_PASSWORD_FILE" \
+    "$JENKINS_HANDOFF_PASSWORD_FILE" \
+    "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
+    "$JENKINS_CI_AGENT_SECRET_FILE" \
+    "$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE" \
+    "$JENKINS_CV_AGENT_SECRET_FILE" \
+    "$JENKINS_CD_AGENT_SECRET_FILE"
+do
+    [ -n "$value" ] || fail 'all configuration values are required'
+done
+
+case "$JENKINS_HTTP_PORT" in
+    *[!0-9]*|'') fail 'JENKINS_HTTP_PORT must be an integer' ;;
+esac
+[ "$JENKINS_HTTP_PORT" -ge 1 ] && [ "$JENKINS_HTTP_PORT" -le 65535 ] || \
+    fail 'JENKINS_HTTP_PORT must be between 1 and 65535'
+
+validate_limit_seconds() {
+    setting=$1
+    value=$2
+    case "$value" in
+        *[!0-9]*|'') fail "$setting must be a positive integer" ;;
+    esac
+    [ "$value" -ge 1 ] && [ "$value" -le 86400 ] || \
+        fail "$setting must be between 1 and 86400 seconds"
+}
+validate_limit_seconds JENKINS_PIPELINE_RUN_LIMIT_SECONDS \
+    "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS"
+validate_limit_seconds JENKINS_COMPOSITION_WORK_LIMIT_SECONDS \
+    "$JENKINS_COMPOSITION_WORK_LIMIT_SECONDS"
+validate_limit_seconds JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS \
+    "$JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS"
+validate_limit_seconds JENKINS_CV_WORK_LIMIT_SECONDS "$JENKINS_CV_WORK_LIMIT_SECONDS"
+validate_limit_seconds JENKINS_CD_WORK_LIMIT_SECONDS "$JENKINS_CD_WORK_LIMIT_SECONDS"
+[ "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS" -ge 180 ] || \
+    fail 'JENKINS_PIPELINE_RUN_LIMIT_SECONDS must reserve at least two minutes for finalization'
+
+for user_id in "$JENKINS_ADMIN_ID" "$JENKINS_HANDOFF_ID"; do
+    case "$user_id" in
+        *[!A-Za-z0-9_.-]*|'') fail 'Jenkins user IDs contain an invalid character' ;;
+    esac
+done
+[ "$JENKINS_ADMIN_ID" != "$JENKINS_HANDOFF_ID" ] || \
+    fail 'administrator and handoff user IDs must differ'
+
+case "$JENKINS_REPOSITORY_URL" in
+    https://github.com/*/*.git) ;;
+    *) fail 'JENKINS_REPOSITORY_URL must be an HTTPS GitHub clone URL' ;;
+esac
+case "$JENKINS_REPOSITORY_URL" in
+    *@*) fail 'JENKINS_REPOSITORY_URL must not contain credentials' ;;
+esac
+
+command -v python3 >/dev/null 2>&1 || fail 'Python 3 is required'
+python3 - "$JENKINS_AGENT_CONTROLLER_URL" <<'PY' || \
+    fail 'JENKINS_AGENT_CONTROLLER_URL must be the internal Compose URL or an uncredentialed HTTPS URL'
+import sys
+from urllib.parse import urlsplit
+
+value = sys.argv[1]
+try:
+    parsed = urlsplit(value)
+except ValueError:
+    raise SystemExit(1) from None
+valid_scheme = value == "http://controller:8080" or parsed.scheme == "https"
+try:
+    parsed.port
+except ValueError:
+    valid_port = False
+else:
+    valid_port = True
+valid = (
+    valid_scheme
+    and valid_port
+    and parsed.hostname is not None
+    and parsed.username is None
+    and parsed.password is None
+    and not parsed.query
+    and not parsed.fragment
+    and not any(character.isspace() for character in value)
+)
+raise SystemExit(0 if valid else 1)
+PY
+JENKINS_AGENT_NETWORK_INTERNAL=false
+
+load_installation() {
+    [ -f "$installation" ] || fail 'reviewed installation authority is missing'
+    SDI_SUPPORTED_UBUNTU_LTS=
+    SDI_DOCKER_ENGINE_MIN_MAJOR=
+    SDI_DOCKER_COMPOSE_MIN_MAJOR=
+    SDI_GIT_MIN_MAJOR=
+    SDI_REQUIRED_HTTPS_URLS=
+    SDI_JENKINS_CONTROLLER_IMAGE=
+    SDI_JENKINS_PLUGIN_COUNT=
+    SDI_JENKINS_PLUGIN_LOCK_SHA256=
+    while IFS='=' read -r key value; do
+        case "$key" in
+            SDI_SUPPORTED_UBUNTU_LTS) SDI_SUPPORTED_UBUNTU_LTS=$value ;;
+            SDI_DOCKER_ENGINE_MIN_MAJOR) SDI_DOCKER_ENGINE_MIN_MAJOR=$value ;;
+            SDI_DOCKER_COMPOSE_MIN_MAJOR) SDI_DOCKER_COMPOSE_MIN_MAJOR=$value ;;
+            SDI_GIT_MIN_MAJOR) SDI_GIT_MIN_MAJOR=$value ;;
+            SDI_REQUIRED_HTTPS_URLS) SDI_REQUIRED_HTTPS_URLS=$value ;;
+            SDI_JENKINS_CONTROLLER_IMAGE) SDI_JENKINS_CONTROLLER_IMAGE=$value ;;
+            SDI_JENKINS_PLUGIN_COUNT) SDI_JENKINS_PLUGIN_COUNT=$value ;;
+            SDI_JENKINS_PLUGIN_LOCK_SHA256) SDI_JENKINS_PLUGIN_LOCK_SHA256=$value ;;
+        esac
+    done < "$installation"
+    for value in \
+        "$SDI_SUPPORTED_UBUNTU_LTS" \
+        "$SDI_DOCKER_ENGINE_MIN_MAJOR" \
+        "$SDI_DOCKER_COMPOSE_MIN_MAJOR" \
+        "$SDI_GIT_MIN_MAJOR" \
+        "$SDI_REQUIRED_HTTPS_URLS" \
+        "$SDI_JENKINS_CONTROLLER_IMAGE" \
+        "$SDI_JENKINS_PLUGIN_COUNT" \
+        "$SDI_JENKINS_PLUGIN_LOCK_SHA256"
+    do
+        [ -n "$value" ] || fail 'reviewed installation authority is incomplete'
+    done
+}
+
+host_preflight() {
+    load_installation
+    os_id=
+    version_id=
+    while IFS='=' read -r key value; do
+        value=${value#\"}
+        value=${value%\"}
+        case "$key" in
+            ID) os_id=$value ;;
+            VERSION_ID) version_id=$value ;;
+        esac
+    done < /etc/os-release
+    [ "$os_id" = ubuntu ] || fail 'supported Ubuntu LTS is required'
+    case ",$SDI_SUPPORTED_UBUNTU_LTS," in
+        *",$version_id,"*) ;;
+        *) fail "Ubuntu $version_id is not in the reviewed LTS support set" ;;
+    esac
+    for command_name in curl docker git python3 systemctl uv; do
+        command -v "$command_name" >/dev/null 2>&1 || \
+            fail "$command_name is required; host administration must install it"
+    done
+    docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || \
+        fail 'Docker Engine is not reachable by the operator'
+    docker_major=${docker_version%%.*}
+    case "$docker_major" in
+        ''|*[!0-9]*) fail 'Docker Engine returned an invalid version' ;;
+    esac
+    [ "$docker_major" -ge "$SDI_DOCKER_ENGINE_MIN_MAJOR" ] || \
+        fail 'Docker Engine does not meet the reviewed minimum major version'
+    compose_version=$(docker compose version --short 2>/dev/null) || \
+        fail 'the Docker Compose v2 plugin is unavailable'
+    compose_major=${compose_version%%.*}
+    case "$compose_major" in
+        ''|*[!0-9]*) fail 'Docker Compose returned an invalid version' ;;
+    esac
+    [ "$compose_major" -ge "$SDI_DOCKER_COMPOSE_MIN_MAJOR" ] || \
+        fail 'Docker Compose does not meet the reviewed minimum major version'
+    git_version=$(git --version 2>/dev/null) || fail 'Git version detection failed'
+    case "$git_version" in
+        'git version '*) ;;
+        *) fail 'Git returned an invalid version' ;;
+    esac
+    git_major=${git_version#git version }
+    git_major=${git_major%%.*}
+    case "$git_major" in
+        ''|*[!0-9]*) fail 'Git returned an invalid version' ;;
+    esac
+    [ "$git_major" -ge "$SDI_GIT_MIN_MAJOR" ] || \
+        fail 'Git does not meet the reviewed minimum major version'
+    checkout_status=$(git -C "$repository_root" status --porcelain=v1 \
+        --untracked-files=all 2>/dev/null) || \
+        fail 'the approved repository checkout state cannot be read'
+    [ -z "$checkout_status" ] || \
+        fail 'the approved repository checkout contains uncommitted material'
+    systemctl --version >/dev/null 2>&1 || fail 'systemd is required'
+    [ -r "$repository_root" ] || fail 'the repository checkout is not readable'
+    [ -w "$(dirname "$config")" ] || \
+        fail 'the scaffold configuration directory is not writable'
+    old_ifs=$IFS
+    IFS=,
+    for endpoint in $SDI_REQUIRED_HTTPS_URLS; do
+        IFS=$old_ifs
+        curl --silent --show-error --output /dev/null \
+            --connect-timeout 10 --max-time 20 "$endpoint" 2>/dev/null || \
+            fail 'required upstream HTTPS access is unavailable'
+        IFS=,
+    done
+    IFS=$old_ifs
+    uv run --project "$repository_root/integration" --frozen \
+        sdi-integration validate-installation \
+        --repository "$repository_root" --installation "$installation" \
+        2>/dev/null || \
+        fail 'tracked sources do not match the reviewed installation authority'
+
+    probe_seed=$(mktemp "${TMPDIR:-/tmp}/sdi-preflight-XXXXXX" 2>/dev/null) || \
+        fail 'cannot reserve a private preflight identity'
+    probe_token=${probe_seed##*/}
+    rm -f -- "$probe_seed"
+    probe=${project_name}-${probe_token}
+    probe_volume_created=false
+    probe_network_created=false
+    probe_network_id=
+    cleanup_probe() {
+        [ "$probe_volume_created" = false ] || \
+            docker volume rm "$probe" >/dev/null 2>&1 || true
+        [ "$probe_network_created" = false ] || \
+            docker network rm "$probe_network_id" >/dev/null 2>&1 || true
+    }
+    trap cleanup_probe EXIT
+    trap 'exit 130' HUP INT TERM
+    if docker volume inspect "$probe" >/dev/null 2>&1; then
+        fail 'the preflight volume name is already in use'
+    fi
+    if docker network inspect "$probe" >/dev/null 2>&1; then
+        fail 'the preflight network name is already in use'
+    fi
+    trap '' HUP INT TERM
+    docker volume create --label "org.sdi.preflight=$probe_token" "$probe" \
+        >/dev/null 2>&1 || fail 'Docker cannot create a named volume'
+    probe_owner=$(docker volume inspect \
+        --format '{{index .Labels "org.sdi.preflight"}}' "$probe" 2>/dev/null) || \
+        fail 'Docker cannot verify preflight volume ownership'
+    [ "$probe_owner" = "$probe_token" ] || \
+        fail 'Docker preflight volume ownership is ambiguous'
+    probe_volume_created=true
+    trap 'exit 130' HUP INT TERM
+    trap '' HUP INT TERM
+    probe_network_id=$(docker network create \
+        --label "org.sdi.preflight=$probe_token" "$probe" 2>/dev/null) || \
+        fail 'Docker cannot create a network'
+    case "$probe_network_id" in
+        ''|*[!0-9a-f]*) fail 'Docker returned an invalid preflight network identity' ;;
+    esac
+    probe_owner=$(docker network inspect \
+        --format '{{index .Labels "org.sdi.preflight"}}' \
+        "$probe_network_id" 2>/dev/null) || \
+        fail 'Docker cannot verify preflight network ownership'
+    [ "$probe_owner" = "$probe_token" ] || \
+        fail 'Docker preflight network ownership is ambiguous'
+    probe_network_created=true
+    trap 'exit 130' HUP INT TERM
+    docker run --rm --name "$probe" --network "$probe_network_id" \
+        --volume "$probe:/var/jenkins_home" --publish 127.0.0.1::8080 \
+        --entrypoint /bin/sh "$SDI_JENKINS_CONTROLLER_IMAGE" \
+        -c 'touch /var/jenkins_home/write-test' >/dev/null 2>&1 || \
+        fail 'Docker cannot run the pinned image with required host capabilities'
+    docker volume rm "$probe" >/dev/null 2>&1 || \
+        fail 'Docker cannot remove the preflight volume'
+    probe_volume_created=false
+    docker network rm "$probe_network_id" >/dev/null 2>&1 || \
+        fail 'Docker cannot remove the preflight network'
+    probe_network_created=false
+    trap - EXIT HUP INT TERM
+}
+
+validate_secret_file() {
+    secret_file=$1
+    case "$secret_file" in
+        /*) ;;
+        *) fail 'a secret file path must be absolute' ;;
+    esac
+    [ -f "$secret_file" ] || fail 'a required secret file was not found'
+    [ -s "$secret_file" ] || fail 'a required secret file is empty'
+    resolved_secret=$(realpath -- "$secret_file")
+    case "$resolved_secret" in
+        "$repository_root"|"$repository_root"/*)
+            fail 'secret files must be outside the checkout'
+            ;;
+    esac
+    [ "$(stat -c '%u' "$secret_file")" -eq "$(id -u)" ] || \
+        fail 'secret files must be owned by the current user'
+    mode=$(stat -c '%a' "$secret_file")
+    [ $((0$mode & 0400)) -ne 0 ] || \
+        fail 'secret files must be owner-readable'
+    [ $((0$mode & 077)) -eq 0 ] || \
+        fail 'secret files must not be accessible by group or other users'
+}
+
+validate_registration_secret() {
+    secret_file=$1
+    validate_secret_file "$secret_file"
+    secret=$(tr -d '\r\n' < "$secret_file")
+    case "$secret" in
+        *[!0-9a-f]*|'')
+            fail 'agent registration secrets must be lowercase hexadecimal'
+            ;;
+    esac
+    [ "${#secret}" -eq 64 ] || \
+        fail 'agent registration secrets must contain 64 hexadecimal characters'
+}
+
+validate_registration_target() {
+    secret_file=$1
+    case "$secret_file" in
+        /*) ;;
+        *) fail 'an agent secret target path must be absolute' ;;
+    esac
+    [ ! -L "$secret_file" ] || fail 'agent secret target paths must not be symbolic links'
+    resolved_secret=$(realpath -m -- "$secret_file")
+    case "$resolved_secret" in
+        "$repository_root"|"$repository_root"/*)
+            fail 'agent secret target paths must be outside the checkout'
+            ;;
+    esac
+    [ -d "$(dirname "$secret_file")" ] || \
+        fail 'an agent secret target directory was not found'
+    [ -w "$(dirname "$secret_file")" ] || \
+        fail 'agent secret target directories must be writable'
+}
+
+case "$action" in
+    start-controller)
+        validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        ;;
+    preflight)
+        validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        for secret_file in \
+            "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
+            "$JENKINS_CI_AGENT_SECRET_FILE" \
+            "$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE" \
+            "$JENKINS_CV_AGENT_SECRET_FILE" \
+            "$JENKINS_CD_AGENT_SECRET_FILE"
+        do
+            if [ -e "$secret_file" ]; then
+                validate_registration_secret "$secret_file"
+            else
+                validate_registration_target "$secret_file"
+            fi
+        done
+        ;;
+    reconcile-agent)
+        case "$reconcile_agent" in
+            ci) selected_secret_file=$JENKINS_CI_AGENT_SECRET_FILE ;;
+            image-build) selected_secret_file=$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE ;;
+            cv) selected_secret_file=$JENKINS_CV_AGENT_SECRET_FILE ;;
+            cd) selected_secret_file=$JENKINS_CD_AGENT_SECRET_FILE ;;
+        esac
+        validate_registration_secret "$selected_secret_file"
+        validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
+        ;;
+    quiesce|resume)
+        validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
+        ;;
+    *)
+        validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        registration_secrets=':'
+        for secret_file in \
+            "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
+            "$JENKINS_CI_AGENT_SECRET_FILE" \
+            "$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE" \
+            "$JENKINS_CV_AGENT_SECRET_FILE" \
+            "$JENKINS_CD_AGENT_SECRET_FILE"
+        do
+            validate_registration_secret "$secret_file"
+            secret=$(tr -d '\r\n' < "$secret_file")
+            case "$registration_secrets" in
+                *":$secret:"*) fail 'agent registration secrets must not be shared' ;;
+            esac
+            registration_secrets="$registration_secrets$secret:"
+        done
+        ;;
+esac
+
+command -v docker >/dev/null 2>&1 || fail 'Docker Engine is required'
+command -v uv >/dev/null 2>&1 || fail 'uv is required'
+[ "$(uname -s)" = Linux ] || fail 'a Linux host is required'
+[ "$(uname -m)" = x86_64 ] || fail 'an x86_64 host is required'
+platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>/dev/null) || \
+    fail 'Docker Engine is not reachable'
+[ "$platform" = linux/amd64 ] || fail "Docker Engine must be linux/amd64, found $platform"
+
+descriptor_image() {
+    descriptor=$1
+    uv run --project "$repository_root/integration" --frozen \
+        sdi-integration adapter-image --descriptor "$root/adapters/$descriptor" \
+        2>/dev/null || \
+        fail "invalid adapter descriptor: $descriptor"
+}
+
+JENKINS_COMPOSITION_AGENT_IMAGE=$(descriptor_image composition-fixture-v1.yaml)
+JENKINS_IMAGE_BUILD_AGENT_IMAGE=$(descriptor_image image-build-fixture-v1.yaml)
+JENKINS_CV_AGENT_IMAGE=$(descriptor_image cv-fixture-v1.yaml)
+JENKINS_CD_AGENT_IMAGE=$(descriptor_image cd-fixture-v1.yaml)
+
+export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
+export JENKINS_REPOSITORY_URL JENKINS_AGENT_CONTROLLER_URL
+export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
+export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
+export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
+export JENKINS_CD_WORK_LIMIT_SECONDS
+export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
+export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
+export JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE JENKINS_CV_AGENT_SECRET_FILE
+export JENKINS_CD_AGENT_SECRET_FILE
+export JENKINS_COMPOSITION_AGENT_IMAGE JENKINS_IMAGE_BUILD_AGENT_IMAGE
+export JENKINS_CV_AGENT_IMAGE JENKINS_CD_AGENT_IMAGE
+export JENKINS_AGENT_NETWORK_INTERNAL
+
+validate() {
+    load_installation
+    uv run --project "$repository_root/integration" --frozen \
+        sdi-integration validate-installation \
+        --repository "$repository_root" --installation "$installation" \
+        2>/dev/null || fail 'tracked sources do not match the reviewed installation authority'
+    expected_image=$SDI_JENKINS_CONTROLLER_IMAGE
+    IFS= read -r first_line < "$root/controller/Dockerfile"
+    [ "$first_line" = "FROM $expected_image" ] || \
+        fail 'controller base image does not match the reviewed immutable pin'
+
+    plugin_count=0
+    plugin_lines='
+'
+    while IFS= read -r plugin; do
+        [ -n "$plugin" ] || continue
+        case "$plugin" in
+            [a-z0-9-]*:*) ;;
+            *) fail "invalid plugin lock entry: $plugin" ;;
+        esac
+        case "$plugin_lines" in
+            *"
+$plugin
+"*) fail "duplicate plugin lock entry: $plugin" ;;
+        esac
+        plugin_lines="$plugin_lines$plugin
+"
+        plugin_count=$((plugin_count + 1))
+    done < "$root/controller/plugins.txt"
+    [ "$plugin_count" -eq "$SDI_JENKINS_PLUGIN_COUNT" ] || \
+        fail "plugin lock must contain $SDI_JENKINS_PLUGIN_COUNT entries, found $plugin_count"
+    set -- $(sha256sum "$root/controller/plugins.txt")
+    [ "$1" = "$SDI_JENKINS_PLUGIN_LOCK_SHA256" ] || \
+        fail 'plugin lock does not match the reviewed versions'
+
+    docker build --check --file "$root/controller/Dockerfile" "$root" \
+        >/dev/null 2>&1 || fail 'the controller Dockerfile is not buildable'
+    docker build --check --file "$root/agents/Dockerfile" "$repository_root" \
+        >/dev/null 2>&1 || fail 'the agent Dockerfile is not buildable'
+    compose config --quiet >/dev/null 2>&1 || \
+        fail 'the Compose configuration is invalid'
+}
+
+agent_image() {
+    case "$1" in
+        integration) printf '%s\n' 'sdi-jenkins-agent-integration:3391.va-37fa-305d6d-2' ;;
+        ci) printf '%s\n' 'sdi-jenkins-agent-ci:3391.va-37fa-305d6d-2' ;;
+        image-build) printf '%s\n' 'sdi-jenkins-agent-image-build:3391.va-37fa-305d6d-2' ;;
+        cv) printf '%s\n' 'sdi-jenkins-agent-cv:3391.va-37fa-305d6d-2' ;;
+        cd) printf '%s\n' 'sdi-jenkins-agent-cd:3391.va-37fa-305d6d-2' ;;
+    esac
+}
+
+validate_agent_image() {
+    agent=$1
+    image=$(agent_image "$agent")
+    volumes=$(docker image inspect --format '{{json .Config.Volumes}}' "$image") || \
+        fail "cannot inspect built $agent agent image"
+    [ "$volumes" = null ] || \
+        fail "$agent agent image declares an unexpected persistent volume"
+}
+
+build_controller() {
+    docker build \
+        --platform linux/amd64 \
+        --tag sdi-jenkins-controller:2.568.3 \
+        --file "$root/controller/Dockerfile" \
+        "$root"
+}
+
+admin_check() {
+    "$root/bin/smoke-check" "$1" \
+        --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
+        --admin-id "$JENKINS_ADMIN_ID" \
+        --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE"
+}
+
+case "$action" in
+    preflight)
+        host_preflight
+        validate
+        ;;
+    validate)
+        validate
+        ;;
+    start-controller)
+        validate
+        build_controller
+        compose up --no-build --detach --wait --wait-timeout 240 controller
+        ;;
+    start)
+        validate
+        build_controller
+        compose build integration ci image-build cv cd
+        for agent in integration ci image-build cv cd; do
+            validate_agent_image "$agent"
+        done
+        compose up --no-build --detach --wait --wait-timeout 240
+        ;;
+    reconcile-agent)
+        validate
+        admin_check quiesce
+        resume_after_reconciliation() {
+            operation_status=$?
+            trap - EXIT HUP INT TERM
+            if ! admin_check idle; then
+                printf '%s\n' \
+                    'stack: Jenkins remains in quiet mode because work arrived during reconciliation' >&2
+                [ "$operation_status" -ne 0 ] || operation_status=1
+            elif ! admin_check resume; then
+                [ "$operation_status" -ne 0 ] || operation_status=1
+            fi
+            exit "$operation_status"
+        }
+        trap resume_after_reconciliation EXIT
+        trap 'exit 130' HUP INT TERM
+        compose build "$reconcile_agent"
+        validate_agent_image "$reconcile_agent"
+        compose up --no-build --no-deps --detach --wait --wait-timeout 240 \
+            "$reconcile_agent"
+        ;;
+    quiesce)
+        admin_check quiesce
+        ;;
+    resume)
+        admin_check resume
+        ;;
+    verify-live)
+        validate
+        "$root/bin/smoke-check" check \
+            --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
+            --admin-id "$JENKINS_ADMIN_ID" \
+            --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE" \
+            --handoff-id "$JENKINS_HANDOFF_ID" \
+            --handoff-password-file "$JENKINS_HANDOFF_PASSWORD_FILE" \
+            --repository-url "$JENKINS_REPOSITORY_URL" \
+            --plugin-lock "$root/controller/plugins.txt" \
+            --casc "$root/casc/jenkins.yaml" \
+            --jenkinsfile "$repository_root/Jenkinsfile"
+        ;;
+    exercise-live)
+        validate
+        "$root/bin/smoke-check" exercise-agents \
+            --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
+            --admin-id "$JENKINS_ADMIN_ID" \
+            --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE"
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

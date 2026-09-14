@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+: "${JENKINS_URL:?JENKINS_URL is required}"
+: "${JENKINS_AGENT_NAME:?JENKINS_AGENT_NAME is required}"
+: "${JENKINS_AGENT_SECRET_FILE:?JENKINS_AGENT_SECRET_FILE is required}"
+
+[ -s "$JENKINS_AGENT_SECRET_FILE" ] || {
+    printf 'jenkins-agent-entrypoint: registration secret is missing or empty\n' >&2
+    exit 2
+}
+
+secret=$(tr -d '\r\n' < "$JENKINS_AGENT_SECRET_FILE")
+case "$secret" in
+    *[!0-9a-f]*|'')
+        printf 'jenkins-agent-entrypoint: registration secret is invalid\n' >&2
+        exit 2
+        ;;
+esac
+
+mkdir -p /home/jenkins/agent/remoting
+
+exec java -jar /usr/share/jenkins/agent.jar \
+    -url "$JENKINS_URL" \
+    -secret "$secret" \
+    -name "$JENKINS_AGENT_NAME" \
+    -webSocket \
+    -workDir /home/jenkins/agent \
+    -failIfWorkDirIsMissing

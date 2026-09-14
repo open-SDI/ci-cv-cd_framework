@@ -1,0 +1,1 @@
+Deterministic Fixture consumed implemented composition output; no image build was evaluated.

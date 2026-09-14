@@ -1,0 +1,33 @@
+schema_version: sdi.fixture-case/v1
+case_id: composition-negative-domain
+stage: composition
+match_inputs:
+  - slot: run_request
+    byte_size: 321
+    sha256: 7a0c2aceeb6516d86320fcca7eb1dea0f71382f17fd07be7ab639e9d58ab0ed1
+  - slot: requirements_specification
+    byte_size: 2260
+    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+  - slot: target_profile
+    byte_size: 214
+    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+behavior: response
+execution_conclusion: succeeded
+domain_outcome: failed
+reason:
+  category: domain
+  code: sdi.domain.requirement-unsatisfied
+  summary: The deterministic conformance case represents a negative Domain outcome.
+outputs:
+  - slot: composition_blueprint
+    source_path: composition-blueprint.json
+    byte_size: 951
+    sha256: 223f83db926e9fa19aa11e2e9be549a19ab9fcfd4c63ae6d370e53a820d9da7f
+  - slot: deployment_schema
+    source_path: deployment-schema.json
+    byte_size: 997
+    sha256: d046c59f3970577d954fddda8f40a40800d2e77a09f838b095b54ea229c38f6e
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 55
+  sha256: fe548c28f7eac9521e264499066abad7487c5a184295888cdaaffa51f32c4b54

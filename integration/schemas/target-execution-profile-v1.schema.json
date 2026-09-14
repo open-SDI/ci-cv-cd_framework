@@ -1,0 +1,699 @@
+{
+  "$defs": {
+    "ComputePlatform": {
+      "additionalProperties": false,
+      "description": "The compute platform and CPU architecture used by a target.",
+      "properties": {
+        "architecture": {
+          "enum": [
+            "arm64",
+            "amd64"
+          ],
+          "title": "Architecture",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "native",
+            "controller",
+            "edge"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "platform_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Platform Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform_id",
+        "kind",
+        "architecture"
+      ],
+      "title": "ComputePlatform",
+      "type": "object"
+    },
+    "DeclaredValue_NonNegativeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredValue[NonNegativeQuantity]",
+      "type": "object"
+    },
+    "DeclaredValue_NonNegativeWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredValue[NonNegativeWholeQuantity]",
+      "type": "object"
+    },
+    "DeclaredValue_PositiveQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredValue[PositiveQuantity]",
+      "type": "object"
+    },
+    "DeclaredValue_PositiveWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredValue[PositiveWholeQuantity]",
+      "type": "object"
+    },
+    "MeasuredValue_NonNegativeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "measured",
+          "title": "Basis",
+          "type": "string"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "minLength": 1,
+          "title": "Evidence Reference",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "method",
+        "measured_at",
+        "conditions",
+        "evidence_reference"
+      ],
+      "title": "MeasuredValue[NonNegativeQuantity]",
+      "type": "object"
+    },
+    "MeasuredValue_NonNegativeWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "measured",
+          "title": "Basis",
+          "type": "string"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "minLength": 1,
+          "title": "Evidence Reference",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "method",
+        "measured_at",
+        "conditions",
+        "evidence_reference"
+      ],
+      "title": "MeasuredValue[NonNegativeWholeQuantity]",
+      "type": "object"
+    },
+    "MeasuredValue_PositiveQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "measured",
+          "title": "Basis",
+          "type": "string"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "minLength": 1,
+          "title": "Evidence Reference",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "method",
+        "measured_at",
+        "conditions",
+        "evidence_reference"
+      ],
+      "title": "MeasuredValue[PositiveQuantity]",
+      "type": "object"
+    },
+    "MeasuredValue_PositiveWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "measured",
+          "title": "Basis",
+          "type": "string"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "minLength": 1,
+          "title": "Evidence Reference",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "method",
+        "measured_at",
+        "conditions",
+        "evidence_reference"
+      ],
+      "title": "MeasuredValue[PositiveWholeQuantity]",
+      "type": "object"
+    },
+    "MobilityTarget": {
+      "additionalProperties": false,
+      "description": "The mobility target described by a reusable profile.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "sdv",
+            "sdr"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "kind"
+      ],
+      "title": "MobilityTarget",
+      "type": "object"
+    },
+    "NetworkLink": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "latency_ms"
+          ]
+        },
+        {
+          "required": [
+            "bandwidth_mbps"
+          ]
+        }
+      ],
+      "description": "One directional network link under stated conditions.",
+      "properties": {
+        "bandwidth_mbps": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_PositiveQuantity_",
+              "measured": "#/$defs/MeasuredValue_PositiveQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_PositiveQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_PositiveQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_PositiveQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_PositiveQuantity_"
+            }
+          ],
+          "title": "Bandwidth Mbps"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "destination": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Destination",
+          "type": "string"
+        },
+        "latency_ms": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_NonNegativeQuantity_",
+              "measured": "#/$defs/MeasuredValue_NonNegativeQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_NonNegativeQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_NonNegativeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_NonNegativeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_NonNegativeQuantity_"
+            }
+          ],
+          "title": "Latency Ms"
+        },
+        "source": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "destination",
+        "conditions"
+      ],
+      "title": "NetworkLink",
+      "type": "object"
+    },
+    "NonNegativeQuantity": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "minimum": 0,
+          "type": "number"
+        }
+      ]
+    },
+    "NonNegativeWholeQuantity": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "PlaceholderValue_NonNegativeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderValue[NonNegativeQuantity]",
+      "type": "object"
+    },
+    "PlaceholderValue_NonNegativeWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NonNegativeWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderValue[NonNegativeWholeQuantity]",
+      "type": "object"
+    },
+    "PlaceholderValue_PositiveQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderValue[PositiveQuantity]",
+      "type": "object"
+    },
+    "PlaceholderValue_PositiveWholeQuantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PositiveWholeQuantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderValue[PositiveWholeQuantity]",
+      "type": "object"
+    },
+    "PositiveQuantity": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      ]
+    },
+    "PositiveWholeQuantity": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "ResourceCapacity": {
+      "additionalProperties": false,
+      "description": "Optional known target capacity; omitted quantities are unknown.",
+      "minProperties": 1,
+      "properties": {
+        "cpu_cores": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_PositiveQuantity_",
+              "measured": "#/$defs/MeasuredValue_PositiveQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_PositiveQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_PositiveQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_PositiveQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_PositiveQuantity_"
+            }
+          ],
+          "title": "Cpu Cores"
+        },
+        "gpu_count": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_NonNegativeWholeQuantity_",
+              "measured": "#/$defs/MeasuredValue_NonNegativeWholeQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_NonNegativeWholeQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_NonNegativeWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_NonNegativeWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_NonNegativeWholeQuantity_"
+            }
+          ],
+          "title": "Gpu Count"
+        },
+        "gpu_model": {
+          "minLength": 1,
+          "title": "Gpu Model",
+          "type": "string"
+        },
+        "gpu_vram_mib": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_PositiveWholeQuantity_",
+              "measured": "#/$defs/MeasuredValue_PositiveWholeQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_PositiveWholeQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_PositiveWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_PositiveWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_PositiveWholeQuantity_"
+            }
+          ],
+          "title": "Gpu Vram Mib"
+        },
+        "memory_mib": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_PositiveWholeQuantity_",
+              "measured": "#/$defs/MeasuredValue_PositiveWholeQuantity_",
+              "placeholder": "#/$defs/PlaceholderValue_PositiveWholeQuantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_PositiveWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_PositiveWholeQuantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_PositiveWholeQuantity_"
+            }
+          ],
+          "title": "Memory Mib"
+        }
+      },
+      "title": "ResourceCapacity",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A reusable description of one candidate execution environment.",
+  "properties": {
+    "network_links": {
+      "items": {
+        "$ref": "#/$defs/NetworkLink"
+      },
+      "minItems": 1,
+      "title": "Network Links",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/ComputePlatform"
+    },
+    "profile_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Profile Id",
+      "type": "string"
+    },
+    "resources": {
+      "$ref": "#/$defs/ResourceCapacity",
+      "title": "Resources"
+    },
+    "schema_version": {
+      "const": "sdi.target-execution-profile/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/MobilityTarget"
+    }
+  },
+  "required": [
+    "schema_version",
+    "profile_id",
+    "target",
+    "platform"
+  ],
+  "title": "TargetExecutionProfile",
+  "type": "object"
+}

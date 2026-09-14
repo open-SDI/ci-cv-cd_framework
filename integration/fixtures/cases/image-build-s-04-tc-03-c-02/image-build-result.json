@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-02-composition",
+  "combination_id": "C-02",
+  "deployment_schema_id": "s-04-tc-03-c-02-deployment",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-02-image-build",
+  "images": [
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-localization@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "service_id": "fixture-localization"
+    },
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-navigation@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "architecture": "amd64",
+      "build_status": "not_evaluated",
+      "image": "example.invalid/sdi/fixture-mission-control@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "waffle-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.image-build-result/v1",
+  "source_inputs": [
+    {
+      "sha256": "60ca8bd502407f163481a90f77d711591a19e8d83e7dc695d0966e11c8f26666",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "547af8111d24019b197fdee23454faec32a2d6ff1826ac9f885d8bbafaa98bcc",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "55053d3f120edc5a8a924283427174d37c40202d98eb93a7100ea6cd96be2c0f",
+      "slot": "deployment_schema"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-02-composition",
+  "combination_id": "C-02",
+  "deployment_schema_id": "s-04-tc-03-c-02-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "waffle-xycar",
+      "resource_id": "xycar",
+      "tier": "mobility"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "waffle-xycar",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "waffle-xycar",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "waffle-xycar",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "waffle-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "217d11ef71d1abad742670158d0714de43f8ede8234d70fe682d0dcbba0dc715",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "60ca8bd502407f163481a90f77d711591a19e8d83e7dc695d0966e11c8f26666",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

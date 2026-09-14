@@ -1,0 +1,11 @@
+schema_version: sdi.adapter-descriptor/v1
+stage: composition
+implementation_mode: fixture
+image: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+entrypoint: sdi-fixture-adapter
+process_contract_version: sdi.stage-adapter-process/v1
+stage_profile: integration/stage-profiles/composition-v1.yaml
+stage_profile_version: sdi.composition-stage-profile/v1
+stage_profile_sha256: 79710a0ecd33ca62aa1dce44d590a1352c32f079a048ba795750b1e51319016d
+agent_label: composition
+secret_bindings: []

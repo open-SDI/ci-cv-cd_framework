@@ -1,0 +1,34 @@
+schema_version: sdi.fixture-case/v1
+case_id: cd-s-04-tc-03-c-01
+stage: cd
+match_inputs:
+  - slot: target_profile
+    byte_size: 214
+    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+  - slot: composition_blueprint
+    byte_size: 1406
+    sha256: 369ec9f0b443cb87d647380d5f60b8b8805be31759fa72c48d447f5cfdf31a17
+  - slot: deployment_schema
+    byte_size: 1170
+    sha256: 22ccf6a69398e10b3b025f5eeb85ae185dbfb7e33353f7e6ca9eb666d7b4d76f
+  - slot: image_build_result
+    byte_size: 1574
+    sha256: e22d0cccb5d64e326d51fc2c6471c5b145da3e608e8cc9c370bd1024c7ad30ad
+  - slot: validation_evidence
+    byte_size: 1432
+    sha256: 1da10ee3d50a7d9c712deeace8f84282692dbed91bc63d9775cc3012af0eea3b
+execution_conclusion: succeeded
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.cd-executed
+  summary: Deterministic pipeline-interface Fixture executed; no CD capability was evaluated.
+outputs:
+  - slot: deployment_result
+    source_path: deployment-result.json
+    byte_size: 1694
+    sha256: d775b8ed894a252b2cdd9225b36dc308a938b29b0983ba9f53e5914e3738d492
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 87
+  sha256: ba3ffd84ef4e90933882dc7026199ce063913119455bc3ebfebdac6cb0de5bf3

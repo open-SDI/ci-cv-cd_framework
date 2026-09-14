@@ -1,0 +1,36 @@
+schema_version: sdi.stage-profile/v1
+profile_version: sdi.cd-stage-profile/v1
+stage: cd
+work_limit_seconds: 900
+inputs:
+  - slot: target_profile
+    path: target-profile.yaml
+    media_type: application/yaml
+    schema_version: sdi.target-execution-profile/v1
+  - slot: composition_blueprint
+    path: composition-blueprint.json
+    media_type: application/json
+    schema_version: sdi.composition-blueprint/v1
+  - slot: deployment_schema
+    path: deployment-schema.json
+    media_type: application/json
+    schema_version: sdi.deployment-schema/v1
+  - slot: image_build_result
+    path: image-build-result.json
+    media_type: application/json
+    schema_version: sdi.image-build-result/v1
+  - slot: validation_evidence
+    path: validation-evidence.json
+    media_type: application/json
+    schema_version: sdi.validation-evidence/v1
+outputs:
+  - slot: deployment_result
+    path: outputs/deployment-result.json
+    media_type: application/json
+    schema_version: sdi.deployment-result/v1
+    required: true
+    max_bytes: 32768
+diagnostic:
+  path: diagnostic.txt
+  media_type: text/plain; charset=utf-8
+  max_bytes: 4096

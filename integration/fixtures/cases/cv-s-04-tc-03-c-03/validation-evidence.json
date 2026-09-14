@@ -1,0 +1,43 @@
+{
+  "blueprint_id": "s-04-tc-03-c-03-composition",
+  "combination_id": "C-03",
+  "deployment_schema_id": "s-04-tc-03-c-03-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-03-image-build",
+  "kpi_evaluation": "not_evaluated",
+  "profile_id": "burger-native-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.validation-evidence/v1",
+  "source_inputs": [
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "a3485648fc8126551e036dd3ab2f8f59afcee0e9c084c5fa3a1347bc71144303",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "c79c8a1d9e3e35c1a298f0b199475bc1d0e419e22eb2eed796f9e973e56b938a",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "ae668fc561211101e10a59894acf434f46dc6efe246f63b8d66c0b164ed9e554",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "6b95e51efe94de9bf127e616ad8ab94c991f1a23c64c84785d91a74d0ebbe8dc",
+      "slot": "image_build_result"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-03-validation",
+  "validation_records": [
+    {
+      "description": "Delivery-navigation interface evidence placeholder; no simulation was run.",
+      "evaluation_status": "not_evaluated",
+      "validation_case_id": "fixture-delivery-navigation"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+CV pipeline-interface Fixture emitted deterministic data; no simulation or Validation was run.

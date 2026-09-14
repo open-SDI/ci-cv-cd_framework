@@ -1,0 +1,12 @@
+**
+!controller/
+!controller/Dockerfile
+!controller/plugins.txt
+!agents/
+!agents/Dockerfile
+!agents/jenkins-agent-entrypoint
+!agents/jenkins-agent-health
+!casc/
+!casc/jenkins.yaml
+!jobs/
+!jobs/pipeline-integration.groovy

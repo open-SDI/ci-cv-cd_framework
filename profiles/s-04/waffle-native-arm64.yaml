@@ -1,0 +1,9 @@
+schema_version: sdi.target-execution-profile/v1
+profile_id: waffle-native-arm64
+target:
+  target_id: turtlebot3-waffle
+  kind: sdv
+platform:
+  platform_id: waffle-native-system
+  kind: native
+  architecture: arm64

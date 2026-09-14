@@ -1,0 +1,8 @@
+# Pipeline-interface conformance case: Domain output schema mismatch.
+schema_version: sdi.pipeline-integration-run-request/v1
+scenario_id: S-04
+testcase_id: TC-90
+requirements_specification: requirements/s-04/deliver-book-to-joe.yaml
+combination:
+  combination_id: C-01
+  target_profile: profiles/s-04/waffle-native-arm64.yaml

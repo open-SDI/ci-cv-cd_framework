@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "DiagnosticGrant": {
+      "additionalProperties": false,
+      "description": "The sole bounded diagnostic file grant.",
+      "properties": {
+        "max_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "const": "text/plain; charset=utf-8",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "max_bytes"
+      ],
+      "title": "DiagnosticGrant",
+      "type": "object"
+    },
+    "InputGrant": {
+      "additionalProperties": false,
+      "description": "One input file granted to an adapter.",
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "path",
+        "media_type",
+        "schema_version"
+      ],
+      "title": "InputGrant",
+      "type": "object"
+    },
+    "OutputGrant": {
+      "additionalProperties": false,
+      "description": "One bounded output file an adapter may publish.",
+      "properties": {
+        "max_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "required",
+        "max_bytes"
+      ],
+      "title": "OutputGrant",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict least-privilege file and work grants for one Stage.",
+  "properties": {
+    "diagnostic": {
+      "$ref": "#/$defs/DiagnosticGrant"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/InputGrant"
+      },
+      "minItems": 1,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputGrant"
+      },
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "profile_version": {
+      "minLength": 1,
+      "title": "Profile Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sdi.stage-profile/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/StageName"
+    },
+    "work_limit_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Work Limit Seconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "profile_version",
+    "stage",
+    "work_limit_seconds",
+    "inputs",
+    "outputs",
+    "diagnostic"
+  ],
+  "title": "StageProfile",
+  "type": "object"
+}

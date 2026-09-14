@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "Correlation": {
+      "additionalProperties": false,
+      "description": "Stable project correlation carried across one Stage attempt.",
+      "properties": {
+        "attempt_number": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt Number",
+          "type": "integer"
+        },
+        "execution_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        }
+      },
+      "required": [
+        "execution_id",
+        "stage",
+        "attempt_number"
+      ],
+      "title": "Correlation",
+      "type": "object"
+    },
+    "DeclaredInput": {
+      "additionalProperties": false,
+      "description": "An input grant bound to exact accepted bytes.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "DeclaredInput",
+      "type": "object"
+    },
+    "DiagnosticGrant": {
+      "additionalProperties": false,
+      "description": "The sole bounded diagnostic file grant.",
+      "properties": {
+        "max_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "const": "text/plain; charset=utf-8",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "max_bytes"
+      ],
+      "title": "DiagnosticGrant",
+      "type": "object"
+    },
+    "OutputGrant": {
+      "additionalProperties": false,
+      "description": "One bounded output file an adapter may publish.",
+      "properties": {
+        "max_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "required",
+        "max_bytes"
+      ],
+      "title": "OutputGrant",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Complete least-privilege request for one adapter invocation.",
+  "properties": {
+    "correlation": {
+      "$ref": "#/$defs/Correlation"
+    },
+    "diagnostic": {
+      "$ref": "#/$defs/DiagnosticGrant"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/DeclaredInput"
+      },
+      "minItems": 1,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputGrant"
+      },
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "sdi.stage-adapter-request/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "work_limit_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Work Limit Seconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "correlation",
+    "work_limit_seconds",
+    "inputs",
+    "outputs",
+    "diagnostic"
+  ],
+  "title": "AdapterRequest",
+  "type": "object"
+}

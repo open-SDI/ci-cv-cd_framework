@@ -1,0 +1,696 @@
+#!/usr/bin/env python3
+"""Check the externally observable state of the ephemeral Jenkins controller."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import http.cookiejar
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any, cast
+
+EXPECTED_JENKINS_VERSION = "2.568.3"
+HTTP_OK = 200
+HTTP_FORBIDDEN = 403
+HTTP_NOT_FOUND = 404
+EXPECTED_PARAMETERS = {
+    "HANDOFF_CONTRACT_VERSION",
+    "EXECUTION_ID",
+    "REQUESTED_GIT_REF",
+    "RESOLVED_COMMIT_SHA",
+    "RUN_REQUEST_PATH",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+}
+EXPECTED_AGENTS = {
+    "integration": "integration",
+    "ci": "composition",
+    "image-build": "image-build",
+    "cv": "cv",
+    "cd": "cd",
+}
+EXPECTED_SCRIPT_APPROVAL = (
+    "method org.jenkinsci.plugins.workflow.steps.FlowInterruptedException getCauses"
+)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        choices=(
+            "check",
+            "drift",
+            "exercise-agents",
+            "idle",
+            "preflight",
+            "provision-secrets",
+            "quiesce",
+            "resume",
+        ),
+    )
+    parser.add_argument("--url")
+    parser.add_argument("--admin-id")
+    parser.add_argument("--admin-password-file", type=Path)
+    parser.add_argument("--handoff-id")
+    parser.add_argument("--handoff-password-file", type=Path)
+    parser.add_argument("--repository-url")
+    parser.add_argument("--plugin-lock", type=Path)
+    parser.add_argument("--casc", type=Path)
+    parser.add_argument("--jenkinsfile", type=Path)
+    parser.add_argument("--inventory", type=Path)
+    parser.add_argument("--agent-secret-directory", type=Path)
+    return parser
+
+
+class _JenkinsClient:
+    def __init__(self, base_url: str, user: str, password: str) -> None:
+        self._base_url = base_url.rstrip("/")
+        credentials = base64.b64encode(f"{user}:{password}".encode()).decode()
+        self._authorization = f"Basic {credentials}"
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+        )
+
+    def request(
+        self,
+        path: str,
+        *,
+        data: bytes | None = None,
+        content_type: str | None = None,
+        timeout: float = 30,
+    ) -> tuple[int, bytes, dict[str, str]]:
+        headers = {"Authorization": self._authorization}
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        request = urllib.request.Request(
+            f"{self._base_url}{path}", data=data, headers=headers
+        )
+        return self._open(request, timeout=timeout)
+
+    def _open(
+        self, request: urllib.request.Request, *, timeout: float
+    ) -> tuple[int, bytes, dict[str, str]]:
+        try:
+            with self._opener.open(request, timeout=timeout) as response:
+                return response.status, response.read(), dict(response.headers)
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(), dict(error.headers)
+
+    def json(self, path: str) -> tuple[int, dict[str, Any], dict[str, str]]:
+        status, body, headers = self.request(path)
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict):
+            message = f"expected JSON object from {path}"
+            raise TypeError(message)
+        return status, cast("dict[str, Any]", parsed), headers
+
+    def crumb(self) -> tuple[str, str]:
+        status, crumb, _ = self.json("/crumbIssuer/api/json")
+        _equal(status, HTTP_OK, "crumb endpoint status")
+        return str(crumb["crumbRequestField"]), str(crumb["crumb"])
+
+    def post_with_crumb(
+        self,
+        path: str,
+        *,
+        data: bytes,
+        content_type: str,
+        timeout: float = 30,
+    ) -> tuple[int, bytes, dict[str, str]]:
+        field, crumb = self.crumb()
+        headers = {
+            "Authorization": self._authorization,
+            "Content-Type": content_type,
+            field: crumb,
+        }
+        request = urllib.request.Request(
+            f"{self._base_url}{path}", data=data, headers=headers
+        )
+        return self._open(request, timeout=timeout)
+
+
+def _password(path: Path) -> str:
+    password = path.read_text().strip()
+    if not password:
+        message = "a required password file is empty"
+        raise ValueError(message)
+    return password
+
+
+def _equal(actual: object, expected: object, label: str) -> None:
+    if actual != expected:
+        message = f"{label}: expected {expected!r}, found {actual!r}"
+        raise RuntimeError(message)
+
+
+def _require(*, condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+def _expected_plugins(path: Path) -> dict[str, str]:
+    pairs = (
+        line.split(":", maxsplit=1)
+        for line in path.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    return dict(pairs)
+
+
+def _agent_preflight(inventory: dict[str, Any]) -> list[str]:
+    computers = inventory.get("computer")
+    if not isinstance(computers, list):
+        raise TypeError("agent inventory has no computer list")
+
+    by_name: dict[str, dict[str, Any]] = {}
+    labels_to_names: dict[str, set[str]] = {}
+    for value in computers:
+        if not isinstance(value, dict):
+            raise TypeError("agent inventory contains an invalid computer")
+        computer = cast("dict[str, Any]", value)
+        name = str(computer.get("displayName", ""))
+        by_name[name] = computer
+        explicit_labels = computer.get("explicitLabels")
+        if not isinstance(explicit_labels, str):
+            raise TypeError(f"agent {name!r} has no explicit-label string")
+        for label in explicit_labels.split():
+            labels_to_names.setdefault(label, set()).add(name)
+
+    for name in EXPECTED_AGENTS:
+        if name not in by_name:
+            raise RuntimeError(
+                f"invalid-mapping: expected agent identity {name} is absent"
+            )
+
+    for name, label in EXPECTED_AGENTS.items():
+        mapped_names = labels_to_names.get(label, set())
+        if not mapped_names:
+            raise RuntimeError(f"missing-label: {label}")
+        if mapped_names != {name}:
+            joined = ",".join(sorted(mapped_names))
+            raise RuntimeError(
+                f"invalid-mapping: label {label} maps to {joined}, expected {name}"
+            )
+
+    for name in EXPECTED_AGENTS:
+        computer = by_name[name]
+        if computer.get("numExecutors") != 1:
+            raise RuntimeError(
+                f"incorrect-executor-count: {name} has {computer.get('numExecutors')!r}"
+            )
+        if (
+            computer.get("offline") is not False
+            or computer.get("temporarilyOffline") is not False
+        ):
+            raise RuntimeError(f"unavailable-agent: {name}")
+
+    return sorted(
+        name for name in EXPECTED_AGENTS if by_name[name].get("idle") is False
+    )
+
+
+def _check_agent_inventory(inventory: dict[str, Any]) -> list[str]:
+    computers = cast("list[dict[str, Any]]", inventory["computer"])
+    external_names = {
+        str(computer["displayName"])
+        for computer in computers
+        if computer["displayName"] != "Built-In Node"
+    }
+    _equal(external_names, set(EXPECTED_AGENTS), "external agent identities")
+    return _agent_preflight(inventory)
+
+
+def _load_agent_inventory(admin: _JenkinsClient) -> dict[str, Any]:
+    status, inventory, _ = admin.json(
+        "/computer/api/json?tree=computer[displayName,numExecutors,offline,"
+        "temporarilyOffline,idle]"
+    )
+    _equal(status, HTTP_OK, "agent inventory status")
+    computers = cast("list[dict[str, Any]]", inventory["computer"])
+    for computer in computers:
+        name = str(computer["displayName"])
+        if name == "Built-In Node":
+            computer["explicitLabels"] = ""
+            continue
+        encoded_name = urllib.parse.quote(name, safe="")
+        status, config_xml, _ = admin.request(f"/computer/{encoded_name}/config.xml")
+        _equal(status, HTTP_OK, f"{name} node configuration status")
+        root = ET.fromstring(config_xml)
+        computer["explicitLabels"] = root.findtext("label", default="")
+    return inventory
+
+
+def _wait_for_agents(admin: _JenkinsClient) -> None:
+    deadline = time.monotonic() + 60
+    while True:
+        inventory = _load_agent_inventory(admin)
+        try:
+            _check_agent_inventory(inventory)
+        except RuntimeError as error:
+            if not str(error).startswith("unavailable-agent:"):
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(2)
+        else:
+            return
+
+
+def _run_script(admin: _JenkinsClient, script: str, *, timeout: float = 30) -> bytes:
+    data = urllib.parse.urlencode({"script": script}).encode()
+    status, body, _ = admin.post_with_crumb(
+        "/scriptText",
+        data=data,
+        content_type="application/x-www-form-urlencoded",
+        timeout=timeout,
+    )
+    _equal(
+        status,
+        HTTP_OK,
+        f"script console status ({body.decode(errors='replace')})",
+    )
+    return body
+
+
+def _provision_agent_secrets(args: argparse.Namespace) -> None:
+    directory = args.agent_secret_directory
+    if directory is None or not directory.is_dir():
+        raise ValueError("--agent-secret-directory must name an existing directory")
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    names = ", ".join(f"'{name}'" for name in EXPECTED_AGENTS)
+    script = (
+        "import jenkins.model.Jenkins\n"
+        f"[{names}].each {{ name ->\n"
+        "  def computer = Jenkins.get().getComputer(name)\n"
+        "  if (computer == null) { throw new IllegalStateException(name) }\n"
+        "  println(name + '=' + computer.getJnlpMac())\n"
+        "}\n"
+    )
+    body = _run_script(admin, script)
+    secrets: dict[str, str] = {}
+    for line in body.decode().splitlines():
+        name, separator, secret = line.partition("=")
+        if separator and name in EXPECTED_AGENTS:
+            secrets[name] = secret
+    _equal(set(secrets), set(EXPECTED_AGENTS), "provisioned agent identities")
+    for name, secret in secrets.items():
+        _require(
+            condition=len(secret) == 64
+            and all(character in "0123456789abcdef" for character in secret),
+            message=f"invalid registration secret returned for {name}",
+        )
+        path = directory / f"{name}-agent-secret"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(f"{secret}\n")
+
+
+def _exercise_agents(args: argparse.Namespace) -> None:
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    mapping = ", ".join(
+        f"'{name}': '{label}'" for name, label in EXPECTED_AGENTS.items()
+    )
+    peers = " ".join(EXPECTED_AGENTS)
+    script = f"""
+import hudson.model.FreeStyleProject
+import hudson.model.Result
+import hudson.tasks.Shell
+import jenkins.model.Jenkins
+
+def j = Jenkins.get()
+def mappings = [{mapping}]
+def jobs = []
+try {{
+  mappings.each {{ agentName, labelName ->
+    def job = j.createProject(FreeStyleProject, "agent-smoke-" + agentName)
+    jobs.add(job)
+    job.setAssignedLabel(j.getLabel(labelName))
+    def agentRole = agentName == 'integration' ? 'integration' : 'domain'
+    def agentLabel = agentName == 'integration' ? '' : labelName
+    def command = '''set -eu
+marker="$WORKSPACE/.sdi-agent-workspace-marker"
+tree="$WORKSPACE/.sdi-agent-workspace-tree"
+cleanup() {{ find "$WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +; }}
+cleanup
+test -z "$(find "$WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)"
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+touch "$marker"
+mkdir "$tree"
+touch "$tree/file"
+test "$(cat /etc/sdi/jenkins-agent-role)" = "''' + agentRole + '''"
+test "$(cat /etc/sdi/jenkins-agent-label)" = "''' + agentLabel + '''"
+test "$(python3 --version)" = "Python 3.12.13"
+test "$(uv --version)" = "uv 0.12.1 (x86_64-unknown-linux-musl)"
+test "$(java -jar /usr/share/jenkins/agent.jar -version)" = "3391.va_37fa_a_305d6d"
+sdi-integration --version
+if [ "$(cat /etc/sdi/jenkins-agent-role)" = integration ]; then
+  if sdi-fixture-adapter --help >/dev/null 2>"$WORKSPACE/adapter.stderr"; then
+    echo "integration agent unexpectedly ran the Domain adapter" >&2
+    exit 1
+  fi
+  grep -Fx 'sdi-fixture-adapter: the integration Jenkins agent cannot execute a Domain adapter' "$WORKSPACE/adapter.stderr"
+else
+  sdi-fixture-adapter --help >/dev/null
+fi
+git --version
+test ! -e /var/run/docker.sock
+test "$(find /run/secrets -maxdepth 1 -type f | wc -l)" -eq 1
+getent hosts controller >/dev/null
+if [ "$BUILD_NUMBER" = 1 ]; then
+  peer_pids=
+  for peer in {peers}; do
+    test "$peer" = "''' + agentName + '''" && continue
+    (
+      if getent hosts "$peer" >/dev/null 2>&1; then
+        echo "unexpected peer-agent reachability: $peer" >&2
+        exit 1
+      fi
+    ) &
+    peer_pids="$peer_pids $!"
+  done
+  for peer_pid in $peer_pids; do
+    wait "$peer_pid"
+  done
+fi
+'''
+    job.getBuildersList().add(new Shell(command))
+    (1..2).each {{ buildIndex ->
+      def build = job.scheduleBuild2(0).get()
+      if (build.getResult() != Result.SUCCESS) {{
+        throw new IllegalStateException(
+          agentName + " workspace build " + buildIndex + " failed: " +
+          build.getLog(100).join("\\n")
+        )
+      }}
+      if (build.getBuiltOnStr() != agentName) {{
+        throw new IllegalStateException(
+          labelName + " ran on " + build.getBuiltOnStr() + ", expected " + agentName
+        )
+      }}
+      def workspace = j.getNode(agentName).getWorkspaceFor(job)
+      def marker = workspace.child('.sdi-agent-workspace-marker')
+      def tree = workspace.child('.sdi-agent-workspace-tree')
+      if (marker.exists() || tree.exists()) {{
+        throw new IllegalStateException(
+          agentName + " workspace was not clean after build " + buildIndex
+        )
+      }}
+    }}
+  }}
+}} finally {{
+  jobs.each {{ job -> job.delete() }}
+}}
+println('agent-exercise-passed')
+"""
+    body = _run_script(admin, script, timeout=120)
+    _equal(body.strip(), b"agent-exercise-passed", "agent exercise response")
+
+
+def _check_job_config(config_xml: bytes, repository_url: str, handoff_id: str) -> None:
+    root = ET.fromstring(config_xml)
+    parameters = {
+        element.text for element in root.findall(".//parameterDefinitions/*/name")
+    }
+    _equal(parameters, EXPECTED_PARAMETERS, "job parameters")
+    property_tags = {element.tag for element in root.findall(".//properties/*")}
+    _require(
+        condition=any(
+            tag.endswith("DisableConcurrentBuildsJobProperty") for tag in property_tags
+        ),
+        message="job allows concurrent builds",
+    )
+    _equal(root.findtext(".//daysToKeep"), "90", "job build retention")
+    _equal(root.findtext(".//artifactDaysToKeep"), "90", "job artifact retention")
+    _equal(root.findtext(".//userRemoteConfigs/*/url"), repository_url, "job SCM URL")
+    _equal(
+        root.findtext(".//userRemoteConfigs/*/refspec"),
+        "+refs/heads/main:refs/remotes/origin/main",
+        "job SCM protected-main refspec",
+    )
+    _equal(
+        root.findtext(".//branches/*/name"),
+        "${RESOLVED_COMMIT_SHA}",
+        "job SCM revision",
+    )
+    _equal(
+        root.findtext(".//extensions/*/honorRefspec"),
+        "true",
+        "job SCM initial-clone refspec",
+    )
+    _equal(
+        root.findtext(".//extensions/*/noTags"),
+        "true",
+        "job SCM tag retrieval",
+    )
+    _require(
+        condition=root.find(".//extensions/hudson.plugins.git.extensions.impl.WipeWorkspace")
+        is not None,
+        message="job SCM preserves its Pipeline script workspace",
+    )
+    _equal(root.findtext(".//scriptPath"), "Jenkinsfile", "job pipeline source")
+    _equal(root.findtext(".//lightweight"), "false", "job lightweight checkout")
+
+    permissions = {element.text for element in root.findall(".//permission")}
+    _equal(
+        permissions,
+        {
+            f"USER:hudson.model.Item.Read:{handoff_id}",
+            f"USER:hudson.model.Item.Build:{handoff_id}",
+            f"USER:hudson.model.Item.Cancel:{handoff_id}",
+        },
+        "job authorization",
+    )
+
+
+def _check_jenkinsfile(admin: _JenkinsClient, path: Path | None) -> None:
+    if path is None or not path.is_file() or path.is_symlink():
+        raise ValueError("--jenkinsfile must name the tracked regular Jenkinsfile")
+    data = urllib.parse.urlencode({"value": path.read_text(encoding="utf-8")}).encode()
+    status, body, _ = admin.post_with_crumb(
+        "/job/pipeline-integration/descriptorByName/"
+        "org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition/checkScriptCompile",
+        data=data,
+        content_type="application/x-www-form-urlencoded",
+    )
+    _equal(
+        status,
+        HTTP_OK,
+        f"Jenkinsfile compiler status ({body.decode(errors='replace')})",
+    )
+    response = json.loads(body)
+    if isinstance(response, dict) and response.get("status") == "success":
+        return
+    failures = response if isinstance(response, list) else [response]
+    first = failures[0] if failures else {}
+    if not isinstance(first, dict):
+        raise TypeError("Jenkinsfile compiler returned an invalid response")
+    line = first.get("line", "unknown")
+    column = first.get("column", "unknown")
+    message = first.get("message", "no diagnostic returned")
+    raise RuntimeError(
+        f"Jenkinsfile compilation failed at line {line}, column {column}: {message}"
+    )
+
+
+def _check(args: argparse.Namespace) -> None:
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    status, root, headers = admin.json("/api/json?tree=numExecutors,slaveAgentPort")
+    _equal(status, HTTP_OK, "root API status")
+    _equal(headers["X-Jenkins"], EXPECTED_JENKINS_VERSION, "Jenkins version")
+    _equal(root["numExecutors"], 0, "controller executors")
+    _equal(root["slaveAgentPort"], -1, "inbound-agent TCP port")
+
+    _wait_for_agents(admin)
+
+    status, plugin_manager, _ = admin.json(
+        "/pluginManager/api/json?depth=1&tree=plugins[shortName,version,active,enabled]"
+    )
+    _equal(status, HTTP_OK, "plugin API status")
+    plugins = {str(plugin["shortName"]): plugin for plugin in plugin_manager["plugins"]}
+    expected_plugins = _expected_plugins(args.plugin_lock)
+    _equal(set(plugins), set(expected_plugins), "loaded plugin set")
+    for name, expected_version in expected_plugins.items():
+        _equal(plugins[name]["version"], expected_version, f"{name} version")
+        _require(
+            condition=plugins[name]["active"] is True,
+            message=f"{name} is not active",
+        )
+        _require(
+            condition=plugins[name]["enabled"] is True,
+            message=f"{name} is not enabled",
+        )
+
+    status, config_xml, _ = admin.request("/job/pipeline-integration/config.xml")
+    _equal(status, HTTP_OK, "job configuration status")
+    _check_job_config(config_xml, args.repository_url, args.handoff_id)
+    _check_jenkinsfile(admin, args.jenkinsfile)
+
+    casc_bytes = args.casc.read_bytes()
+    status, body, _ = admin.post_with_crumb(
+        "/configuration-as-code/check",
+        data=casc_bytes,
+        content_type="application/yaml",
+    )
+    _equal(
+        status,
+        HTTP_OK,
+        f"JCasC check status ({body.decode(errors='replace')})",
+    )
+    _equal(body.strip(), b"[]", "JCasC check response")
+
+    approved = _run_script(
+        admin,
+        "import org.jenkinsci.plugins.scriptsecurity.scripts.ScriptApproval\n"
+        "println(ScriptApproval.get().getApprovedSignatures().sort().join('\\n'))\n",
+    )
+    _equal(
+        approved.decode().strip(),
+        EXPECTED_SCRIPT_APPROVAL,
+        "script sandbox approvals",
+    )
+
+    handoff = _JenkinsClient(
+        args.url, args.handoff_id, _password(args.handoff_password_file)
+    )
+    status, _, _ = handoff.json("/job/pipeline-integration/api/json")
+    _equal(status, HTTP_OK, "handoff user job visibility")
+    status, _, _ = handoff.request("/script")
+    _equal(status, HTTP_FORBIDDEN, "handoff user administration denial")
+
+
+def _assert_no_active_run(admin: _JenkinsClient) -> None:
+    status, queue, _ = admin.json("/queue/api/json?tree=items[id]")
+    _equal(status, HTTP_OK, "queue API status")
+    if queue.get("items"):
+        raise RuntimeError("active-run: Jenkins queue is not empty")
+    status, job, _ = admin.json(
+        "/job/pipeline-integration/api/json?tree=builds[number,building]"
+    )
+    _equal(status, HTTP_OK, "pipeline job API status")
+    builds = job.get("builds")
+    if not isinstance(builds, list):
+        raise TypeError("pipeline job has no build list")
+    if any(isinstance(build, dict) and build.get("building") is True for build in builds):
+        raise RuntimeError("active-run: a Pipeline integration run is building")
+
+
+def _idle(args: argparse.Namespace, *, quiesce: bool) -> None:
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    if quiesce:
+        status, _, _ = admin.post_with_crumb(
+            "/quietDown",
+            data=b"",
+            content_type="application/x-www-form-urlencoded",
+        )
+        _equal(status, HTTP_OK, "quiet-down status")
+    try:
+        _assert_no_active_run(admin)
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError):
+        if quiesce:
+            status, _, _ = admin.post_with_crumb(
+                "/cancelQuietDown",
+                data=b"",
+                content_type="application/x-www-form-urlencoded",
+            )
+            _equal(status, HTTP_OK, "cancel quiet-down status")
+        raise
+
+
+def _resume(args: argparse.Namespace) -> None:
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    status, _, _ = admin.post_with_crumb(
+        "/cancelQuietDown",
+        data=b"",
+        content_type="application/x-www-form-urlencoded",
+    )
+    _equal(status, HTTP_OK, "cancel quiet-down status")
+    status, root, _ = admin.json("/api/json?tree=quietingDown")
+    _equal(status, HTTP_OK, "root API status")
+    _equal(root.get("quietingDown"), False, "Jenkins quiet mode")
+
+
+def _introduce_drift(args: argparse.Namespace) -> None:
+    admin = _JenkinsClient(args.url, args.admin_id, _password(args.admin_password_file))
+    script = (
+        "import jenkins.model.Jenkins\n"
+        "def j = Jenkins.get()\n"
+        "j.setNumExecutors(1)\n"
+        "j.getItem('pipeline-integration').delete()\n"
+        "j.getNode('ci').setNumExecutors(2)\n"
+        "j.getNode('ci').setLabelString('drifted')\n"
+        "j.removeNode(j.getNode('cd'))\n"
+        "println('drifted')\n"
+    )
+    body = _run_script(admin, script)
+    _equal(body.strip(), b"drifted", "script console response")
+
+    status, root, _ = admin.json("/api/json?tree=numExecutors")
+    _equal(status, HTTP_OK, "drifted root API status")
+    _equal(root["numExecutors"], 1, "drifted controller executors")
+    status, _, _ = admin.request("/job/pipeline-integration/api/json")
+    _equal(status, HTTP_NOT_FOUND, "deleted job status")
+    status, inventory, _ = admin.json(
+        "/computer/api/json?tree=computer[displayName,numExecutors,assignedLabels[name]]"
+    )
+    _equal(status, HTTP_OK, "drifted agent inventory status")
+    computers = {
+        str(computer["displayName"]): computer for computer in inventory["computer"]
+    }
+    _require(condition="cd" not in computers, message="cd agent was not deleted")
+    _equal(
+        {str(label["name"]) for label in computers["ci"]["assignedLabels"]},
+        {"ci", "drifted"},
+        "drifted ci labels",
+    )
+
+
+def _main() -> int:
+    args = _parser().parse_args()
+    try:
+        if args.mode == "preflight":
+            if args.inventory is None:
+                raise ValueError("--inventory is required for preflight")
+            inventory = json.loads(args.inventory.read_text())
+            if not isinstance(inventory, dict):
+                raise TypeError("agent inventory must be a JSON object")
+            busy = _agent_preflight(cast("dict[str, Any]", inventory))
+            print(f"agent preflight passed; busy={','.join(busy)}")
+        elif args.mode == "provision-secrets":
+            _provision_agent_secrets(args)
+        elif args.mode == "exercise-agents":
+            _exercise_agents(args)
+        elif args.mode == "idle":
+            _idle(args, quiesce=False)
+        elif args.mode == "quiesce":
+            _idle(args, quiesce=True)
+        elif args.mode == "resume":
+            _resume(args)
+        elif args.mode == "check":
+            _check(args)
+        else:
+            _introduce_drift(args)
+    except (
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        KeyError,
+        ET.ParseError,
+    ) as error:
+        sys.stderr.write(f"smoke-check: {error}\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

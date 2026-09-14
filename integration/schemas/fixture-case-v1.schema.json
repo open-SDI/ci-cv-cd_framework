@@ -1,0 +1,235 @@
+{
+  "$defs": {
+    "AdapterExecutionConclusion": {
+      "enum": [
+        "succeeded",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "DomainOutcome": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "not_evaluated"
+      ],
+      "type": "string"
+    },
+    "FixtureDiagnostic": {
+      "additionalProperties": false,
+      "description": "One immutable sanitized Fixture diagnostic.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_path",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "FixtureDiagnostic",
+      "type": "object"
+    },
+    "FixtureInputMatch": {
+      "additionalProperties": false,
+      "description": "One exact input digest participating in Fixture selection.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "FixtureInputMatch",
+      "type": "object"
+    },
+    "FixtureOutput": {
+      "additionalProperties": false,
+      "description": "One immutable output payload owned by a Fixture case.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        },
+        "source_path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "source_path",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "FixtureOutput",
+      "type": "object"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "description": "Bounded, sanitized process or Domain reason.",
+      "properties": {
+        "category": {
+          "enum": [
+            "fixture",
+            "input",
+            "dependency",
+            "tool",
+            "adapter",
+            "domain"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 127,
+          "pattern": "^sdi\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$",
+          "title": "Code",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "code",
+        "summary"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Exact-digest-selected deterministic pipeline-interface behavior.",
+  "properties": {
+    "behavior": {
+      "default": "response",
+      "enum": [
+        "response",
+        "absent_response",
+        "crash",
+        "timeout",
+        "malformed_response",
+        "undeclared_output",
+        "unsafe_output",
+        "oversize_output",
+        "missing_output",
+        "schema_mismatch",
+        "response_mismatch"
+      ],
+      "title": "Behavior",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "diagnostic": {
+      "$ref": "#/$defs/FixtureDiagnostic"
+    },
+    "domain_outcome": {
+      "$ref": "#/$defs/DomainOutcome"
+    },
+    "execution_conclusion": {
+      "$ref": "#/$defs/AdapterExecutionConclusion"
+    },
+    "match_inputs": {
+      "items": {
+        "$ref": "#/$defs/FixtureInputMatch"
+      },
+      "minItems": 1,
+      "title": "Match Inputs",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/FixtureOutput"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "reason": {
+      "$ref": "#/$defs/Reason"
+    },
+    "schema_version": {
+      "const": "sdi.fixture-case/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/StageName"
+    }
+  },
+  "required": [
+    "schema_version",
+    "case_id",
+    "stage",
+    "match_inputs",
+    "execution_conclusion",
+    "domain_outcome",
+    "reason",
+    "outputs",
+    "diagnostic"
+  ],
+  "title": "FixtureCase",
+  "type": "object"
+}

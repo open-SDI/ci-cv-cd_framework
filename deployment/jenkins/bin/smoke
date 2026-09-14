@@ -1,0 +1,139 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+stack=$root/bin/stack
+checker=$root/bin/smoke-check
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/sdi-jenkins-smoke-XXXXXX")
+project_name=$(printf '%s' "${temporary##*/}" | tr '[:upper:]' '[:lower:]')
+config=$temporary/controller.env
+admin_password=$temporary/admin-password
+handoff_password=$temporary/handoff-password
+integration_agent_secret=$temporary/integration-agent-secret
+ci_agent_secret=$temporary/ci-agent-secret
+image_build_agent_secret=$temporary/image-build-agent-secret
+cv_agent_secret=$temporary/cv-agent-secret
+cd_agent_secret=$temporary/cd-agent-secret
+
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "$status" -ne 0 ]; then
+        "$stack" --config "$config" --project-name "$project_name" logs >&2 || true
+    fi
+    cleanup_status=0
+    "$stack" --config "$config" --project-name "$project_name" destroy \
+        >/dev/null || cleanup_status=$?
+    if [ "$cleanup_status" -eq 0 ]; then
+        rm -rf -- "$temporary"
+    else
+        printf 'smoke: failed to remove project %s; configuration retained at %s\n' \
+            "$project_name" "$temporary" >&2
+        if [ "$status" -eq 0 ]; then
+            status=$cleanup_status
+        fi
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+command -v python3 >/dev/null 2>&1 || {
+    printf '%s\n' 'smoke: python3 is required' >&2
+    exit 2
+}
+
+port=$(python3 -c \
+    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+
+umask 077
+printf '%s\n' 'ephemeral-admin-password-for-controller-smoke' > "$admin_password"
+printf '%s\n' 'ephemeral-handoff-password-for-controller-smoke' > "$handoff_password"
+printf '%s\n' \
+    "JENKINS_HTTP_PORT=$port" \
+    'JENKINS_ADMIN_ID=smoke-administrator' \
+    'JENKINS_HANDOFF_ID=smoke-github-handoff' \
+    'JENKINS_REPOSITORY_URL=https://github.com/open-SDI/ci-cv-cd_framework.git' \
+    'JENKINS_AGENT_CONTROLLER_URL=http://controller:8080' \
+    'JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400' \
+    'JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600' \
+    'JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=1800' \
+    'JENKINS_CV_WORK_LIMIT_SECONDS=2700' \
+    'JENKINS_CD_WORK_LIMIT_SECONDS=900' \
+    "JENKINS_ADMIN_PASSWORD_FILE=$admin_password" \
+    "JENKINS_HANDOFF_PASSWORD_FILE=$handoff_password" \
+    "JENKINS_INTEGRATION_AGENT_SECRET_FILE=$integration_agent_secret" \
+    "JENKINS_CI_AGENT_SECRET_FILE=$ci_agent_secret" \
+    "JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$image_build_agent_secret" \
+    "JENKINS_CV_AGENT_SECRET_FILE=$cv_agent_secret" \
+    "JENKINS_CD_AGENT_SECRET_FILE=$cd_agent_secret" > "$config"
+
+"$stack" --config "$config" --project-name "$project_name" destroy
+
+check() {
+    "$stack" --config "$config" --project-name "$project_name" verify-live
+}
+
+exercise() {
+    "$stack" --config "$config" --project-name "$project_name" exercise-live
+}
+
+"$stack" --config "$config" --project-name "$project_name" start-controller
+"$checker" provision-secrets \
+    --url "http://127.0.0.1:$port" \
+    --admin-id smoke-administrator \
+    --admin-password-file "$admin_password" \
+    --agent-secret-directory "$temporary"
+"$stack" --config "$config" --project-name "$project_name" start
+check
+"$stack" --config "$config" --project-name "$project_name" status >/dev/null
+"$stack" --config "$config" --project-name "$project_name" logs >/dev/null
+"$stack" --config "$config" --project-name "$project_name" quiesce
+"$stack" --config "$config" --project-name "$project_name" resume
+exercise
+
+historical=$temporary/historical-agent-secrets
+mkdir -m 700 "$historical"
+for name in integration ci image-build cv cd; do
+    cp "$temporary/$name-agent-secret" "$historical/$name-agent-secret"
+done
+"$stack" --config "$config" --project-name "$project_name" stop
+docker run --rm --user 0:0 \
+    --volume "${project_name}_jenkins-home:/target" \
+    sdi-jenkins-controller:2.568.3 \
+    rm -f -- /target/secrets/jenkins.slaves.JnlpSlaveAgentProtocol.secret
+rm "$integration_agent_secret" "$ci_agent_secret" "$image_build_agent_secret" \
+    "$cv_agent_secret" "$cd_agent_secret"
+printf '%s\n' 'rotated-admin-password-for-controller-smoke' > "$admin_password"
+printf '%s\n' 'rotated-handoff-password-for-controller-smoke' > "$handoff_password"
+"$stack" --config "$config" --project-name "$project_name" start-controller
+"$checker" provision-secrets \
+    --url "http://127.0.0.1:$port" \
+    --admin-id smoke-administrator \
+    --admin-password-file "$admin_password" \
+    --agent-secret-directory "$temporary"
+for name in integration ci image-build cv cd; do
+    ! cmp -s "$temporary/$name-agent-secret" "$historical/$name-agent-secret" || {
+        printf 'smoke: Jenkins did not rotate the %s agent credential\n' "$name" >&2
+        exit 2
+    }
+done
+"$stack" --config "$config" --project-name "$project_name" start
+check
+exercise
+
+"$checker" drift \
+    --url "http://127.0.0.1:$port" \
+    --admin-id smoke-administrator \
+    --admin-password-file "$admin_password" \
+    --handoff-id smoke-github-handoff \
+    --handoff-password-file "$handoff_password" \
+    --repository-url https://github.com/open-SDI/ci-cv-cd_framework.git \
+    --plugin-lock "$root/controller/plugins.txt" \
+    --casc "$root/casc/jenkins.yaml"
+
+"$stack" --config "$config" --project-name "$project_name" stop
+"$stack" --config "$config" --project-name "$project_name" start
+check
+
+printf '%s\n' 'Ephemeral Jenkins controller and five-agent smoke check passed.'

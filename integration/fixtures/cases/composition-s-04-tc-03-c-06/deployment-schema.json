@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-06-composition",
+  "combination_id": "C-06",
+  "deployment_schema_id": "s-04-tc-03-c-06-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "burger-jetson",
+      "resource_id": "jetson-nano",
+      "tier": "edge"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "burger-jetson",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "burger-jetson",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "burger-jetson",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "burger-jetson-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "095e4e8dc730edac7cb16ac92aa8218ffdb93c52afb4d957335b979956a8d668",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "76ef4e2cbdeb937d3a4a54d0145a50e3e0019ff8b156fc5c71f765683929bd7c",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

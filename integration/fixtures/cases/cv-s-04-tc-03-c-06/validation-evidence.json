@@ -1,0 +1,43 @@
+{
+  "blueprint_id": "s-04-tc-03-c-06-composition",
+  "combination_id": "C-06",
+  "deployment_schema_id": "s-04-tc-03-c-06-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-06-image-build",
+  "kpi_evaluation": "not_evaluated",
+  "profile_id": "burger-jetson-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.validation-evidence/v1",
+  "source_inputs": [
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "76ef4e2cbdeb937d3a4a54d0145a50e3e0019ff8b156fc5c71f765683929bd7c",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "e15341bd02955e5a704a196c0f4c890231487490fc5b11c2b8519eca5d276dcf",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "17c374e466bdba3823d5c9f32da991d771fc8f1e434f00ff33ea590d6cfa08f1",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "f8c64f9a1d4a1be25c5262e52cf0ae6ecb4f653c657bc258712108e786db162c",
+      "slot": "image_build_result"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-06-validation",
+  "validation_records": [
+    {
+      "description": "Delivery-navigation interface evidence placeholder; no simulation was run.",
+      "evaluation_status": "not_evaluated",
+      "validation_case_id": "fixture-delivery-navigation"
+    }
+  ]
+}

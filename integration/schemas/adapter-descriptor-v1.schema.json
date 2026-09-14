@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "ImplementationMode": {
+      "enum": [
+        "fixture",
+        "implemented",
+        "not_implemented"
+      ],
+      "type": "string"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Reviewed authority selecting one trusted Stage adapter.",
+  "properties": {
+    "agent_label": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Agent Label",
+      "type": "string"
+    },
+    "entrypoint": {
+      "minLength": 1,
+      "title": "Entrypoint",
+      "type": "string"
+    },
+    "image": {
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
+      "title": "Image",
+      "type": "string"
+    },
+    "implementation_mode": {
+      "$ref": "#/$defs/ImplementationMode"
+    },
+    "process_contract_version": {
+      "const": "sdi.stage-adapter-process/v1",
+      "title": "Process Contract Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sdi.adapter-descriptor/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "secret_bindings": {
+      "items": {
+        "maxLength": 63,
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Secret Bindings",
+      "type": "array"
+    },
+    "stage": {
+      "$ref": "#/$defs/StageName"
+    },
+    "stage_profile": {
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+      "title": "Stage Profile",
+      "type": "string"
+    },
+    "stage_profile_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stage Profile Sha256",
+      "type": "string"
+    },
+    "stage_profile_version": {
+      "minLength": 1,
+      "title": "Stage Profile Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "stage",
+    "implementation_mode",
+    "image",
+    "entrypoint",
+    "process_contract_version",
+    "stage_profile",
+    "stage_profile_version",
+    "stage_profile_sha256",
+    "agent_label",
+    "secret_bindings"
+  ],
+  "title": "AdapterDescriptor",
+  "type": "object"
+}

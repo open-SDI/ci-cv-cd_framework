@@ -1,0 +1,494 @@
+{
+  "$defs": {
+    "ContextParameter": {
+      "additionalProperties": false,
+      "description": "A named system-context parameter defined once for requirements.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "parameter_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Parameter Id",
+          "type": "string"
+        },
+        "unit": {
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "discriminator": {
+            "mapping": {
+              "declared": "#/$defs/DeclaredValue_Quantity_",
+              "measured": "#/$defs/MeasuredValue_Quantity_",
+              "placeholder": "#/$defs/PlaceholderValue_Quantity_"
+            },
+            "propertyName": "basis"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PlaceholderValue_Quantity_"
+            },
+            {
+              "$ref": "#/$defs/DeclaredValue_Quantity_"
+            },
+            {
+              "$ref": "#/$defs/MeasuredValue_Quantity_"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "parameter_id",
+        "description",
+        "unit",
+        "value"
+      ],
+      "title": "ContextParameter",
+      "type": "object"
+    },
+    "DeclaredValue_Quantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Quantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredValue[Quantity]",
+      "type": "object"
+    },
+    "Definition": {
+      "additionalProperties": false,
+      "description": "A term defined within the specification.",
+      "properties": {
+        "definition": {
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string"
+        },
+        "term": {
+          "minLength": 1,
+          "title": "Term",
+          "type": "string"
+        }
+      },
+      "required": [
+        "term",
+        "definition"
+      ],
+      "title": "Definition",
+      "type": "object"
+    },
+    "ExternalInterface": {
+      "additionalProperties": false,
+      "description": "An external interface relevant to the mission.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "interface_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Interface Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "interface_id",
+        "description"
+      ],
+      "title": "ExternalInterface",
+      "type": "object"
+    },
+    "MeasuredValue_Quantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "measured",
+          "title": "Basis",
+          "type": "string"
+        },
+        "conditions": {
+          "minLength": 1,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "minLength": 1,
+          "title": "Evidence Reference",
+          "type": "string"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Quantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "method",
+        "measured_at",
+        "conditions",
+        "evidence_reference"
+      ],
+      "title": "MeasuredValue[Quantity]",
+      "type": "object"
+    },
+    "PlaceholderValue_Quantity_": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Quantity"
+        }
+      },
+      "required": [
+        "value",
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderValue[Quantity]",
+      "type": "object"
+    },
+    "Quantity": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "Requirement": {
+      "additionalProperties": false,
+      "description": "One uniquely identified, traceable mobility requirement.",
+      "properties": {
+        "depends_on": {
+          "items": {
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "normative_statement": {
+          "minLength": 1,
+          "title": "Normative Statement",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "must",
+            "should",
+            "could"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "requirement_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "traces_to": {
+          "items": {
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Traces To",
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "functional",
+            "non_functional"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/Verification"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "type",
+        "title",
+        "normative_statement",
+        "priority",
+        "rationale",
+        "source",
+        "traces_to",
+        "depends_on",
+        "verification"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "Stakeholder": {
+      "additionalProperties": false,
+      "description": "A stakeholder named by the specification.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "stakeholder_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Stakeholder Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stakeholder_id",
+        "name"
+      ],
+      "title": "Stakeholder",
+      "type": "object"
+    },
+    "StakeholderNeed": {
+      "additionalProperties": false,
+      "description": "A traceability target for normative requirements.",
+      "properties": {
+        "need_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Need Id",
+          "type": "string"
+        },
+        "stakeholder_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Stakeholder Id",
+          "type": "string"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "need_id",
+        "stakeholder_id",
+        "statement"
+      ],
+      "title": "StakeholderNeed",
+      "type": "object"
+    },
+    "SystemContext": {
+      "additionalProperties": false,
+      "description": "Mission context and its named quantitative parameters.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "parameters": {
+          "items": {
+            "$ref": "#/$defs/ContextParameter"
+          },
+          "title": "Parameters",
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "parameters"
+      ],
+      "title": "SystemContext",
+      "type": "object"
+    },
+    "Verification": {
+      "additionalProperties": false,
+      "description": "A planned requirement-verification method and criteria.",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "method": {
+          "enum": [
+            "test",
+            "analysis",
+            "inspection",
+            "demonstration"
+          ],
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "acceptance_criteria"
+      ],
+      "title": "Verification",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A lean, versioned Mobility Requirements Specification.",
+  "properties": {
+    "assumptions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "definitions": {
+      "items": {
+        "$ref": "#/$defs/Definition"
+      },
+      "title": "Definitions",
+      "type": "array"
+    },
+    "dependencies": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "document_version": {
+      "exclusiveMinimum": 0,
+      "title": "Document Version",
+      "type": "integer"
+    },
+    "external_interfaces": {
+      "items": {
+        "$ref": "#/$defs/ExternalInterface"
+      },
+      "title": "External Interfaces",
+      "type": "array"
+    },
+    "purpose": {
+      "minLength": 1,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "requirements": {
+      "items": {
+        "$ref": "#/$defs/Requirement"
+      },
+      "minItems": 1,
+      "title": "Requirements",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "sdi.mobility-requirements-specification/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "minLength": 1,
+      "title": "Scope",
+      "type": "string"
+    },
+    "stakeholder_needs": {
+      "items": {
+        "$ref": "#/$defs/StakeholderNeed"
+      },
+      "minItems": 1,
+      "title": "Stakeholder Needs",
+      "type": "array"
+    },
+    "stakeholders": {
+      "items": {
+        "$ref": "#/$defs/Stakeholder"
+      },
+      "minItems": 1,
+      "title": "Stakeholders",
+      "type": "array"
+    },
+    "system_context": {
+      "$ref": "#/$defs/SystemContext"
+    }
+  },
+  "required": [
+    "schema_version",
+    "document_version",
+    "purpose",
+    "scope",
+    "system_context",
+    "stakeholders",
+    "definitions",
+    "assumptions",
+    "dependencies",
+    "external_interfaces",
+    "stakeholder_needs",
+    "requirements"
+  ],
+  "title": "MobilityRequirementsSpecification",
+  "type": "object"
+}

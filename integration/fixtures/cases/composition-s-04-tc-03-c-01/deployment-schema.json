@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-01-composition",
+  "combination_id": "C-01",
+  "deployment_schema_id": "s-04-tc-03-c-01-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "waffle-native",
+      "resource_id": "waffle-native-system",
+      "tier": "mobility"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "waffle-native",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "waffle-native",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "waffle-native",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "waffle-native-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "52f8d28f2a83d0b6d12e4905d64b93a578d1a73569e1ca9bfd63afe912fa8a8f",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

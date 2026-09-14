@@ -1,0 +1,1 @@
+Image-build pipeline-interface Fixture emitted deterministic references; no image was built.

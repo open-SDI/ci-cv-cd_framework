@@ -1,0 +1,55 @@
+schema_version: sdi.mobility-requirements-specification/v1
+document_version: 1
+purpose: Define the S-04 delivery-navigation mission used by pipeline-interface Fixtures.
+scope: Deliver one book to Joe at the joe-dropoff destination.
+system_context:
+  description: A mobility target carries the selected book to Joe at joe-dropoff.
+  parameters:
+    - parameter_id: arrival-radius
+      description: Maximum distance from joe-dropoff used to plan arrival verification.
+      unit: m
+      value:
+        value: 0.25
+        basis: placeholder
+        note: Interface-only value pending an accountable S-04 acceptance definition.
+stakeholders:
+  - stakeholder_id: delivery-operator
+    name: Delivery operator
+  - stakeholder_id: joe
+    name: Joe
+definitions:
+  - term: joe-dropoff
+    definition: The committed destination identifier for delivery to Joe.
+  - term: selected book
+    definition: The book assigned to this delivery mission.
+assumptions:
+  - The selected book is secured on the mobility target before navigation begins.
+  - joe-dropoff is available in the committed navigation environment.
+dependencies:
+  - Localization supplies the mobility target pose.
+  - Navigation supplies a route to joe-dropoff.
+external_interfaces:
+  - interface_id: navigation-goal
+    description: Receives joe-dropoff as the selected destination.
+  - interface_id: mobility-command
+    description: Carries commands from navigation to the mobility target.
+stakeholder_needs:
+  - need_id: complete-book-delivery
+    stakeholder_id: delivery-operator
+    statement: The selected book reaches Joe at joe-dropoff.
+requirements:
+  - requirement_id: deliver-book-to-joe
+    type: functional
+    title: Deliver the selected book to Joe
+    normative_statement: The mobility target shall carry the selected book to Joe at joe-dropoff.
+    priority: must
+    rationale: Reaching Joe with the book completes the requested delivery mission.
+    source: S-04 pipeline-interface Fixture definition.
+    traces_to:
+      - complete-book-delivery
+    depends_on: []
+    verification:
+      method: test
+      acceptance_criteria:
+        - The planned final pose is within arrival-radius of joe-dropoff.
+        - The selected book remains assigned to the mission at the final pose.

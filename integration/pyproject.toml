@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sdi-pipeline-integration"
+version = "0.1.0"
+description = "Production integration scaffold for the SDI CI/CV/CD stages"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+    "pydantic==2.13.5",
+    "requests==2.34.2",
+    "ruamel-yaml==0.19.0",
+]
+
+[project.scripts]
+sdi-integration = "sdi_pipeline_integration._cli:main"
+sdi-fixture-adapter = "sdi_pipeline_integration._fixture_adapter:main"
+
+[tool.hatch.build.targets.wheel.force-include]
+"fixtures/cases" = "sdi_pipeline_integration/_fixture_cases"
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.40.0",
+    "check-jsonschema==0.38.0",
+    "markdown-it-py==4.0.0",
+    "pytest==9.1.1",
+    "ruff==0.16.6",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM812", "CPY001", "D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D103", "PLR2004", "S101", "S603", "S607"]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"

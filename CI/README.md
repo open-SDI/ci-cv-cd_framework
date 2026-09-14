@@ -1,6 +1,9 @@
 # Continuous Integration
 
-### Background
+This directory is an unsupported workspace reserved for a possible future
+composition Stage adapter. It is not part of the production integration scaffold,
+is not called by the CLI or verification command, and has no supported runtime
+entry point.
 
-This orchestration engine is based on previous work done with OrchestML.
-For more details, please check out the APSEC tools paper found in this directory.
+The supported repository entry point is the independent project under
+`../integration/`. The APSEC tools paper is retained here as design context only.

@@ -1,18 +1,49 @@
-target
+# Maven
+target/
 
 # mvn hpi:run
-work
+work/
 
 # IntelliJ IDEA project files
 *.iml
 *.iws
 *.ipr
-.idea
+.idea/
 
 # Eclipse project files
-.settings
+.settings/
 .classpath
 .project
 
-# Dotenv files
+# Python environments, caches, and build outputs
+**/.venv/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.basedpyright/
+**/.mypy_cache/
+**/*.egg-info/
+**/build/
+**/dist/
+.coverage
+htmlcov/
+
+# Generated pipeline integration state
+/artifacts/
+/workspaces/
+/recovery-artifacts/
+/deployment/jenkins/workspaces/
+/deployment/jenkins/recovery-artifacts/
+/deployment/jenkins/config/local/
+/CV/gazebo/_models/
+
+# Runtime secrets and local process state
 .env
+.env.*
+!.env.example
+/secrets/
+/deployment/jenkins/secrets/
+*.log
+*.pid
+*.tmp

@@ -1,0 +1,32 @@
+schema_version: sdi.fixture-case/v1
+case_id: composition-s-04-tc-03-c-06
+stage: composition
+match_inputs:
+  - slot: run_request
+    byte_size: 257
+    sha256: 095e4e8dc730edac7cb16ac92aa8218ffdb93c52afb4d957335b979956a8d668
+  - slot: requirements_specification
+    byte_size: 2260
+    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+  - slot: target_profile
+    byte_size: 203
+    sha256: 76ef4e2cbdeb937d3a4a54d0145a50e3e0019ff8b156fc5c71f765683929bd7c
+execution_conclusion: succeeded
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.composition-executed
+  summary: Deterministic pipeline-interface Fixture executed; no Domain capability was evaluated.
+outputs:
+  - slot: composition_blueprint
+    source_path: composition-blueprint.json
+    byte_size: 1406
+    sha256: e15341bd02955e5a704a196c0f4c890231487490fc5b11c2b8519eca5d276dcf
+  - slot: deployment_schema
+    source_path: deployment-schema.json
+    byte_size: 1157
+    sha256: 17c374e466bdba3823d5c9f32da991d771fc8f1e434f00ff33ea590d6cfa08f1
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 96
+  sha256: cb1a0335856c550c9855e0e7e7668bdeac2df0d1320ebf8e74c9ca6185972c7e

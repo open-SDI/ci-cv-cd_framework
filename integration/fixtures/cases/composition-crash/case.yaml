@@ -1,0 +1,25 @@
+schema_version: sdi.fixture-case/v1
+case_id: composition-crash
+stage: composition
+match_inputs:
+  - slot: run_request
+    byte_size: 322
+    sha256: 6563832713f182bfabec66263ffe7d211217d260fadf54825497ceb24efae473
+  - slot: requirements_specification
+    byte_size: 2260
+    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+  - slot: target_profile
+    byte_size: 214
+    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+behavior: crash
+execution_conclusion: failed
+domain_outcome: not_evaluated
+reason:
+  category: fixture
+  code: sdi.fixture.crash
+  summary: The deterministic Fixture process crashes before publishing a response.
+outputs: []
+diagnostic:
+  source_path: diagnostic.txt
+  byte_size: 55
+  sha256: fe548c28f7eac9521e264499066abad7487c5a184295888cdaaffa51f32c4b54

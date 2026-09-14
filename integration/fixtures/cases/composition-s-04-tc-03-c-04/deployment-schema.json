@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-04-composition",
+  "combination_id": "C-04",
+  "deployment_schema_id": "s-04-tc-03-c-04-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "burger-xycar",
+      "resource_id": "xycar",
+      "tier": "mobility"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "burger-xycar",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "burger-xycar",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "burger-xycar",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "burger-xycar-amd64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "f635c7e8425efe24b1a5d57b4a725913ff8d9ec708c157a005dcdedae2be0e2d",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "6670debf0714bc1ae9cc4b33398f5b787df77d3f412b03a0fce499cbc3be32d6",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}

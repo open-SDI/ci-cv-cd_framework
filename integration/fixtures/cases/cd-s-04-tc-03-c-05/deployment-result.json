@@ -1,0 +1,54 @@
+{
+  "application_status": "not_evaluated",
+  "blueprint_id": "s-04-tc-03-c-05-composition",
+  "combination_id": "C-05",
+  "deployment_records": [
+    {
+      "application_status": "not_evaluated",
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-localization"
+    },
+    {
+      "application_status": "not_evaluated",
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "application_status": "not_evaluated",
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "deployment_result_id": "s-04-tc-03-c-05-deployment-result",
+  "deployment_schema_id": "s-04-tc-03-c-05-deployment",
+  "domain_outcome": "not_evaluated",
+  "evidence_basis": "fixture",
+  "image_build_result_id": "s-04-tc-03-c-05-image-build",
+  "profile_id": "waffle-jetson-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-result/v1",
+  "source_inputs": [
+    {
+      "sha256": "d7a68cd54ddad8ccafbb0f34809faa00c84a20e7af69b34af259c99dd933faf3",
+      "slot": "target_profile"
+    },
+    {
+      "sha256": "06543e51a9d2fb8f31ea06d144df1926f85b878b9a86443e3e94c51d7dad98e1",
+      "slot": "composition_blueprint"
+    },
+    {
+      "sha256": "0d1ab2607069bd2dfe2a746c4cb22ff46bfca92a328993f6792b55fbcd0834c2",
+      "slot": "deployment_schema"
+    },
+    {
+      "sha256": "c4238ce2ceb2f551c35e45fa43a5c9ea9669e67fa14a80de907220f6c523538e",
+      "slot": "image_build_result"
+    },
+    {
+      "sha256": "d3ea20f46bdb5b73e80856c5f5ede506070e5008a2ce938a324de0774e96f446",
+      "slot": "validation_evidence"
+    }
+  ],
+  "testcase_id": "TC-03",
+  "validation_evidence_id": "s-04-tc-03-c-05-validation"
+}

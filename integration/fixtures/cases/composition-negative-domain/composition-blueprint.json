@@ -1,0 +1,35 @@
+{
+  "blueprint_id": "s-04-tc-90-c-01-negative-composition",
+  "combination_id": "C-01",
+  "evidence_basis": "fixture",
+  "profile_id": "waffle-native-arm64",
+  "requirement_ids": [
+    "deliver-book-to-joe"
+  ],
+  "scenario_id": "S-04",
+  "schema_version": "sdi.composition-blueprint/v1",
+  "services": [
+    {
+      "capability": "navigation",
+      "depends_on": [],
+      "fixture_source": "negative-domain-conformance-fixture",
+      "service_id": "fixture-navigation",
+      "version": "1"
+    }
+  ],
+  "source_inputs": [
+    {
+      "sha256": "7a0c2aceeb6516d86320fcca7eb1dea0f71382f17fd07be7ab639e9d58ab0ed1",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-90"
+}

@@ -1,0 +1,172 @@
+{
+  "$defs": {
+    "ArchiveFacts": {
+      "additionalProperties": false,
+      "description": "Content identity for one complete controller-volume archive.",
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "size_bytes",
+        "sha256"
+      ],
+      "title": "ArchiveFacts",
+      "type": "object"
+    },
+    "InstallationPins": {
+      "additionalProperties": false,
+      "description": "Exact reconstructable software and workflow inputs.",
+      "properties": {
+        "cd_adapter_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Cd Adapter Image",
+          "type": "string"
+        },
+        "checkout_action_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Checkout Action Commit",
+          "type": "string"
+        },
+        "composition_adapter_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Composition Adapter Image",
+          "type": "string"
+        },
+        "cv_adapter_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Cv Adapter Image",
+          "type": "string"
+        },
+        "github_runner_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Github Runner Sha256",
+          "type": "string"
+        },
+        "github_runner_version": {
+          "minLength": 1,
+          "title": "Github Runner Version",
+          "type": "string"
+        },
+        "image_build_adapter_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Image Build Adapter Image",
+          "type": "string"
+        },
+        "jenkins_controller_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Jenkins Controller Image",
+          "type": "string"
+        },
+        "jenkins_plugin_count": {
+          "exclusiveMinimum": 0,
+          "title": "Jenkins Plugin Count",
+          "type": "integer"
+        },
+        "jenkins_plugin_lock_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Jenkins Plugin Lock Sha256",
+          "type": "string"
+        },
+        "jenkins_remoting_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Jenkins Remoting Image",
+          "type": "string"
+        },
+        "python_runtime_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Python Runtime Image",
+          "type": "string"
+        },
+        "python_version": {
+          "minLength": 1,
+          "title": "Python Version",
+          "type": "string"
+        },
+        "setup_uv_action_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Setup Uv Action Commit",
+          "type": "string"
+        },
+        "upload_artifact_action_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Upload Artifact Action Commit",
+          "type": "string"
+        },
+        "uv_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Uv Image",
+          "type": "string"
+        },
+        "uv_version": {
+          "minLength": 1,
+          "title": "Uv Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "jenkins_controller_image",
+        "jenkins_plugin_count",
+        "jenkins_plugin_lock_sha256",
+        "python_runtime_image",
+        "uv_image",
+        "jenkins_remoting_image",
+        "composition_adapter_image",
+        "image_build_adapter_image",
+        "cv_adapter_image",
+        "cd_adapter_image",
+        "python_version",
+        "uv_version",
+        "github_runner_version",
+        "github_runner_sha256",
+        "checkout_action_commit",
+        "setup_uv_action_commit",
+        "upload_artifact_action_commit"
+      ],
+      "title": "InstallationPins",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Sanitized reconstruction facts for one cold Jenkins snapshot.",
+  "properties": {
+    "archive": {
+      "$ref": "#/$defs/ArchiveFacts"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "pins": {
+      "$ref": "#/$defs/InstallationPins"
+    },
+    "repository_commit": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Repository Commit",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sdi.scaffold-recovery-manifest/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repository_commit",
+    "created_at",
+    "archive",
+    "pins"
+  ],
+  "title": "RecoveryManifest",
+  "type": "object"
+}

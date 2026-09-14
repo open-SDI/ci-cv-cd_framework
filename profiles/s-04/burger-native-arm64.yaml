@@ -1,0 +1,9 @@
+schema_version: sdi.target-execution-profile/v1
+profile_id: burger-native-arm64
+target:
+  target_id: turtlebot3-burger
+  kind: sdr
+platform:
+  platform_id: burger-native-system
+  kind: native
+  architecture: arm64

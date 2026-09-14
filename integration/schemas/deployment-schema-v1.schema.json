@@ -1,0 +1,176 @@
+{
+  "$defs": {
+    "DeploymentLocation": {
+      "additionalProperties": false,
+      "description": "One intended mobility or SDI execution location.",
+      "properties": {
+        "location_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Location Id",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "tier": {
+          "enum": [
+            "mobility",
+            "edge",
+            "fog",
+            "cloud"
+          ],
+          "title": "Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "location_id",
+        "tier",
+        "resource_id"
+      ],
+      "title": "DeploymentLocation",
+      "type": "object"
+    },
+    "ServicePlacement": {
+      "additionalProperties": false,
+      "description": "One service-to-location mapping.",
+      "properties": {
+        "location_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Location Id",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "location_id"
+      ],
+      "title": "ServicePlacement",
+      "type": "object"
+    },
+    "SourceInputDigest": {
+      "additionalProperties": false,
+      "description": "Stable exact-byte input correlation embedded in Domain outputs.",
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "sha256"
+      ],
+      "title": "SourceInputDigest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Intended placement for every service in one accepted blueprint.",
+  "properties": {
+    "blueprint_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Blueprint Id",
+      "type": "string"
+    },
+    "combination_id": {
+      "pattern": "^C-[0-9]{2}$",
+      "title": "Combination Id",
+      "type": "string"
+    },
+    "deployment_schema_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Deployment Schema Id",
+      "type": "string"
+    },
+    "evidence_basis": {
+      "enum": [
+        "fixture",
+        "implemented"
+      ],
+      "title": "Evidence Basis",
+      "type": "string"
+    },
+    "locations": {
+      "items": {
+        "$ref": "#/$defs/DeploymentLocation"
+      },
+      "minItems": 1,
+      "title": "Locations",
+      "type": "array"
+    },
+    "placements": {
+      "items": {
+        "$ref": "#/$defs/ServicePlacement"
+      },
+      "minItems": 1,
+      "title": "Placements",
+      "type": "array"
+    },
+    "profile_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Profile Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "pattern": "^S-[0-9]{2}$",
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sdi.deployment-schema/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_inputs": {
+      "items": {
+        "$ref": "#/$defs/SourceInputDigest"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Source Inputs",
+      "type": "array"
+    },
+    "testcase_id": {
+      "pattern": "^TC-[0-9]{2}$",
+      "title": "Testcase Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evidence_basis",
+    "deployment_schema_id",
+    "blueprint_id",
+    "scenario_id",
+    "testcase_id",
+    "combination_id",
+    "profile_id",
+    "source_inputs",
+    "locations",
+    "placements"
+  ],
+  "title": "DeploymentSchema",
+  "type": "object"
+}

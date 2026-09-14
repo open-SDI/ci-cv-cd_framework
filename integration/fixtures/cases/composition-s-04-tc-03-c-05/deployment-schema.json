@@ -1,0 +1,45 @@
+{
+  "blueprint_id": "s-04-tc-03-c-05-composition",
+  "combination_id": "C-05",
+  "deployment_schema_id": "s-04-tc-03-c-05-deployment",
+  "evidence_basis": "fixture",
+  "locations": [
+    {
+      "location_id": "waffle-jetson",
+      "resource_id": "jetson-nano",
+      "tier": "edge"
+    }
+  ],
+  "placements": [
+    {
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-localization"
+    },
+    {
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-navigation"
+    },
+    {
+      "location_id": "waffle-jetson",
+      "service_id": "fixture-mission-control"
+    }
+  ],
+  "profile_id": "waffle-jetson-arm64",
+  "scenario_id": "S-04",
+  "schema_version": "sdi.deployment-schema/v1",
+  "source_inputs": [
+    {
+      "sha256": "0678d2b54cec3681310a689ee9343c0d820dca93bc33c51c2055fe2ab3081040",
+      "slot": "run_request"
+    },
+    {
+      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "slot": "requirements_specification"
+    },
+    {
+      "sha256": "d7a68cd54ddad8ccafbb0f34809faa00c84a20e7af69b34af259c99dd933faf3",
+      "slot": "target_profile"
+    }
+  ],
+  "testcase_id": "TC-03"
+}
