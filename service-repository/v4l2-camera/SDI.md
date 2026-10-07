@@ -50,16 +50,16 @@ Publishes raw images from a USB webcam (any V4L2 device) as a ROS image stream.
 
 - A V4L2 camera is attached, by default `/dev/video0`, supporting the requested
   pixel format (`YUYV` by default).
-- The upstream node publishes `image_raw`; this service's fixed configuration
-  renames it to `/image` with `-r image_raw:=image`. `/camera_info` is derived from
-  the renamed topic and keeps that name.
+- The upstream node publishes `image_raw`; this service's fixed invocation
+  remaps it to `/image` (`-r image_raw:=image`), so camera info is published on
+  `/camera_info`.
 
 ## Limitations and known failure modes
 
 - Raw images are large; sending them over Wi-Fi to another host can drop frames
   or saturate the link.
-- The publisher is reliable. A best-effort stream needs the
-  `qos_overrides./image.publisher.reliability` parameter, which would be another service.
+- The image publisher is reliable; a best-effort image stream would be a
+  separate service.
 - Image frames carry `frame_id: camera`; the TurtleBot3 URDF has no such frame.
 
 ## Configuration notes

@@ -30,9 +30,7 @@ artifacts:
       kind: source
       repository: https://github.com/ros4hri/hri_face_detect
       revision: 599fde067a0e9360d107ad1bb1e63f07651b1e2b
-    invocation: >-
-      ros2 launch hri_face_detect face_detect.launch.py, with the remapping
-      image: /image in its PAL configuration
+    invocation: ros2 launch hri_face_detect face_detect.launch.py
 
 subscribes:
   /image: {type: sensor_msgs/msg/Image, reliability: best_effort, durability: volatile}
@@ -57,16 +55,16 @@ conventions, with a stable identifier per tracked face.
 
 - Built from source for ROS 2 Humble on Ubuntu 22.04; rosdistro lists it for
   Humble only and has no binary release for any distribution.
-- Its image input is the relative `image` topic; this service's fixed
-  configuration remaps it to `/image` through the node's PAL configuration.
+- Its image input is the relative `image` topic, which resolves to `/image` in
+  the root namespace.
 - Python dependencies are pinned by its `requirements.txt` (mediapipe 0.10.9,
   opencv-contrib-python 4.10.0.84, protobuf 3.20.3).
 
 ## Limitations and known failure modes
 
-- Does not run on Ubuntu 24.04 / Jazzy hosts as declared.
-- The subscriber is best effort; a reliable camera publisher is compatible, the
-  reverse is not.
+- Declared only for Ubuntu 22.04 with Humble; it has no Jazzy build or release.
+- The image subscriber is best effort, so it accepts both reliable and
+  best-effort image publishers.
 - Lists only `/image` and `/humans/faces/tracked`; it also subscribes to
   `camera_info` and publishes per-face topics and diagnostics.
 - Runs on CPU; no GPU use was found.

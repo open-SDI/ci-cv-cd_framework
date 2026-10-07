@@ -52,15 +52,16 @@ Recognises known people in camera images and reports where their faces are.
 
 - A classifier trained on about 20 photos per known person, made with the
   repository's `review_training_data.py` and `make_classifier.py`.
-- PyTorch and facenet-pytorch are installed by hand; neither is declared in the
-  package, Ubuntu 24.04 ships no PyTorch packages, and facenet-pytorch pins
-  `torch<2.3`. Pretrained FaceNet weights download at first start.
+- PyTorch and facenet-pytorch must be installed by hand; the package declares
+  neither, and facenet-pytorch pins `torch<2.3`. Pretrained FaceNet weights
+  download at first start.
 - Uses `cuda:0` when available, otherwise the CPU.
 
 ## Limitations and known failure modes
 
-- Upstream hard-codes the classifier path to `/home/paul/.../face_classifier.pt`;
-  the intended fork makes it a parameter, loads it with
+- The route builds upstream as is, which hard-codes the classifier path to
+  `/home/paul/.../face_classifier.pt` and so does not start here. The intended
+  fork, not yet created, makes the path a parameter, loads it with
   `torch.load(..., weights_only=False)`, and depends on `python3-opencv` instead of `cv2`.
 - `header.stamp` is the publish time; the input image header is in `image_header`.
 

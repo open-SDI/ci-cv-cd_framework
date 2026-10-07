@@ -34,7 +34,7 @@ artifacts:
         - ros-jazzy-hls-lfcd-lds-driver=2.1.1-1*
         - ros-jazzy-ld08-driver=1.1.4-1*
     invocation: >-
-      TURTLEBOT3_MODEL=waffle_pi LDS_MODEL=LDS-02
+      TURTLEBOT3_MODEL=waffle_pi LDS_MODEL=LDS-01
       ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/ttyACM0
 
 subscribes:
@@ -69,7 +69,7 @@ the robot's fixed transforms from its URDF.
 
 - Runs on the robot itself: OpenCR on `/dev/ttyACM0` and the lidar on `/dev/ttyUSB0`.
 - `TURTLEBOT3_MODEL` and `LDS_MODEL` must be set; the launch file fails without them.
-  `LDS-02` selects the `ld08_driver`; a robot with the older LDS-01 needs `LDS_MODEL=LDS-01`.
+  `LDS-01` selects the `hls_lfcd_lds_driver`; a robot with the newer LDS-02 needs `LDS_MODEL=LDS-02`.
 - Velocity commands must be `TwistStamped`: the shipped Waffle Pi parameter file
   sets `enable_stamped_cmd_vel: true`.
 
@@ -78,10 +78,8 @@ the robot's fixed transforms from its URDF.
 - The odometry transform and the stamped `/cmd_vel` come from the shipped
   parameter file; a replacement file that omits `odometry.publish_tf` or
   `enable_stamped_cmd_vel` silently drops the transform or switches to `Twist`.
-- The `ld08_driver` ignores the `port` argument and picks the first CP2102 USB device.
 - Lists only the endpoints the target navigation run uses; the node also offers
   IMU, joint states, battery, sensor state and sound/motor-power services.
-- The URDF has no camera link; a camera frame needs its own transform.
 
 ## Configuration notes
 
