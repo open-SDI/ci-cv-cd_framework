@@ -4,6 +4,7 @@
 
 - `integration/` is the supported Python project and owns the repository verification command. Run its commands from the directory stated below.
 - `CI/` is an explicitly unsupported workspace reserved for a future composition adapter. The architecture in `CI/APSEC_2025_Tools.pdf` is design context, not implemented code.
+- `service-repository/` is the SDI service repository: one `<service_id>/SDI.md` description per mobility service. CI reads it as a supplied read-only path and never writes it.
 - The Year-1 plugin and prototype were retired. Git history is their archive; do not restore their interfaces or artifact formats.
 - Read `CONTEXT.md` and `docs/project/PROJECT-CONTEXT.md` for project terminology and the cached synthesis of the stable project PDFs. Do not reread those PDFs unless exact source wording, a diagram, compliance evidence, or an uncaptured detail is required.
 - Most tracked files are Gazebo assets under `CV/gazebo/models/`; avoid repository-wide formatting or generated-file rewrites there.
