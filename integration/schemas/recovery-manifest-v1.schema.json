@@ -91,11 +91,6 @@
           "title": "Python Version",
           "type": "string"
         },
-        "setup_uv_action_commit": {
-          "pattern": "^[0-9a-f]{40}$",
-          "title": "Setup Uv Action Commit",
-          "type": "string"
-        },
         "upload_artifact_action_commit": {
           "pattern": "^[0-9a-f]{40}$",
           "title": "Upload Artifact Action Commit",
@@ -128,7 +123,6 @@
         "github_runner_version",
         "github_runner_sha256",
         "checkout_action_commit",
-        "setup_uv_action_commit",
         "upload_artifact_action_commit"
       ],
       "title": "InstallationPins",

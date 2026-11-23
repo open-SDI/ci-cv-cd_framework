@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+# listener: the runner's listener process runs (it may still be connecting).
+# worker: the runner is executing a job.
+case "${1-}" in
+    listener) pattern='*/bin/Runner.Listener run*' ;;
+    worker) pattern='*/bin/Runner.Worker *' ;;
+    *)
+        printf '%s\n' 'usage: sdi-runner-probe listener|worker' >&2
+        exit 2
+        ;;
+esac
+
+for command_file in /proc/[0-9]*/cmdline; do
+    command=$(tr '\000' ' ' < "$command_file" 2>/dev/null || true)
+    case "$command" in
+        $pattern) exit 0 ;;
+    esac
+done
+
+exit 1

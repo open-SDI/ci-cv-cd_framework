@@ -180,6 +180,7 @@ def _validate_bundle(tmp_path: Path) -> None:
     assert validated.returncode == 0, validated.stderr
 
 
+@pytest.mark.live
 def test_composes_the_waffle_orin_run_with_a_real_model(tmp_path: Path) -> None:
     generator = live_generator()
     keys = live_keys(generator)
@@ -229,6 +230,7 @@ def test_composes_the_waffle_orin_run_with_a_real_model(tmp_path: Path) -> None:
             assert (service["route"] is None) == (service["artifact_id"] is None)
 
 
+@pytest.mark.live
 def test_exhausted_output_is_a_bounded_domain_failure(tmp_path: Path) -> None:
     api_key = openai_key()
     if api_key is None:
@@ -256,6 +258,7 @@ def test_exhausted_output_is_a_bounded_domain_failure(tmp_path: Path) -> None:
     assert api_key not in _bundle_text(tmp_path)
 
 
+@pytest.mark.live
 @pytest.mark.parametrize(
     ("lexical_only", "code"),
     [
@@ -363,6 +366,14 @@ def test_publishes_the_preferred_stubbed_proposal(tmp_path: Path) -> None:
         )
         for item in COMPLETE["services"]
     }
+    deployment = json.loads(
+        (tmp_path / "bundle/stages/composition/deployment-schema.json").read_text()
+    )
+    assert {
+        blueprint["profile_basis"],
+        deployment["profile_basis"],
+        evidence["profile_basis"],
+    } == {"placeholder"}
     _validate_bundle(tmp_path)
     assert STUB_KEY not in _bundle_text(tmp_path) + completed.stdout
 

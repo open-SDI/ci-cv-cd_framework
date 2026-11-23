@@ -39,6 +39,9 @@ The mobility target shall reach the selected destination.
 TARGET_PROFILE = """\
 schema_version: sdi.target-execution-profile/v1
 profile_id: waffle-native-arm64
+provenance:
+  basis: placeholder
+  note: Test-only profile.
 target:
   target_id: turtlebot3-waffle
   kind: sdv
@@ -125,6 +128,13 @@ def _replace_bytes_and_commit(
     return _git(repository, "rev-parse", "HEAD")
 
 
+def _run_request_nested_to(depth: int) -> str:
+    nested = "extra:\n" + "".join(
+        f"{'  ' * level}nested:\n" for level in range(1, depth)
+    )
+    return f"{RUN_REQUEST}{nested}{'  ' * depth}value: final\n"
+
+
 def _assert_rejected_without_identity(
     completed: subprocess.CompletedProcess[str], expected_error: str
 ) -> None:
@@ -170,32 +180,108 @@ def test_identifies_a_valid_committed_run(
     )
 
 
-def test_rejects_duplicate_yaml_keys_before_assigning_identity(
+@pytest.mark.parametrize(
+    ("relative_path", "content", "message"),
+    [
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.replace(
+                "scenario_id: S-04", "scenario_id: S-04\nscenario_id: S-05"
+            ).encode(),
+            "duplicate",
+            id="duplicate-key",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.replace(
+                "testcase_id: TC-03", "testcase_id: TC-03\nexecution_id: caller-owned"
+            ).encode(),
+            "extra inputs are not permitted",
+            id="unknown-key",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.replace(
+                "requirements/delivery.md", "../requirements/delivery.md"
+            ).encode(),
+            "parent components",
+            id="parent-traversal",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            f"{RUN_REQUEST}---\n{{}}\n".encode(),
+            "exactly one YAML document",
+            id="several-documents",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            b"schema_version: \xff\n",
+            "not valid UTF-8",
+            id="invalid-utf8",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.encode() + b"#" * (2 * 1024 * 1024),
+            "exceeds 2097152 bytes",
+            id="larger-than-two-mib",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.replace(
+                "scenario_id: S-04", "scenario_id: !code S-04"
+            ).encode(),
+            "tag is not accepted",
+            id="unsafe-tag",
+        ),
+        pytest.param(
+            "runs/request.yaml",
+            RUN_REQUEST.replace("scenario_id: S-04", "scenario_id: &scenario S-04")
+            .replace("testcase_id: TC-03", "testcase_id: *scenario")
+            .encode(),
+            "anchors are not accepted",
+            id="anchor-and-alias",
+        ),
+        pytest.param(
+            "profiles/waffle-native-arm64.yaml",
+            f"{TARGET_PROFILE}connections:\n  - [waffle-native, orin]\n".encode(),
+            "connection must name two distinct profile hosts",
+            id="connection-outside-profile-hosts",
+        ),
+        pytest.param(
+            "profiles/waffle-native-arm64.yaml",
+            f"{TARGET_PROFILE}orchestrator_provides: null\n".encode(),
+            "must be omitted when unknown",
+            id="null-orchestrator-inputs",
+        ),
+    ],
+)
+def test_rejects_an_invalid_committed_input_before_assigning_identity(
     committed_inputs: tuple[Path, str],
+    relative_path: str,
+    content: bytes,
+    message: str,
 ) -> None:
     repository, _ = committed_inputs
-    duplicate = RUN_REQUEST.replace(
-        "scenario_id: S-04", "scenario_id: S-04\nscenario_id: S-05"
-    )
-    commit_sha = _replace_and_commit(repository, "runs/request.yaml", duplicate)
+    commit_sha = _replace_bytes_and_commit(repository, relative_path, content)
 
     completed = _identify(repository, commit_sha)
 
-    _assert_rejected_without_identity(completed, "duplicate")
+    _assert_rejected_without_identity(completed, message)
 
 
-def test_rejects_unknown_contract_keys(
-    committed_inputs: tuple[Path, str],
+@pytest.mark.parametrize("depth", [34, 1200], ids=["past-the-limit", "extreme"])
+def test_excessive_yaml_nesting_is_a_controlled_validation_failure(
+    committed_inputs: tuple[Path, str], depth: int
 ) -> None:
     repository, _ = committed_inputs
-    unknown_key = RUN_REQUEST.replace(
-        "testcase_id: TC-03", "testcase_id: TC-03\nexecution_id: caller-owned"
+    commit_sha = _replace_and_commit(
+        repository, "runs/request.yaml", _run_request_nested_to(depth)
     )
-    commit_sha = _replace_and_commit(repository, "runs/request.yaml", unknown_key)
 
     completed = _identify(repository, commit_sha)
 
-    _assert_rejected_without_identity(completed, "extra inputs are not permitted")
+    _assert_rejected_without_identity(completed, "nesting exceeds")
+    assert "Traceback" not in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -232,20 +318,6 @@ def test_rejects_an_invalid_requirements_specification(
     completed = _identify(repository, commit_sha)
 
     _assert_rejected_without_identity(completed, message)
-
-
-def test_rejects_parent_traversal_in_a_referenced_path(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    traversal = RUN_REQUEST.replace(
-        "requirements/delivery.md", "../requirements/delivery.md"
-    )
-    commit_sha = _replace_and_commit(repository, "runs/request.yaml", traversal)
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "parent components")
 
 
 def test_rejects_a_committed_symlink_reference(
@@ -291,85 +363,6 @@ def test_provenance_uses_immutable_committed_bytes(
     assert (
         requirements_provenance["sha256"] == hashlib.sha256(committed_bytes).hexdigest()
     )
-
-
-def test_rejects_more_than_one_yaml_document(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    commit_sha = _replace_and_commit(
-        repository, "runs/request.yaml", f"{RUN_REQUEST}---\n{{}}\n"
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "exactly one YAML document")
-
-
-def test_rejects_invalid_utf8(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    commit_sha = _replace_bytes_and_commit(
-        repository, "runs/request.yaml", b"schema_version: \xff\n"
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "not valid UTF-8")
-
-
-def test_rejects_files_larger_than_two_mib(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    oversized = RUN_REQUEST.encode() + b"#" * (2 * 1024 * 1024)
-    commit_sha = _replace_bytes_and_commit(repository, "runs/request.yaml", oversized)
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "exceeds 2097152 bytes")
-
-
-def test_rejects_excessive_yaml_nesting(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    nested = "extra:\n" + "".join(f"{'  ' * depth}nested:\n" for depth in range(1, 34))
-    nested += f"{'  ' * 34}value: final\n"
-    commit_sha = _replace_and_commit(
-        repository, "runs/request.yaml", f"{RUN_REQUEST}{nested}"
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "nesting exceeds")
-
-
-def test_rejects_unsafe_yaml_tags(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    tagged = RUN_REQUEST.replace("scenario_id: S-04", "scenario_id: !code S-04")
-    commit_sha = _replace_and_commit(repository, "runs/request.yaml", tagged)
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "tag is not accepted")
-
-
-def test_rejects_yaml_anchors_and_aliases(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    anchored = RUN_REQUEST.replace(
-        "scenario_id: S-04", "scenario_id: &scenario S-04"
-    ).replace("testcase_id: TC-03", "testcase_id: *scenario")
-    commit_sha = _replace_and_commit(repository, "runs/request.yaml", anchored)
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "anchors are not accepted")
 
 
 def test_rejects_non_main_requested_ref(
@@ -461,54 +454,6 @@ def test_rejects_non_utf8_origin_without_a_traceback(
     completed = _identify(repository, commit_sha)
 
     _assert_rejected_without_identity(completed, "origin URL is not valid UTF-8")
-    assert "Traceback" not in completed.stderr
-
-
-def test_rejects_a_connection_outside_the_profile_hosts(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    unknown_host = f"{TARGET_PROFILE}connections:\n  - [waffle-native, orin]\n"
-    commit_sha = _replace_and_commit(
-        repository, "profiles/waffle-native-arm64.yaml", unknown_host
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(
-        completed, "connection must name two distinct profile hosts"
-    )
-
-
-def test_rejects_explicit_null_for_unknown_orchestrator_inputs(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    null_inputs = f"{TARGET_PROFILE}orchestrator_provides: null\n"
-    commit_sha = _replace_and_commit(
-        repository, "profiles/waffle-native-arm64.yaml", null_inputs
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "must be omitted when unknown")
-
-
-def test_extreme_nesting_is_a_controlled_validation_failure(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    nested = "extra:\n" + "".join(
-        f"{'  ' * depth}nested:\n" for depth in range(1, 1200)
-    )
-    nested += f"{'  ' * 1200}value: final\n"
-    commit_sha = _replace_and_commit(
-        repository, "runs/request.yaml", f"{RUN_REQUEST}{nested}"
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "nesting exceeds")
     assert "Traceback" not in completed.stderr
 
 

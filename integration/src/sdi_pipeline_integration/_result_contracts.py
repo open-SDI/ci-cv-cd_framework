@@ -26,9 +26,11 @@ from ._contracts import (
 )
 from ._git_input import validate_repository_path
 from ._stage_contracts import (
+    COMMITTED_SLOTS,
     EXPECTED_STAGE_EVIDENCE,
     EXPECTED_STAGE_INPUT_SLOTS,
     EXPECTED_STAGE_OUTPUTS,
+    SLOT_BY_SCHEMA,
     SUPPLIED_INPUT_SLOTS,
     AcceptedAttemptEnvelope,
     ExecutionId,
@@ -171,7 +173,8 @@ class PipelineIntegrationResult(ContractModel):
     finished_at: AwareDatetime
     duration_ms: NonNegativeInt
     input_provenance: Annotated[
-        list[ResultInputProvenance], Field(min_length=3, max_length=3)
+        list[ResultInputProvenance],
+        Field(min_length=len(COMMITTED_SLOTS), max_length=len(COMMITTED_SLOTS)),
     ]
     attempts: Annotated[
         list[AcceptedAttemptEnvelope], Field(min_length=4, max_length=4)
@@ -225,41 +228,23 @@ class PipelineIntegrationResult(ContractModel):
                 msg = "result attempts are not sequential"
                 raise ValueError(msg)
 
-        input_schemas = [item.schema_version for item in self.input_provenance]
-        if input_schemas != [
-            "sdi.pipeline-integration-run-request/v1",
-            "sdi.mobility-requirements-specification/v1",
-            "sdi.target-execution-profile/v1",
+        if [item.schema_version for item in self.input_provenance] != [
+            slot.schema_version for slot in COMMITTED_SLOTS
         ]:
             msg = "result input provenance is not the identified input set"
             raise ValueError(msg)
         require_unique_paths([item.path for item in self.input_provenance])
 
         sources: dict[str, tuple[object, ...]] = {
-            "run_request": (
-                self.input_provenance[0].path,
-                self.input_provenance[0].schema_version,
-                self.input_provenance[0].byte_size,
-                self.input_provenance[0].sha256,
+            SLOT_BY_SCHEMA[item.schema_version].name: (
+                item.path,
+                item.schema_version,
+                item.byte_size,
+                item.sha256,
                 None,
                 None,
-            ),
-            "requirements_specification": (
-                self.input_provenance[1].path,
-                self.input_provenance[1].schema_version,
-                self.input_provenance[1].byte_size,
-                self.input_provenance[1].sha256,
-                None,
-                None,
-            ),
-            "target_profile": (
-                self.input_provenance[2].path,
-                self.input_provenance[2].schema_version,
-                self.input_provenance[2].byte_size,
-                self.input_provenance[2].sha256,
-                None,
-                None,
-            ),
+            )
+            for item in self.input_provenance
         }
         blocking_stage: StageName | None = None
         for attempt in self.attempts:

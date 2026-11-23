@@ -55,7 +55,6 @@ class InstallationPins(ContractModel):
     github_runner_version: str = Field(strict=True, min_length=1)
     github_runner_sha256: Sha256
     checkout_action_commit: GitCommit
-    setup_uv_action_commit: GitCommit
     upload_artifact_action_commit: GitCommit
 
 
@@ -139,7 +138,6 @@ _EXPECTED_KEYS = {
     "SDI_GITHUB_RUNNER_SHA256",
     "SDI_GITHUB_RUNNER_LABEL",
     "SDI_CHECKOUT_ACTION_COMMIT",
-    "SDI_SETUP_UV_ACTION_COMMIT",
     "SDI_UPLOAD_ARTIFACT_ACTION_COMMIT",
 }
 
@@ -200,7 +198,6 @@ def load_installation_authority(path: Path) -> InstallationAuthority:
             github_runner_version=values["SDI_GITHUB_RUNNER_VERSION"],
             github_runner_sha256=values["SDI_GITHUB_RUNNER_SHA256"],
             checkout_action_commit=values["SDI_CHECKOUT_ACTION_COMMIT"],
-            setup_uv_action_commit=values["SDI_SETUP_UV_ACTION_COMMIT"],
             upload_artifact_action_commit=values["SDI_UPLOAD_ARTIFACT_ACTION_COMMIT"],
         ),
     )
@@ -252,21 +249,35 @@ def _sequence(value: object, *, label: str) -> list[object]:
     return cast("list[object]", value)
 
 
-def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
-    agents = repository / "deployment/jenkins/agents/Dockerfile"
-    for label, name, image in (
-        ("Python runtime pin", "RUNTIME_IMAGE", pins.python_runtime_image),
-        ("uv image pin", "UV_IMAGE", pins.uv_image),
-        ("Jenkins Remoting pin", "REMOTING_IMAGE", pins.jenkins_remoting_image),
-    ):
-        arguments = [
-            value
-            for value in _docker_instructions(agents, "ARG")
-            if value.partition("=")[0] == name
+def _require_build_arguments(
+    dockerfile: Path, expected: tuple[tuple[str, str, str], ...]
+) -> None:
+    """Require each pinned build argument to be assigned exactly once.
+
+    A bare `ARG NAME` that only brings a global argument into a stage is not
+    an assignment.
+    """
+    for label, name, value in expected:
+        assignments = [
+            argument
+            for argument in _docker_instructions(dockerfile, "ARG")
+            if argument.partition("=")[0] == name and "=" in argument
         ]
-        if arguments != [f"{name}={image}"]:
+        if assignments != [f"{name}={value}"]:
             msg = f"{label} does not match the reviewed installation authority"
             raise ValueError(msg)
+
+
+def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
+    agents = repository / "deployment/jenkins/agents/Dockerfile"
+    _require_build_arguments(
+        agents,
+        (
+            ("Python runtime pin", "RUNTIME_IMAGE", pins.python_runtime_image),
+            ("uv image pin", "UV_IMAGE", pins.uv_image),
+            ("Jenkins Remoting pin", "REMOTING_IMAGE", pins.jenkins_remoting_image),
+        ),
+    )
     from_directives = _docker_instructions(agents, "FROM")
     if from_directives != [
         "${RUNTIME_IMAGE} AS runtime",
@@ -326,7 +337,6 @@ def _validate_workflow_pins(repository: Path, pins: InstallationPins) -> None:
     ]
     for label, action, commit in (
         ("checkout action pin", "actions/checkout", pins.checkout_action_commit),
-        ("setup-uv action pin", "astral-sh/setup-uv", pins.setup_uv_action_commit),
         (
             "upload-artifact action pin",
             "actions/upload-artifact",
@@ -337,18 +347,84 @@ def _validate_workflow_pins(repository: Path, pins: InstallationPins) -> None:
         if matches != [f"{action}@{commit}"]:
             msg = f"{label} does not match the reviewed installation authority"
             raise ValueError(msg)
-    setup_steps = [
-        step
-        for step in steps
-        if step.get("uses") == f"astral-sh/setup-uv@{pins.setup_uv_action_commit}"
+
+
+def _validate_runner_pins(repository: Path, pins: InstallationPins) -> None:
+    runner = repository / "deployment/jenkins/runner/Dockerfile"
+    _require_build_arguments(
+        runner,
+        (
+            ("Python runtime pin", "RUNTIME_IMAGE", pins.python_runtime_image),
+            ("uv image pin", "UV_IMAGE", pins.uv_image),
+            ("runner version pin", "RUNNER_VERSION", pins.github_runner_version),
+            ("runner digest pin", "RUNNER_SHA256", pins.github_runner_sha256),
+        ),
+    )
+    if _docker_instructions(runner, "FROM") != [
+        "${RUNTIME_IMAGE} AS runtime",
+        "${UV_IMAGE} AS uv",
+        "runtime AS tooling",
+        "runtime AS runner-dist",
+        "runtime",
+    ]:
+        msg = "runner build stages do not consume the reviewed image pins"
+        raise ValueError(msg)
+    downloads = [
+        instruction.removesuffix("\\").strip()
+        for instruction in _docker_instructions(runner, "ADD")
     ]
-    if len(setup_steps) != 1:
-        msg = "workflow uv pin does not match the reviewed installation authority"
+    if downloads != ["--checksum=sha256:${RUNNER_SHA256}"]:
+        msg = "runner download is not verified against the reviewed digest pin"
         raise ValueError(msg)
-    setup_with = _mapping(setup_steps[0].get("with"), label="workflow setup-uv inputs")
-    if str(setup_with.get("version")) != pins.uv_version:
-        msg = "workflow uv pin does not match the reviewed installation authority"
+    compose = parse_yaml(
+        (repository / "deployment/jenkins/compose.yaml").read_bytes(),
+        "deployment/jenkins/compose.yaml",
+    )
+    services = _mapping(compose.get("services"), label="Compose services")
+    for name in ("runner-upstream", "runner-fork"):
+        service = _mapping(services.get(name), label=f"Compose {name} service")
+        if service.get("image") != (f"sdi-jenkins-runner:{pins.github_runner_version}"):
+            msg = "runner image tag does not match the reviewed installation authority"
+            raise ValueError(msg)
+    _require_single_assignment(
+        repository / "deployment/jenkins/runner/sdi-runner-entrypoint",
+        prefix="--labels ",
+        expected="--labels sdi-jenkins-handoff \\",
+        label="runner label pin",
+    )
+    _validate_runner_proxy_pins(repository, pins, services)
+
+
+def _validate_runner_proxy_pins(
+    repository: Path, pins: InstallationPins, services: dict[str, object]
+) -> None:
+    """Require the proxy to build on the runtime pin and be tagged by Squid major.
+
+    The Dockerfile asserts the installed Squid major version, so the tag names
+    what the image contains without a separate installation key.
+    """
+    proxy = repository / "deployment/jenkins/runner-proxy/Dockerfile"
+    _require_build_arguments(
+        proxy,
+        (("runner proxy runtime pin", "RUNTIME_IMAGE", pins.python_runtime_image),),
+    )
+    if _docker_instructions(proxy, "FROM") != ["${RUNTIME_IMAGE}"]:
+        msg = "runner proxy build does not consume the reviewed runtime pin"
         raise ValueError(msg)
+    squid_majors = [
+        argument.partition("=")[2]
+        for argument in _docker_instructions(proxy, "ARG")
+        if argument.startswith("SQUID_MAJOR=")
+    ]
+    if len(squid_majors) != 1:
+        msg = "runner proxy Dockerfile must declare ARG SQUID_MAJOR exactly once"
+        raise ValueError(msg)
+    image = f"sdi-jenkins-runner-proxy:{squid_majors[0]}"
+    for name in ("runner-upstream-proxy", "runner-fork-proxy"):
+        service = _mapping(services.get(name), label=f"Compose {name} service")
+        if service.get("image") != image:
+            msg = "runner proxy image tag does not match its Squid major version"
+            raise ValueError(msg)
 
 
 def validate_repository_authority(
@@ -381,25 +457,7 @@ def validate_repository_authority(
 
     _validate_workflow_pins(repository, pins)
 
-    runner = repository / "deployment/github-runner/bin/runner"
-    _require_single_assignment(
-        runner,
-        prefix="RUNNER_VERSION=",
-        expected=f'RUNNER_VERSION="{pins.github_runner_version}"',
-        label="runner version pin",
-    )
-    _require_single_assignment(
-        runner,
-        prefix="RUNNER_SHA256=",
-        expected=f'RUNNER_SHA256="{pins.github_runner_sha256}"',
-        label="runner digest pin",
-    )
-    _require_single_assignment(
-        runner,
-        prefix="--labels ",
-        expected="--labels sdi-jenkins-handoff \\",
-        label="runner label pin",
-    )
+    _validate_runner_pins(repository, pins)
 
 
 def _write_manifest(

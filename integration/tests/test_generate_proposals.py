@@ -99,6 +99,7 @@ def _generate(
     )
 
 
+@pytest.mark.live
 def test_generates_proposals_the_assessment_accepts(tmp_path: Path) -> None:
     generator = live_generator()
     keys = live_keys(generator)
@@ -137,6 +138,7 @@ def test_generates_proposals_the_assessment_accepts(tmp_path: Path) -> None:
         assert api_key not in evidence_text + completed.stdout + completed.stderr
 
 
+@pytest.mark.live
 def test_provider_error_writes_no_proposals(tmp_path: Path) -> None:
     generator = live_generator()
     config = tmp_path / "config.yaml"

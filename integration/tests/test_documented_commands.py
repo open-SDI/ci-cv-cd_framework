@@ -17,7 +17,6 @@ INVENTORY = INTEGRATION_ROOT / "acceptance" / "documented-commands.yaml"
 GUIDES = (
     "docs/pipeline-integration-trigger.md",
     "deployment/jenkins/README.md",
-    "deployment/github-runner/README.md",
     "docs/scaffold-maintainer.md",
     "docs/installation-readiness-checklist.md",
 )
@@ -193,56 +192,50 @@ def test_github_examples_target_one_exact_run(tmp_path: Path) -> None:
     assert all("open-SDI/ci-cv-cd_framework" in entry for entry in repository_entries)
 
 
-def test_runner_examples_form_one_supported_lifecycle(tmp_path: Path) -> None:
-    runner = tmp_path / "deployment/github-runner/bin/runner"
-    runner.parent.mkdir(parents=True)
-    log = tmp_path / "runner.log"
-    runner.write_text(
+def test_runner_registration_pipes_a_fresh_token_into_the_stack(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "commands.log"
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    gh = stubs / "gh"
+    gh.write_text(
         "#!/bin/sh\n"
-        "printf '%s|%s|%s|%s|%s\\n' \"$*\" "
-        '"${SDI_GITHUB_RUNNER_REPOSITORY-}" "${SDI_GITHUB_RUNNER_NAME-}" '
-        '"${SDI_GITHUB_HANDOFF_QUIESCED-}" '
-        '"${SDI_GITHUB_RUNNER_REMOVAL_TOKEN-}" >> "$COMMAND_LOG"\n',
+        'printf \'gh|%s\\n\' "$*" >> "$COMMAND_LOG"\n'
+        "printf '%s\\n' REGISTRATIONTOKEN\n",
         encoding="utf-8",
     )
-    runner.chmod(0o755)
-    fences = dict(_shell_fences(REPOSITORY_ROOT / "deployment/github-runner/README.md"))
-    environment = os.environ | {"COMMAND_LOG": str(log)}
+    stack = tmp_path / "deployment/jenkins/bin/stack"
+    stack.parent.mkdir(parents=True)
+    stack.write_text(
+        "#!/bin/sh\n"
+        "input=\n"
+        "[ -t 0 ] || input=$(cat)\n"
+        'printf \'stack|%s|%s\\n\' "$*" "$input" >> "$COMMAND_LOG"\n',
+        encoding="utf-8",
+    )
+    for command in (gh, stack):
+        command.chmod(0o755)
+    fences = dict(_shell_fences(REPOSITORY_ROOT / "deployment/jenkins/README.md"))
 
-    for item in _inventory().commands:
-        if item.document != "deployment/github-runner/README.md":
-            continue
-        command = (
-            fences[item.id]
-            .replace("<short-lived-registration-token>", "registration-token")
-            .replace("<short-lived-removal-token>", "removal-token")
-        )
-        completed = subprocess.run(
-            ["sh", "-eu", "-c", command],
-            check=False,
-            capture_output=True,
-            cwd=tmp_path,
-            env=environment,
-            text=True,
-        )
-        assert completed.returncode == 0, completed.stderr
+    completed = subprocess.run(
+        ["sh", "-eu", "-c", fences["stack-register-runner"]],
+        check=False,
+        capture_output=True,
+        cwd=tmp_path,
+        env=os.environ
+        | {"COMMAND_LOG": str(log), "PATH": f"{stubs}:{os.environ['PATH']}"},
+        stdin=subprocess.DEVNULL,
+        text=True,
+    )
 
-    entries = [line.split("|") for line in log.read_text(encoding="utf-8").splitlines()]
-    assert [entry[0] for entry in entries] == [
-        "preflight",
-        "install",
-        "configure",
-        "install-service",
-        "start",
-        "status",
-        "stop",
-        "unregister",
-        "remove-service",
-        "remove",
+    assert completed.returncode == 0, completed.stderr
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        (
+            "gh|api -X POST repos/open-SDI/ci-cv-cd_framework/actions/runners/"
+            "registration-token --jq .token"
+        ),
+        "stack|register-runner upstream|REGISTRATIONTOKEN",
+        "stack|start|",
+        "stack|verify-live|",
     ]
-    assert entries[2][1:3] == [
-        "https://github.com/open-SDI/ci-cv-cd_framework",
-        "jenkins-handoff-host",
-    ]
-    assert entries[7][3:] == ["true", "removal-token"]
-    assert all(entry[3] == "true" for entry in entries[7:])

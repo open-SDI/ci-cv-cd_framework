@@ -93,6 +93,33 @@ exercise() {
     --agent-secret-directory "$temporary"
 "$stack" --config "$config" --project-name "$project_name" start
 check
+
+# The runner image, its controller network, and both registration guards,
+# without registering with GitHub: registration first passes the runner
+# network check, which needs no internet, and then rejects the token, and
+# start refuses the unregistered runner.
+expect_refusal() {
+    expected=$1
+    shift
+    if "$@" 2> "$temporary/refusal"; then
+        printf 'smoke: %s succeeded unexpectedly\n' "$*" >&2
+        exit 2
+    fi
+    grep -F -q -- "$expected" "$temporary/refusal" || {
+        cat "$temporary/refusal" >&2
+        exit 2
+    }
+}
+printf '%s\n' 'GITHUB_RUNNERS=fork' >> "$config"
+printf '%s\n' 'not-a-registration-token!' > "$temporary/invalid-registration-token"
+expect_refusal 'the registration token is empty or invalid' \
+    "$stack" --config "$config" --project-name "$project_name" \
+    register-runner fork < "$temporary/invalid-registration-token"
+expect_refusal 'the fork runner is not registered' \
+    "$stack" --config "$config" --project-name "$project_name" start
+grep -v '^GITHUB_RUNNERS=' "$config" > "$config.without-runners"
+mv "$config.without-runners" "$config"
+
 "$stack" --config "$config" --project-name "$project_name" status >/dev/null
 "$stack" --config "$config" --project-name "$project_name" logs >/dev/null
 "$stack" --config "$config" --project-name "$project_name" quiesce
@@ -143,4 +170,4 @@ exercise
 "$stack" --config "$config" --project-name "$project_name" start
 check
 
-printf '%s\n' 'Ephemeral Jenkins controller and five-agent smoke check passed.'
+printf '%s\n' 'Ephemeral Jenkins controller, five-agent, and handoff-runner smoke check passed.'

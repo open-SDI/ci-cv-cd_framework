@@ -10,7 +10,8 @@ governed separately and never enter these contracts.
 for its keys; the runtime forwards only the selected generator's key and the
 embeddings key. The image-build,
 CV, and CD Fixture descriptors receive no secrets and select one shared
-digest-pinned Fixture implementation through separate reviewed Stage profiles.
+digest-pinned Fixture implementation through separate Stage profiles, each
+rendered from the slot registry and checked when the descriptor loads.
 Each Domain-agent build consumes its own descriptor-selected runtime image, so a
 later reviewed descriptor can replace and reconcile one agent independently.
 The `ci` node identity exposes the descriptor's `composition` label; the other

@@ -124,6 +124,44 @@
       },
       "maxItems": 3,
       "minItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "target_profile"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "composition_blueprint"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "deployment_schema"
+            }
+          }
+        }
+      ],
       "title": "Source Inputs",
       "type": "array"
     },

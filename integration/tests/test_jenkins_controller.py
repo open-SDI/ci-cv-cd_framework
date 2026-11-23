@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ruamel.yaml import YAML
 
+from sdi_pipeline_integration._integration_code import STALE_IMAGE_REASON
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -288,9 +290,7 @@ def test_controller_image_and_complete_plugin_set_are_exactly_pinned() -> None:
     assert "matrix-auth:3.3" in plugin_lines
 
 
-def test_compose_exposes_only_loopback_http_and_persists_only_controller_state() -> (
-    None
-):
+def test_compose_exposes_only_loopback_http_and_persists_only_named_state() -> None:
     compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
     controller = compose["services"]["controller"]
 
@@ -320,8 +320,14 @@ def test_compose_exposes_only_loopback_http_and_persists_only_controller_state()
         "controller-image-build",
         "controller-cv",
         "controller-cd",
+        "runner-upstream-controller",
+        "runner-fork-controller",
     }
-    assert set(compose["volumes"]) == {"jenkins-home"}
+    assert set(compose["volumes"]) == {
+        "jenkins-home",
+        "runner-upstream-state",
+        "runner-fork-state",
+    }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
 
 
@@ -439,31 +445,34 @@ def test_jcasc_owns_zero_executor_security_and_retention_defaults() -> None:
     assert "https://" not in casc_text
 
 
-def test_job_dsl_defines_the_fixed_non_secret_handoff_contract() -> None:
+def test_job_dsl_defines_no_build_trigger_or_credential() -> None:
+    # The smoke check verifies the rest of the job on the live configuration.
     job_dsl = (JENKINS_ROOT / "jobs" / "pipeline-integration.groovy").read_text()
 
-    parameter_names = set(re.findall(r"stringParam\('([A-Z_]+)'", job_dsl))
-    assert parameter_names == EXPECTED_HANDOFF_PARAMETERS
-    assert "'pipeline-integration': REPOSITORY_URL," in job_dsl
-    assert "'pipeline-integration-fork': FORK_REPOSITORY_URL," in job_dsl
-    assert "pipelineJob(jobName)" in job_dsl
-    assert "disableConcurrentBuilds()" in job_dsl
-    assert "artifactDaysToKeep(90)" in job_dsl
-    assert "daysToKeep(90)" in job_dsl
-    assert "url(repositoryUrl)" in job_dsl
-    assert "refspec('+refs/heads/main:refs/remotes/origin/main')" in job_dsl
-    assert "branch('${RESOLVED_COMMIT_SHA}')" in job_dsl
-    assert "honorRefspec()" in job_dsl
-    assert "noTags()" in job_dsl
-    assert "wipeOutWorkspace()" in job_dsl
-    assert "scriptPath('Jenkinsfile')" in job_dsl
-    assert "lightweight(false)" in job_dsl
-    assert "lightweight(true)" not in job_dsl
-    assert "hudson.model.Item.Read" in job_dsl
-    assert "hudson.model.Item.Build" in job_dsl
-    assert "hudson.model.Item.Cancel" in job_dsl
     assert "trigger" not in job_dsl.lower()
     assert "credential" not in job_dsl.lower()
+
+
+def test_root_pipeline_checks_out_the_submitted_commit_without_cv_assets() -> None:
+    pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
+
+    assert "$class: 'GitSCM'" not in pipeline
+    assert (
+        "reset_clone clone --filter=blob:none --no-checkout --no-tags --single-branch "
+        '--branch main "$SDI_CHECKOUT_REPOSITORY_URL" .'
+    ) in pipeline
+    assert "git sparse-checkout set --no-cone '/*' '!/CV/'" in pipeline
+    assert 'reset_checkout checkout --quiet --detach "$RESOLVED_COMMIT_SHA"' in pipeline
+    assert (
+        "until timeout 300 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 "
+        '"$@"; do'
+    ) in pipeline
+    assert 'if [ "$attempt" -ge 3 ]; then' in pipeline
+    assert pipeline.count("git_transfer_with_retries '") == 2
+    assert "--depth" not in pipeline
+    assert '"SDI_CHECKOUT_REPOSITORY_URL=${repositoryUrl}"' in pipeline
+    assert "refs/remotes/origin/sdi-protected-main" in pipeline
+    assert "git merge-base --is-ancestor" in pipeline
 
 
 def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
@@ -471,14 +480,9 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
 
     assert "env[name]" not in pipeline
     assert "checkout scm" not in pipeline
-    assert "$class: 'GitSCM'" in pipeline
-    assert "branches: [[name: env.RESOLVED_COMMIT_SHA]]" in pipeline
-    assert "honorRefspec: true" in pipeline
-    assert "noTags: true" in pipeline
     assert "'pipeline-integration': env.SDI_REPOSITORY_URL," in pipeline
     assert "'pipeline-integration-fork': env.SDI_FORK_REPOSITORY_URL," in pipeline
     assert "][env.JOB_NAME]" in pipeline
-    assert "url: repositoryUrl," in pipeline
     assert "env.JENKINS_PIPELINE_RUN_LIMIT_SECONDS" in pipeline
     assert "timeout(time: runLimitSeconds, unit: 'SECONDS')" in pipeline
     assert "timeout(time: schedulingLimitSeconds, unit: 'SECONDS')" in pipeline
@@ -491,8 +495,6 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
     assert "System.currentTimeMillis() < schedulingDeadlineEpochMillis" in pipeline
     assert "TimeoutStepExecution.ExceededTimeout" in pipeline
     assert "throw interruption" in pipeline
-    assert "refs/remotes/origin/sdi-protected-main" in pipeline
-    assert "git merge-base --is-ancestor" in pipeline
     assert "System.currentTimeMillis() >= runDeadlineEpochMillis" in pipeline
     assert len(re.findall(r"try \{\n\s+deleteDir\(\)", pipeline)) == 4
     assert [
@@ -505,6 +507,14 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
         ("cd", 1),
     ]
     assert pipeline.count("execute-jenkins-stage") == 1
+    composition_definition = pipeline[
+        pipeline.index("name: 'Composition'") : pipeline.index("name: 'Image build'")
+    ]
+    assert pipeline.count("--service-repository") == 1
+    assert "--service-repository service-repository" in composition_definition
+    assert "${definition.suppliedArguments}" in pipeline
+    assert "--composition-config" not in pipeline
+    assert "--generator" not in pipeline
     assert "preflight-jenkins-run" in pipeline
     assert "attempt-allows-continuation" in pipeline
     assert "finalize-jenkins-run" in pipeline
@@ -519,6 +529,17 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
     assert '"execution_conclusion"' not in pipeline
     assert '"domain_outcome"' not in pipeline
     assert "lastBuild" not in pipeline
+
+
+def test_root_pipeline_reports_stale_agent_images_as_their_typed_reason() -> None:
+    pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
+
+    assert f"currentBuild.description = '{STALE_IMAGE_REASON}'" in pipeline
+    assert "preflightStatus == 4" in pipeline
+    assert "stageExecutionStatus == 4" in pipeline
+    assert pipeline.count("--baked-code-digest") == 1
+    for resource in ("integration", "composition", "image-build", "cv", "cd"):
+        assert pipeline.count(f"--{resource}-baked-code-digest") == 1
 
 
 def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa: C901
@@ -634,7 +655,7 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
                     "<honorRefspec>true</honorRefspec>"
                     "<noTags>true</noTags>"
                     "</hudson.plugins.git.extensions.impl.CloneOption>"
-                    "<hudson.plugins.git.extensions.impl.WipeWorkspace/>"
+                    "<hudson.plugins.git.extensions.impl.CleanBeforeCheckout/>"
                     "</extensions></scm>"
                     "<scriptPath>Jenkinsfile</scriptPath>"
                     "<lightweight>false</lightweight></definition>"

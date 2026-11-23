@@ -56,22 +56,10 @@ commands:
     document: deployment/jenkins/README.md
     mode: ephemeral_docker
     evidence: deployment/jenkins/bin/smoke
-  - id: runner-install
-    document: deployment/github-runner/README.md
+  - id: stack-register-runner
+    document: deployment/jenkins/README.md
     mode: controlled_fake
-    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
-  - id: runner-configure-start
-    document: deployment/github-runner/README.md
-    mode: controlled_fake
-    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
-  - id: runner-stop
-    document: deployment/github-runner/README.md
-    mode: controlled_fake
-    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
-  - id: runner-remove
-    document: deployment/github-runner/README.md
-    mode: controlled_fake
-    evidence: tests/test_documented_commands.py::test_runner_examples_form_one_supported_lifecycle
+    evidence: tests/test_documented_commands.py::test_runner_registration_pipes_a_fresh_token_into_the_stack
 inline_commands:
   - document: docs/scaffold-maintainer.md
     command: integration/scripts/verify

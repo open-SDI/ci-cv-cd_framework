@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -9,12 +10,23 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from sdi_pipeline_integration._local_dispatch import dispatch_local
+from sdi_pipeline_integration._stage_contracts import (
+    EXPECTED_STAGE_INPUT_SLOTS,
+    STAGE_GRANTS,
+)
+from sdi_pipeline_integration._stage_profiles import stage_profile_bytes
+from sdi_pipeline_integration._stage_runtime import (
+    ADAPTER_SHUTDOWN_GRACE_SECONDS,
+    SuppliedInputs,
+)
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
+    FIXTURE_SERVICE_REPOSITORY,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
     write_scripted_adapter,
@@ -149,38 +161,47 @@ def _select_adapter(repository: Path, adapter: Path, *, mode: str = "fixture") -
     return _git(repository, "rev-parse", "HEAD")
 
 
-def _configure_composition(
-    repository: Path, *, mode: str | None = None, work_limit_seconds: int | None = None
-) -> str:
-    profile = repository / "integration/stage-profiles/composition-v1.yaml"
+def _configure_composition(repository: Path, *, mode: str) -> str:
     descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
-    if work_limit_seconds is not None:
-        profile.write_text(
-            profile.read_text().replace(
-                "work_limit_seconds: 600",
-                f"work_limit_seconds: {work_limit_seconds}",
-            ),
-            encoding="utf-8",
-        )
-    descriptor_text = descriptor.read_text()
-    if mode is not None:
-        descriptor_text = descriptor_text.replace(
-            "implementation_mode: fixture", f"implementation_mode: {mode}"
-        )
-    old_digest = next(
-        line.split(": ", 1)[1]
-        for line in descriptor_text.splitlines()
-        if line.startswith("stage_profile_sha256:")
-    )
     descriptor.write_text(
-        descriptor_text.replace(
-            old_digest, hashlib.sha256(profile.read_bytes()).hexdigest()
+        descriptor.read_text().replace(
+            "implementation_mode: fixture", f"implementation_mode: {mode}"
         ),
         encoding="utf-8",
     )
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Configure composition conformance case")
     return _git(repository, "rev-parse", "HEAD")
+
+
+def _dispatch_with_composition_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    repository: Path,
+    bundle_root: Path,
+    run_request_path: str = RUN_REQUEST_PATH,
+) -> dict[str, Any]:
+    """Run in process so the registry's one-second limit reaches the run."""
+    monkeypatch.setitem(
+        STAGE_GRANTS,
+        "composition",
+        dataclasses.replace(STAGE_GRANTS["composition"], work_limit_seconds=1),
+    )
+    (repository / "integration/stage-profiles/composition-v1.yaml").write_bytes(
+        stage_profile_bytes("composition")
+    )
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "Shorten the composition work limit")
+    return dispatch_local(
+        repository_path=repository,
+        requested_ref="refs/heads/main",
+        resolved_commit=_git(repository, "rev-parse", "HEAD"),
+        run_request_path=run_request_path,
+        bundle_root=bundle_root,
+        supplied=SuppliedInputs(
+            service_repository=FIXTURE_SERVICE_REPOSITORY,
+            composition_config=FIXTURE_COMPOSITION_CONFIG,
+        ),
+    )
 
 
 @pytest.mark.parametrize("combination_id", S04_COMBINATION_EXPECTATIONS)
@@ -225,30 +246,7 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     assert [
         [item["slot"] for item in attempt["accepted_inputs"]]
         for attempt in first_result["attempts"]
-    ] == [
-        [
-            "run_request",
-            "requirements_specification",
-            "target_profile",
-            "service_repository",
-            "composition_settings",
-        ],
-        ["target_profile", "composition_blueprint", "deployment_schema"],
-        [
-            "requirements_specification",
-            "target_profile",
-            "composition_blueprint",
-            "deployment_schema",
-            "image_build_result",
-        ],
-        [
-            "target_profile",
-            "composition_blueprint",
-            "deployment_schema",
-            "image_build_result",
-            "validation_evidence",
-        ],
-    ]
+    ] == [list(slots) for slots in EXPECTED_STAGE_INPUT_SLOTS.values()]
 
     expected_paths = {
         "pipeline-integration-result.json",
@@ -390,6 +388,7 @@ response = {
     result = json.loads(completed.stdout)
     assert result["attempts"][0]["execution_conclusion"] == "succeeded"
     assert result["attempts"][0]["domain_outcome"] == "failed"
+    assert result["attempts"][0]["reason"]["category"] == "domain"
     assert [attempt["execution_conclusion"] for attempt in result["attempts"][1:]] == [
         "skipped",
         "skipped",
@@ -440,37 +439,6 @@ response = {{
     assert result["artifacts"] == []
 
 
-def test_rejected_candidate_records_runtime_failure_without_salvaging_files(
-    tmp_path: Path,
-) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
-    adapter = tmp_path / "undeclared-output-adapter"
-    write_scripted_adapter(
-        adapter,
-        """
-(output / "private-endpoint.txt").write_text("https://private.example.test/secret")
-(output / "response.json").write_text("not-json")
-""",
-    )
-    commit_sha = _select_adapter(repository, adapter)
-    bundle_root = tmp_path / "rejected-candidate-bundle"
-
-    completed = _dispatch(repository, commit_sha, bundle_root)
-
-    assert completed.returncode == 1, completed.stderr
-    result = json.loads(completed.stdout)
-    first = result["attempts"][0]
-    assert first["execution_conclusion"] == "failed"
-    assert first["adapter_response_accepted"] is False
-    assert first["accepted_files"] == []
-    assert result["artifacts"] == []
-    assert not any(
-        path.read_bytes() == b"https://private.example.test/secret"
-        for path in bundle_root.rglob("*")
-        if path.is_file()
-    )
-
-
 @pytest.mark.parametrize(
     ("case_name", "reason_code", "response_status"),
     [
@@ -514,6 +482,10 @@ def test_exact_digest_fixture_cases_settle_as_complete_failed_results(
     attempt = result["attempts"][0]
     assert attempt["reason"]["code"] == reason_code
     assert attempt["adapter_response_accepted"] is (response_status == "accepted")
+    if response_status == "rejected":
+        # A rejected response accepts none of the files the adapter left.
+        assert attempt["accepted_files"] == []
+        assert result["artifacts"] == []
     assert [item["execution_conclusion"] for item in result["attempts"]] == [
         "failed",
         "skipped",
@@ -522,27 +494,9 @@ def test_exact_digest_fixture_cases_settle_as_complete_failed_results(
     ]
 
 
-def test_exact_digest_timeout_case_records_timeout_and_skips(tmp_path: Path) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
-    commit_sha = _configure_composition(repository, work_limit_seconds=1)
-
-    completed = _dispatch(
-        repository,
-        commit_sha,
-        tmp_path / "bundle",
-        "runs/conformance/composition-timeout.yaml",
-    )
-
-    assert completed.returncode == 1, completed.stderr
-    result = json.loads(completed.stdout)
-    attempt = result["attempts"][0]
-    assert attempt["execution_conclusion"] == "timed_out"
-    assert attempt["process"]["termination"] == "timed_out"
-    assert attempt["reason"]["code"] == "sdi.stage.deadline-exceeded"
-
-
+@pytest.mark.slow
 def test_stage_timeout_terminates_attached_descendants_and_cleans_work(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "timeout-tree-adapter"
@@ -559,14 +513,17 @@ time.sleep(60)
 """,
     )
     _select_adapter(repository, adapter)
-    commit_sha = _configure_composition(repository, work_limit_seconds=1)
     bundle_root = tmp_path / "timeout-bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    started = time.monotonic()
+    result = _dispatch_with_composition_limit(monkeypatch, repository, bundle_root)
 
-    assert completed.returncode == 1, completed.stderr
-    result = json.loads(completed.stdout)
-    assert result["attempts"][0]["execution_conclusion"] == "timed_out"
+    # The terminated adapter is reaped, so its exit does not wait out the grace.
+    assert time.monotonic() - started < ADAPTER_SHUTDOWN_GRACE_SECONDS
+    attempt = result["attempts"][0]
+    assert attempt["execution_conclusion"] == "timed_out"
+    assert attempt["process"]["termination"] == "timed_out"
+    assert attempt["reason"]["code"] == "sdi.stage.deadline-exceeded"
     assert not list(tmp_path.glob(".timeout-bundle.*-*"))
     child_pid = int(child_pid_path.read_text())
     deadline = time.monotonic() + 5
@@ -578,26 +535,6 @@ time.sleep(60)
         time.sleep(0.05)
     else:
         pytest.fail("timed-out adapter descendant remained alive")
-
-
-def test_exact_digest_negative_domain_case_is_not_a_machinery_failure(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-
-    completed = _dispatch(
-        repository,
-        commit_sha,
-        tmp_path / "bundle",
-        "runs/conformance/composition-negative-domain.yaml",
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    result = json.loads(completed.stdout)
-    attempt = result["attempts"][0]
-    assert attempt["execution_conclusion"] == "succeeded"
-    assert attempt["domain_outcome"] == "failed"
-    assert attempt["reason"]["category"] == "domain"
 
 
 def test_external_cancellation_terminates_the_process_tree_without_a_result(
@@ -681,6 +618,29 @@ def test_not_implemented_stage_and_dependents_are_explicitly_skipped(
     assert all(
         attempt["execution_conclusion"] == "skipped" for attempt in result["attempts"]
     )
+
+
+def test_rejects_a_key_the_composition_descriptor_does_not_bind(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _commit_fixture_repository(tmp_path)
+    write_fixture_composition_descriptor(repository, mode="implemented")
+    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
+    descriptor.write_text(
+        descriptor.read_text().replace(
+            "secret_bindings: []", "secret_bindings: [OTHER_KEY]"
+        )
+    )
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "Bind a key the config does not name")
+
+    completed = _dispatch(
+        repository, _git(repository, "rev-parse", "HEAD"), tmp_path / "bundle"
+    )
+
+    assert completed.returncode == 2
+    assert "does not bind" in completed.stderr
+    assert not (tmp_path / "bundle").exists()
 
 
 def test_implemented_adapter_cannot_consume_unevaluated_fixture_output(
@@ -1073,6 +1033,33 @@ def test_bundle_validation_rejects_machine_specific_provenance_paths(
     assert validated.returncode == 2
     assert validated.stdout == ""
     assert "repository-relative" in validated.stderr
+
+
+def test_bundle_validation_rejects_reordered_or_unknown_input_provenance(
+    tmp_path: Path,
+) -> None:
+    repository, commit_sha = _commit_fixture_repository(tmp_path)
+    bundle_root = tmp_path / "bundle"
+    dispatched = _dispatch(repository, commit_sha, bundle_root)
+    assert dispatched.returncode == 0, dispatched.stderr
+    result_path = bundle_root / "pipeline-integration-result.json"
+    result = json.loads(result_path.read_text())
+    provenance = result["input_provenance"]
+    unknown = [{**provenance[0], "schema_version": "sdi.unknown-input/v1"}]
+
+    for variant in ([*provenance[1:], provenance[0]], [*unknown, *provenance[1:]]):
+        result_path.write_text(
+            json.dumps(result | {"input_provenance": variant}), encoding="utf-8"
+        )
+        validated = subprocess.run(
+            ["sdi-integration", "validate-bundle", "--bundle-root", str(bundle_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert validated.returncode == 2
+        assert "not the identified input set" in validated.stderr
 
 
 @pytest.mark.parametrize(

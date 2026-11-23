@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Self
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import (
     Field,
@@ -13,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema  # noqa: TC002
+from pydantic_core import core_schema
 
 from ._contracts import (
     CombinationId,
@@ -23,13 +25,18 @@ from ._contracts import (
     TestcaseId,
     reject_explicit_nulls,
 )
-from ._stage_contracts import ImageReference, Sha256, SlotName  # noqa: TC001
+from ._stage_contracts import (
+    EXPECTED_STAGE_INPUT_SLOTS,
+    ImageReference,
+    Sha256,
+    SlotName,
+    StageName,
+)
 
-COMPOSITION_BLUEPRINT_SCHEMA_VERSION = "sdi.composition-blueprint/v1"
-DEPLOYMENT_SCHEMA_VERSION = "sdi.deployment-schema/v1"
-IMAGE_BUILD_RESULT_SCHEMA_VERSION = "sdi.image-build-result/v1"
-VALIDATION_EVIDENCE_SCHEMA_VERSION = "sdi.validation-evidence/v1"
-DEPLOYMENT_RESULT_SCHEMA_VERSION = "sdi.deployment-result/v1"
+if TYPE_CHECKING:
+    from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
+    from pydantic.json_schema import JsonSchemaValue
+
 COMPOSITION_EVIDENCE_SCHEMA_VERSION = "sdi.composition-evidence/v1"
 
 # A short label without path or URL syntax, so a model-chosen capability can
@@ -56,6 +63,38 @@ class SourceInputDigest(ContractModel):
 
     slot: SlotName
     sha256: Sha256
+
+
+@dataclass(frozen=True)
+class ProducerInputs:
+    """Require source inputs to name every input of the producing Stage, in order."""
+
+    stage: StageName
+
+    def __get_pydantic_core_schema__(
+        self, source: object, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            self._validate, handler(source)
+        )
+
+    def __get_pydantic_json_schema__(
+        self, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        json_schema = handler(schema)
+        slots = EXPECTED_STAGE_INPUT_SLOTS[self.stage]
+        json_schema["minItems"] = json_schema["maxItems"] = len(slots)
+        json_schema["prefixItems"] = [
+            {"allOf": [json_schema["items"]], "properties": {"slot": {"const": slot}}}
+            for slot in slots
+        ]
+        return json_schema
+
+    def _validate(self, value: list[SourceInputDigest]) -> list[SourceInputDigest]:
+        if tuple(item.slot for item in value) != EXPECTED_STAGE_INPUT_SLOTS[self.stage]:
+            msg = f"source inputs must name each {self.stage} input slot once, in order"
+            raise ValueError(msg)
+        return value
 
 
 class BlueprintService(ContractModel):
@@ -89,14 +128,14 @@ class CompositionBlueprint(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=5, max_length=5)]
+    profile_basis: Literal["declared", "placeholder"]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("composition")]
     requirement_ids: Annotated[list[Slug], Field(min_length=1)]
     services: Annotated[list[BlueprintService], Field(min_length=1)]
     coverage: Annotated[list[BlueprintCoverage], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_services(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         _require_unique(self.requirement_ids, "requirement_id")
         _require_unique([item.service_id for item in self.services], "service_id")
         for service in self.services:
@@ -148,12 +187,12 @@ class DeploymentSchema(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=5, max_length=5)]
+    profile_basis: Literal["declared", "placeholder"]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("composition")]
     placements: Annotated[list[ServicePlacement], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         _require_unique(
             [item.service_id for item in self.placements], "placed service_id"
         )
@@ -181,12 +220,11 @@ class ImageBuildResult(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=3, max_length=3)]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("image_build")]
     images: Annotated[list[FixtureImageRecord], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_records(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         _require_unique([item.service_id for item in self.images], "image service_id")
         return self
 
@@ -212,14 +250,13 @@ class ValidationEvidence(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=5, max_length=5)]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("cv")]
     domain_outcome: Literal["not_evaluated"]
     kpi_evaluation: Literal["not_evaluated"]
     validation_records: Annotated[list[FixtureValidationRecord], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_records(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         _require_unique(
             [item.validation_case_id for item in self.validation_records],
             "validation_case_id",
@@ -255,14 +292,13 @@ class DeploymentResult(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=5, max_length=5)]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("cd")]
     domain_outcome: Literal["not_evaluated"]
     application_status: Literal["not_evaluated"]
     deployment_records: Annotated[list[FixtureDeploymentRecord], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_records(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         _require_unique(
             [item.service_id for item in self.deployment_records],
             "deployment service_id",
@@ -303,7 +339,8 @@ class CompositionEvidence(ContractModel):
     testcase_id: TestcaseId
     combination_id: CombinationId
     profile_id: Slug
-    source_inputs: Annotated[list[SourceInputDigest], Field(min_length=5, max_length=5)]
+    profile_basis: Literal["declared", "placeholder"]
+    source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("composition")]
     descriptions: Annotated[list[EvidenceDescription], Field(min_length=1)]
     generation: GenerationRecord
     discovery: dict[str, JsonValue]
@@ -317,7 +354,6 @@ class CompositionEvidence(ContractModel):
 
     @model_validator(mode="after")
     def require_assessment_of_generated_proposals(self) -> Self:
-        _require_unique([item.slot for item in self.source_inputs], "source input slot")
         if (self.generation.outcome == "generated") != (self.assessment is not None):
             msg = "evidence holds an assessment exactly when proposals were generated"
             raise ValueError(msg)

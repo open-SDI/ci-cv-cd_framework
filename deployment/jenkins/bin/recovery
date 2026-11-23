@@ -318,6 +318,8 @@ case "$operation" in
                     ;;
                 JENKINS_CV_AGENT_SECRET_FILE) value=$generated/cv-agent-secret ;;
                 JENKINS_CD_AGENT_SECRET_FILE) value=$generated/cd-agent-secret ;;
+                # The staging stack must never run a GitHub runner.
+                GITHUB_RUNNERS) continue ;;
             esac
             printf '%s=%s\n' "$key" "$value" >> "$staging_config"
         done < "$config"

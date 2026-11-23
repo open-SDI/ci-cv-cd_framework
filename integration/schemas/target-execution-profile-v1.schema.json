@@ -27,6 +27,28 @@
       "title": "Baseline",
       "type": "object"
     },
+    "DeclaredProvenance": {
+      "additionalProperties": false,
+      "description": "Facts asserted by an accountable upstream source.",
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredProvenance",
+      "type": "object"
+    },
     "Endpoint": {
       "additionalProperties": false,
       "description": "One ROS interface keyed by its exact name in a role map.",
@@ -125,6 +147,28 @@
       "title": "MobilityTarget",
       "type": "object"
     },
+    "PlaceholderProvenance": {
+      "additionalProperties": false,
+      "description": "Facts that only exercise an interface; the label is carried.",
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderProvenance",
+      "type": "object"
+    },
     "RoleMap": {
       "additionalProperties": {
         "$ref": "#/$defs/Endpoint"
@@ -207,6 +251,24 @@
       "title": "Profile Id",
       "type": "string"
     },
+    "provenance": {
+      "discriminator": {
+        "mapping": {
+          "declared": "#/$defs/DeclaredProvenance",
+          "placeholder": "#/$defs/PlaceholderProvenance"
+        },
+        "propertyName": "basis"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DeclaredProvenance"
+        },
+        {
+          "$ref": "#/$defs/PlaceholderProvenance"
+        }
+      ],
+      "title": "Provenance"
+    },
     "schema_version": {
       "const": "sdi.target-execution-profile/v1",
       "title": "Schema Version",
@@ -219,6 +281,7 @@
   "required": [
     "schema_version",
     "profile_id",
+    "provenance",
     "target",
     "hosts"
   ],

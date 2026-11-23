@@ -89,6 +89,16 @@ def _assessment(
 
 
 INSUFFICIENT = "no proposal is eligible"
+# Deleting this text leaves the profile's Orin host without a baseline.
+ORIN_BASELINE_YAML = (
+    "    baseline:\n      os: ubuntu-24.04\n      ros_distro: jazzy\n"
+    '      jetpack: "7.2.1"\n'
+)
+ORIN_SERVICES = [
+    service["service_id"]
+    for service in COMPLETE["services"]
+    if service["host"] == "orin"
+]
 
 
 def _kinds(proposal: dict[str, Any]) -> list[str]:
@@ -315,6 +325,14 @@ def test_prefers_the_most_supported_proposal_then_fewest_gaps(
                 "unresolved",
             ),
             id="host-without-device-list",
+        ),
+        pytest.param(
+            COMPLETE,
+            (ORIN_BASELINE_YAML, ""),
+            ["unresolved-placement"],
+            (4, 0),
+            dict.fromkeys(ORIN_SERVICES, "unresolved"),
+            id="host-without-baseline",
         ),
         pytest.param(
             _variant(hosts={"face-recog": "jetson-nano", "v4l2-camera": None}),

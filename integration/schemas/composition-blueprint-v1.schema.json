@@ -138,6 +138,14 @@
       "title": "Evidence Basis",
       "type": "string"
     },
+    "profile_basis": {
+      "enum": [
+        "declared",
+        "placeholder"
+      ],
+      "title": "Profile Basis",
+      "type": "string"
+    },
     "profile_id": {
       "maxLength": 63,
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
@@ -184,6 +192,68 @@
       },
       "maxItems": 5,
       "minItems": 5,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "run_request"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "requirements_specification"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "target_profile"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "service_repository"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "composition_settings"
+            }
+          }
+        }
+      ],
       "title": "Source Inputs",
       "type": "array"
     },
@@ -202,6 +272,7 @@
     "testcase_id",
     "combination_id",
     "profile_id",
+    "profile_basis",
     "source_inputs",
     "requirement_ids",
     "services",

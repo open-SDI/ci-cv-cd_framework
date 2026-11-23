@@ -35,14 +35,14 @@ and Jenkins volume.
 - [ ] Jenkins HTTP publication is loopback-only; no inbound-agent TCP port exists
 - [ ] Administrator, handoff machine user, runner, and five agents are separate identities
 - [ ] Handoff machine user has only reviewed read/build/cancel permission
-- [ ] Runner is low privilege with no sudo, Docker socket, Jenkins state, or persistent Jenkins credential
+- [ ] Runner container is non-root with no sudo, Docker socket, Jenkins state, or persistent Jenkins credential; it reaches only the controller and its own proxy, and `stack verify-live` passed its network `check` and GitHub `egress` check
 - [ ] Each agent receives only its own registration secret and declared Stage secrets
 - [ ] Security review evidence references and UTC time:
 
 ## Reconstruction
 
 - [ ] Reconstruction began from the approved commit and absent controller volume
-- [ ] Stack and runner preflights passed
+- [ ] Stack preflight passed and each configured runner was registered with `stack register-runner`
 - [ ] Controller has zero executors and both fixed jobs converged from tracked configuration
 - [ ] Exactly five expected agent identities and labels have one executor each
 - [ ] `exercise-live` proved clean isolated tmpfs and each installed role boundary twice
@@ -62,7 +62,7 @@ and Jenkins volume.
 
 ## Live Run
 
-- [ ] Dedicated runner was online with only `sdi-jenkins-handoff`
+- [ ] The repository's one dedicated runner container was online with only `sdi-jenkins-handoff`, and `verify-live` confirmed it listening and reaching the controller
 - [ ] One reviewed Fixture was dispatched from protected main
 - [ ] GitHub reached the exact Jenkins build and published one accepted bundle and receipt
 - [ ] Pipeline integration success was reported without a Domain or KPI claim

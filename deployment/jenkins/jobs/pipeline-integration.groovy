@@ -46,7 +46,9 @@
                                 honorRefspec()
                                 noTags()
                             }
-                            wipeOutWorkspace()
+                            // Keep .git so later builds fetch only new commits
+                            // to read the Jenkinsfile; clean removes the rest.
+                            cleanBeforeCheckout()
                         }
                     }
                 }

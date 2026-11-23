@@ -25,6 +25,7 @@ from ._domain_contracts import (
     ImageBuildResult,
     ValidationEvidence,
 )
+from ._generated_files import check_generated, write_generated
 from ._handoff_contracts import HandoffReceipt
 from ._recovery_contracts import RecoveryManifest
 from ._result_contracts import PipelineIntegrationResult
@@ -37,7 +38,6 @@ from ._stage_contracts import (
     FixtureCase,
     StageProfile,
 )
-from ._yaml_input import InputError
 
 SCHEMAS: dict[str, type[BaseModel]] = {
     "accepted-attempt-envelope-v1.schema.json": AcceptedAttemptEnvelope,
@@ -93,27 +93,21 @@ def _schema_bytes(model: type[BaseModel]) -> bytes:
     return f"{text}\n".encode()
 
 
+def _generated_schemas() -> dict[str, bytes]:
+    return {filename: _schema_bytes(model) for filename, model in SCHEMAS.items()}
+
+
 def write_schemas(directory: Path) -> None:
     """Write every authoritative contract schema deterministically."""
-    directory.mkdir(parents=True, exist_ok=True)
-    for filename, model in SCHEMAS.items():
-        (directory / filename).write_bytes(_schema_bytes(model))
+    write_generated(directory, _generated_schemas())
 
 
 def check_schemas(directory: Path) -> None:
     """Reject missing, stale, or obsolete generated contract schemas."""
-    actual_names = {path.name for path in directory.glob("*.schema.json")}
-    expected_names = set(SCHEMAS)
-    if actual_names != expected_names:
-        missing = sorted(expected_names - actual_names)
-        obsolete = sorted(actual_names - expected_names)
-        msg = f"schema set is stale; missing={missing}, obsolete={obsolete}"
-        raise InputError(msg)
-    stale = [
-        filename
-        for filename, model in SCHEMAS.items()
-        if (directory / filename).read_bytes() != _schema_bytes(model)
-    ]
-    if stale:
-        msg = f"generated schemas are stale: {sorted(stale)}"
-        raise InputError(msg)
+    check_generated(
+        directory,
+        "*.schema.json",
+        _generated_schemas(),
+        singular="schema",
+        plural="schemas",
+    )

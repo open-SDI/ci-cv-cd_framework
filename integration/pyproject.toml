@@ -30,11 +30,16 @@ dev = [
     "check-jsonschema==0.38.0",
     "markdown-it-py==4.0.0",
     "pytest==9.1.1",
+    "pytest-xdist==3.8.0",
     "ruff==0.16.6",
 ]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers"]
+markers = [
+    "live: calls a real model provider over the network",
+    "slow: waits out a real work limit or deadline",
+]
 testpaths = ["tests"]
 
 [tool.ruff]

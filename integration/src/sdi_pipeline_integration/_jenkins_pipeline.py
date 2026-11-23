@@ -10,18 +10,22 @@ from typing import TYPE_CHECKING, Any
 
 from ._git_input import GitRepository
 from ._handoff_contracts import HANDOFF_CONTRACT_VERSION
+from ._integration_code import integration_code_digest, require_fresh_agent_images
 from ._jenkins_agent_boundary import enforce_integration_execution_boundary
 from ._local_dispatch import DESCRIPTORS, assemble_bundle, validate_bundle
 from ._run_input import identify_committed_run
+from ._stage_contracts import SUPPLIED_INPUT_SLOTS
 from ._stage_runtime import (
     StageExecution,
     check_key_bindings,
     committed_stage_sources,
+    composition_key_names,
     execute_identified_stage,
     load_stage_adapter,
     load_stage_execution,
+    reject_ungranted_supplied_inputs,
     skipped_stage_execution,
-    supplied_stage_sources,
+    stage_inputs,
 )
 from ._yaml_input import InputError
 
@@ -31,13 +35,13 @@ if TYPE_CHECKING:
 
     from ._result_contracts import PipelineIntegrationResult
     from ._stage_contracts import StageName
-    from ._stage_runtime import StageInputSource
+    from ._stage_runtime import StageInputSource, SuppliedInputs
 
-EXPECTED_STAGE_CONFIGURATION = {
-    "composition": ("composition", 10 * 60),
-    "image_build": ("image-build", 30 * 60),
-    "cv": ("cv", 45 * 60),
-    "cd": ("cd", 15 * 60),
+EXPECTED_AGENT_LABELS = {
+    "composition": "composition",
+    "image_build": "image-build",
+    "cv": "cv",
+    "cd": "cd",
 }
 EXPECTED_RESOURCE_NODES = {
     "integration": "integration",
@@ -48,6 +52,7 @@ EXPECTED_RESOURCE_NODES = {
 }
 POSITIVE_DECIMAL = re.compile(r"^[1-9][0-9]{0,19}$")
 MAX_WORK_LIMIT_SECONDS = 24 * 60 * 60
+DESCRIPTOR_STAGES: dict[str, StageName] = {path: stage for stage, path in DESCRIPTORS}
 
 
 class RunDeadlineExpiredError(Exception):
@@ -90,16 +95,13 @@ def parse_build_started_at(build_started_at_millis: str) -> datetime:
     return started_at
 
 
-def _identify_submitted_run(  # noqa: PLR0913
+def _identify_submitted_run(
     *,
     repository_path: Path,
     requested_ref: str,
     resolved_commit: str,
     run_request_path: str,
     execution_id: str,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
 ) -> tuple[dict[str, Any], GitRepository, dict[str, StageInputSource]]:
     identified = identify_committed_run(
         repository_path=repository_path,
@@ -110,15 +112,7 @@ def _identify_submitted_run(  # noqa: PLR0913
     )
     repository = GitRepository(repository_path, resolved_commit)
     repository.require_ref_commit(requested_ref)
-    run_inputs = committed_stage_sources(
-        repository, identified
-    ) | supplied_stage_sources(
-        repository,
-        service_repository=service_repository,
-        composition_config=composition_config,
-        generator=generator,
-    )
-    return identified, repository, run_inputs
+    return identified, repository, committed_stage_sources(repository, identified)
 
 
 def preflight_jenkins_run(  # noqa: PLR0913
@@ -133,42 +127,49 @@ def preflight_jenkins_run(  # noqa: PLR0913
     github_run_attempt: str,
     build_started_at_millis: str,
     resource_nodes: Mapping[str, str],
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
+    baked_code_digests: Mapping[str, str],
+    supplied: SuppliedInputs,
 ) -> dict[str, Any]:
-    """Revalidate one submitted run, every Stage, and allocated resources."""
+    """Revalidate one submitted run, every Stage, and allocated resources.
+
+    Every agent image must bake the submitted commit's integration code; that
+    is checked before anything else the agents' code judges.
+    """
     enforce_integration_execution_boundary()
+    if dict(resource_nodes) != EXPECTED_RESOURCE_NODES:
+        msg = "Jenkins resource mapping does not match the reviewed topology"
+        raise InputError(msg)
+    require_fresh_agent_images(
+        integration_code_digest(repository_path / "integration"),
+        {
+            resource_nodes[resource]: digest
+            for resource, digest in baked_code_digests.items()
+        },
+        integration_node=resource_nodes["integration"],
+    )
     _validate_handoff_scalars(
         handoff_contract_version=handoff_contract_version,
         github_run_id=github_run_id,
         github_run_attempt=github_run_attempt,
     )
     parse_build_started_at(build_started_at_millis)
-    if dict(resource_nodes) != EXPECTED_RESOURCE_NODES:
-        msg = "Jenkins resource mapping does not match the reviewed topology"
-        raise InputError(msg)
-    identified, repository, run_inputs = _identify_submitted_run(
+    identified, repository, _committed = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
-        service_repository=service_repository,
-        composition_config=composition_config,
-        generator=generator,
     )
+    key_names = composition_key_names(repository, supplied)
     for expected_stage, descriptor_path in DESCRIPTORS:
-        descriptor, profile = load_stage_adapter(repository, descriptor_path)
-        expected_label, expected_limit = EXPECTED_STAGE_CONFIGURATION[expected_stage]
+        descriptor, _ = load_stage_adapter(repository, descriptor_path)
         if (
             descriptor.stage != expected_stage
-            or descriptor.agent_label != expected_label
-            or profile.work_limit_seconds != expected_limit
+            or descriptor.agent_label != EXPECTED_AGENT_LABELS[expected_stage]
         ):
             msg = f"{expected_stage} does not match its reviewed Jenkins Stage"
             raise InputError(msg)
-        check_key_bindings(descriptor, run_inputs)
+        check_key_bindings(descriptor, key_names)
     return identified
 
 
@@ -187,11 +188,17 @@ def _load_execution_prefix(
     execution_id: str,
     initial_inputs: Mapping[str, StageInputSource],
 ) -> tuple[list[StageExecution], dict[str, StageInputSource]]:
+    """Load accepted attempts and their outputs, comparing recomputed inputs.
+
+    A supplied input this process was not granted is history: the Stage that
+    accepted it compared it, and it is not captured again here.
+    """
     if len(roots) > len(DESCRIPTORS):
         msg = "accepted attempt transfer contains too many Stages"
         raise InputError(msg)
     executions: list[StageExecution] = []
     available_inputs = dict(initial_inputs)
+    outputs: dict[str, StageInputSource] = {}
     for index, root in enumerate(roots):
         expected_stage = DESCRIPTORS[index][0]
         if executions and _blocks_downstream(executions[-1]):
@@ -203,6 +210,11 @@ def _load_execution_prefix(
             expected_stage=expected_stage,
         )
         for accepted in execution.envelope.accepted_inputs:
+            if (
+                accepted.slot in SUPPLIED_INPUT_SLOTS
+                and accepted.slot not in initial_inputs
+            ):
+                continue
             source = available_inputs.get(accepted.slot)
             if source is None or (
                 accepted.source_path,
@@ -220,7 +232,8 @@ def _load_execution_prefix(
         executions.append(execution)
         if not _blocks_downstream(execution):
             available_inputs.update(execution.outputs)
-    return executions, available_inputs
+            outputs.update(execution.outputs)
+    return executions, outputs
 
 
 def execute_jenkins_stage(  # noqa: PLR0913
@@ -235,25 +248,35 @@ def execute_jenkins_stage(  # noqa: PLR0913
     prior_attempt_roots: Sequence[Path],
     work_limit_seconds: int,
     run_deadline_epoch_millis: str,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
+    baked_code_digest: str,
+    supplied: SuppliedInputs,
 ) -> dict[str, Any]:
-    """Execute the next Stage from validated committed and stashed inputs."""
-    identified, repository, run_inputs = _identify_submitted_run(
+    """Execute the next Stage from validated committed and stashed inputs.
+
+    The executing agent's image must bake the submitted commit's integration
+    code; that is checked first, so stale code judges nothing else.
+    """
+    stage = DESCRIPTOR_STAGES.get(descriptor_path)
+    node = EXPECTED_RESOURCE_NODES[stage] if stage is not None else "executing"
+    require_fresh_agent_images(
+        integration_code_digest(repository_path / "integration"),
+        {node: baked_code_digest},
+    )
+    identified, repository, committed = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
-        service_repository=service_repository,
-        composition_config=composition_config,
-        generator=generator,
     )
-    executions, available_inputs = _load_execution_prefix(
+    granted: dict[str, StageInputSource] = {}
+    if stage is not None:
+        reject_ungranted_supplied_inputs(supplied, stage=stage)
+        granted = stage_inputs(repository, identified, supplied, stage=stage)
+    executions, outputs = _load_execution_prefix(
         prior_attempt_roots,
         execution_id,
-        run_inputs,
+        committed | granted,
     )
     if executions and _blocks_downstream(executions[-1]):
         msg = "a blocking accepted attempt prevents further Stage execution"
@@ -284,7 +307,7 @@ def execute_jenkins_stage(  # noqa: PLR0913
         identified=identified,
         descriptor_path=descriptor_path,
         attempt_root=attempt_root,
-        available_inputs=available_inputs,
+        available_inputs=granted | outputs,
         work_limit_seconds=work_limit_seconds,
         deadline_monotonic=time.monotonic() + remaining_seconds,
     )
@@ -317,26 +340,20 @@ def finalize_jenkins_run(  # noqa: PLR0913
     attempt_roots: Sequence[Path],
     run_deadline_expired: bool,
     bundle_root: Path,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
 ) -> dict[str, Any]:
     """Materialize skips and assemble one complete validated Jenkins result."""
     enforce_integration_execution_boundary()
-    identified, repository, run_inputs = _identify_submitted_run(
+    identified, repository, committed = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
-        service_repository=service_repository,
-        composition_config=composition_config,
-        generator=generator,
     )
-    executions, _available_inputs = _load_execution_prefix(
+    executions, _outputs = _load_execution_prefix(
         attempt_roots,
         execution_id,
-        run_inputs,
+        committed,
     )
     blocker = next((item for item in executions if _blocks_downstream(item)), None)
     if len(executions) < len(DESCRIPTORS) and blocker is None:

@@ -130,6 +130,68 @@
       },
       "maxItems": 5,
       "minItems": 5,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "target_profile"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "composition_blueprint"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "deployment_schema"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "image_build_result"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "validation_evidence"
+            }
+          }
+        }
+      ],
       "title": "Source Inputs",
       "type": "array"
     },

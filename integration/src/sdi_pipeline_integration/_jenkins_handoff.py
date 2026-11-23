@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import shutil
 import signal
 import tempfile
+import threading
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from ._handoff_contracts import (
     HandoffPhase,
     HandoffReceipt,
 )
+from ._integration_code import STALE_IMAGE_REASON
 from ._json_input import canonical_json, parse_json
 from ._local_dispatch import MAX_RESULT_BYTES, parse_pipeline_result, validate_bundle
 from ._result_contracts import PIPELINE_RESULT_PATH, PipelineIntegrationResult
@@ -37,8 +39,7 @@ from ._stage_runtime import ExternalCancellation
 from ._yaml_input import InputError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator, Mapping
-    from types import FrameType
+    from collections.abc import Callable, Iterator, Mapping
 
 DEFAULT_HTTP_LIMIT_SECONDS = 30
 DEFAULT_SUBMISSION_LIMIT_SECONDS = 30
@@ -49,6 +50,7 @@ DEFAULT_RUNNER_OUTER_LIMIT_SECONDS = 100 * 60
 DEFAULT_GITHUB_JOB_LIMIT_SECONDS = 110 * 60
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 MAX_LIMIT_SECONDS = 24 * 60 * 60
+CANCELLATION_SIGNALS = frozenset({signal.SIGINT, signal.SIGTERM})
 MAX_STATUS_BYTES = 64 * 1024
 MAX_POLL_INTERVAL_SECONDS = 60
 ASCII_CONTROL_LIMIT = 32
@@ -339,12 +341,18 @@ def load_handoff_settings(environment: Mapping[str, str]) -> HandoffSettings:
     ):
         msg = "trusted Jenkins base URL is invalid"
         raise InputError(msg)
+    # `controller` is the Jenkins service on the handoff runner's internal
+    # Compose network, which carries no other hosts.
     if parsed_url.scheme == "http" and parsed_url.hostname not in {
         "127.0.0.1",
         "localhost",
         "::1",
+        "controller",
     }:
-        msg = "plaintext Jenkins base URL must use the loopback interface"
+        msg = (
+            "plaintext Jenkins base URL must use the loopback interface "
+            "or the stack controller"
+        )
         raise InputError(msg)
 
     job_path = _required(environment, "SDI_JENKINS_JOB_PATH")
@@ -434,10 +442,13 @@ class _JenkinsClient:
             f"job/{quote(component, safe='')}/"
             for component in settings.job_path.split("/")
         )
-        self.session: requests.Session = requests.Session()
-        self.session.trust_env = False
-        self.session.auth = (settings.username, settings.api_token)
-        self.session.headers.update(
+        self.session: requests.Session = self.new_session()
+
+    def new_session(self) -> requests.Session:
+        session = requests.Session()
+        session.trust_env = False
+        session.auth = (self.settings.username, self.settings.api_token)
+        session.headers.update(
             {
                 "Accept": "application/json",
                 "Accept-Encoding": "identity",
@@ -445,11 +456,17 @@ class _JenkinsClient:
             }
         )
         adapter = HTTPAdapter(max_retries=0)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
     def close(self) -> None:
-        self.session.close()
+        # Cancellation handlers raise; keep them out of urllib3's pool locks.
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCELLATION_SIGNALS)
+        try:
+            self.session.close()
+        finally:
+            _ = signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
     def remaining(self, budget: RequestBudget) -> float:
         current = time.monotonic()
@@ -490,27 +507,43 @@ class _JenkinsClient:
             remaining,
         )
 
-    @contextmanager
-    def blocking_deadline(self, budget: RequestBudget) -> Generator[None, None, None]:
-        timeout = self.remaining(budget)
+    def bounded_call[T](self, budget: RequestBudget, call: Callable[[], T]) -> T:
+        """Run one pool-touching call off the signalled main thread.
 
-        def expire(_signal_number: int, _frame: FrameType | None) -> None:
-            _ = self.remaining(budget)
-            raise _failure(
-                "http_operation",
-                budget.last_known_state,
-                limit_seconds=self.settings.http_limit_seconds,
-                elapsed_seconds=time.monotonic() - budget.operation_started,
-                last_known_state=budget.last_known_state,
-            )
+        Deadline and cancellation exceptions raised in the main thread must
+        never unwind through urllib3's non-reentrant pool locks. A call that
+        outlives its budget keeps its thread and session, sockets included,
+        until the process exits; later calls use a fresh session. The worker
+        inherits blocked cancellation signals so they are delivered only to
+        the main thread, including while ``close`` masks them there.
+        """
+        outcome: queue.SimpleQueue[tuple[bool, object]] = queue.SimpleQueue()
 
-        previous_handler = signal.signal(signal.SIGALRM, expire)
-        _ = signal.setitimer(signal.ITIMER_REAL, timeout)
+        def run() -> None:
+            try:
+                outcome.put((True, call()))
+            except BaseException as error:  # noqa: BLE001
+                outcome.put((False, error))
+
+        worker = threading.Thread(target=run, name="sdi-handoff-http", daemon=True)
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCELLATION_SIGNALS)
         try:
-            yield
+            worker.start()
         finally:
-            _ = signal.setitimer(signal.ITIMER_REAL, 0)
-            _ = signal.signal(signal.SIGALRM, previous_handler)
+            _ = signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        try:
+            while True:
+                try:
+                    succeeded, value = outcome.get(timeout=self.remaining(budget))
+                    break
+                except queue.Empty:
+                    continue
+        except BaseException:
+            self.session = self.new_session()
+            raise
+        if succeeded:
+            return cast("T", value)
+        raise cast("BaseException", value)
 
     def request(  # noqa: PLR0913
         self,
@@ -533,15 +566,18 @@ class _JenkinsClient:
         )
         timeout = self.remaining(budget)
         try:
-            with self.blocking_deadline(budget):
-                response = self.session.request(
+            session = self.session
+            response = self.bounded_call(
+                budget,
+                lambda: session.request(
                     method,
                     f"{self.settings.base_url}/{relative}",
                     data=data,
                     timeout=(timeout, timeout),
                     allow_redirects=False,
                     stream=stream,
-                )
+                ),
+            )
             _ = self.remaining(budget)
             return JenkinsResponse(response=response, budget=budget)
         except requests.Timeout as error:
@@ -585,8 +621,10 @@ class _JenkinsClient:
         while True:
             _ = self.remaining(received.budget)
             try:
-                with self.blocking_deadline(received.budget):
-                    chunk = body.read1(65536, decode_content=True)
+                chunk = self.bounded_call(
+                    received.budget,
+                    lambda: body.read1(65536, decode_content=True),
+                )
             except Exception as error:
                 _ = self.remaining(received.budget)
                 raise JenkinsRequestError from error
@@ -632,7 +670,7 @@ def _preflight(client: _JenkinsClient) -> None:
         raise _failure("reachability", "preflighting") from error
     if root.response.status_code != HTTP_OK:
         raise _response_failure(root.response, "preflighting")
-    root.response.close()
+    _ = client.bounded_call(root.budget, root.response.close)
     try:
         identity = client.request(
             "GET",
@@ -852,7 +890,7 @@ def _wait_for_completion(
             response = client.request(
                 "GET",
                 (
-                    f"{relative}api/json?tree=number,queueId,building,result,url,"
+                    f"{relative}api/json?tree=number,queueId,building,result,description,url,"
                     "actions[parameters[name,value]],artifacts[fileName,relativePath]"
                 ),
                 phase_started=started,
@@ -901,6 +939,12 @@ def _wait_for_completion(
             or result not in JENKINS_RESULTS
         ):
             raise _failure("http_operation", "running")
+        if result == "FAILURE" and document.get("description") == STALE_IMAGE_REASON:
+            raise _failure(
+                "stale_agent_image",
+                "running",
+                jenkins_result=result,
+            )
         artifacts = document.get("artifacts")
         if not isinstance(artifacts, list):
             raise _failure(

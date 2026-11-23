@@ -1,9 +1,38 @@
 schema_version: sdi.target-execution-profile/v1
 profile_id: burger-xycar-amd64
+provenance:
+  basis: placeholder
+  note: >-
+    The Burger is assumed to carry the same devices as a Waffle; its devices and
+    its Ubuntu 24.04 and ROS 2 Jazzy baseline are assumed, not sourced or
+    measured. The Xycar stands in for an AMD64 TurtleBot and is assumed to
+    carry an NVIDIA GPU and the same baseline; the robot keeps every device
+    because it is the machine that moves. No fixed service split was
+    supplied. The operator's intent is that only the services that need the
+    robot run on it and the Xycar runs the rest; CI carries this intent but
+    does not check it.
 target:
   target_id: turtlebot3-burger
   kind: sdr
 hosts:
+  burger:
+    role: native
+    architecture: arm64
+    baseline:
+      os: ubuntu-24.04
+      ros_distro: jazzy
+    devices: [opencr, lidar, camera, microphone]
   xycar:
     role: controller
     architecture: amd64
+    baseline:
+      os: ubuntu-24.04
+      ros_distro: jazzy
+    devices: [nvidia-gpu]
+connections:
+  - [burger, xycar]
+orchestrator_provides:
+  action_clients:
+    /navigate_to_pose: {type: nav2_msgs/action/NavigateToPose}
+  publishes:
+    /initialpose: {type: geometry_msgs/msg/PoseWithCovarianceStamped}

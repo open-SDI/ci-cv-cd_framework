@@ -1,0 +1,241 @@
+#!/bin/sh
+set -eu
+
+# The runner writes its registration, migration markers, and diagnostics
+# beside its binaries, so its root is the state volume. Every start discards
+# everything else there, including the `.env` and `.path` files the runner
+# loads, and copies the image's runner back, so job code cannot persist
+# changes to the runner's binaries or environment.
+distribution=/opt/actions-runner
+root=/var/lib/sdi-runner
+work=/home/runner/_work
+
+fail() {
+    printf 'sdi-runner-entrypoint: %s\n' "$1" >&2
+    exit 2
+}
+
+refresh_runner() {
+    find "$root" -mindepth 1 -maxdepth 1 \
+        ! -name .runner ! -name .runner_migrated \
+        ! -name .credentials ! -name .credentials_migrated \
+        ! -name .credentials_rsaparams ! -name _diag \
+        -exec rm -rf -- {} +
+    cp -R -- "$distribution/." "$root/"
+    if [ -d "$root/_diag" ]; then
+        find "$root/_diag" -type f -mtime +14 -exec rm -f -- {} +
+    fi
+}
+
+# `isolation` proves the runner reaches Jenkins directly and nothing else but
+# its proxy, which refuses hosts outside the allowlist; it needs no internet.
+# `egress` proves the proxy tunnels to each GitHub endpoint the runner uses.
+network() {
+    case "$1" in
+        egress|isolation) ;;
+        *) fail "unknown network mode: $1" ;;
+    esac
+    python3 - "$1" <<'PY'
+import os
+import socket
+import sys
+import urllib.request
+from urllib.parse import urlsplit
+
+ALLOWLISTED = (
+    "github.com",
+    "api.github.com",
+    "codeload.github.com",
+    "broker.actions.githubusercontent.com",
+    "pipelines.actions.githubusercontent.com",
+    "results-receiver.actions.githubusercontent.com",
+    # A concrete Actions results storage account, standing in for the
+    # `.blob.core.windows.net` allowlist entry.
+    "productionresultssa0.blob.core.windows.net",
+)
+
+
+def refuse(reason: str) -> None:
+    print(f"sdi-runner-entrypoint: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+proxy = urlsplit(os.environ.get("HTTPS_PROXY", ""))
+if proxy.scheme != "http" or not proxy.hostname or not proxy.port:
+    refuse("HTTPS_PROXY does not name the runner proxy")
+
+
+def ask(request: str) -> list[str]:
+    """Send one request to the proxy and return its response head lines."""
+    try:
+        with socket.create_connection((proxy.hostname, proxy.port), timeout=20) as s:
+            s.sendall(request.encode("ascii"))
+            head = b""
+            while b"\r\n\r\n" not in head and len(head) < 65536:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                head += chunk
+    except OSError:
+        refuse("the runner proxy is unreachable")
+    return head.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
+
+
+def connect(target: str) -> list[str]:
+    return ask(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n")
+
+
+def resolves(name: str) -> bool:
+    try:
+        socket.getaddrinfo(name, 443)
+    except OSError:
+        return False
+    return True
+
+
+if sys.argv[1] == "egress":
+    for host in ALLOWLISTED:
+        status = connect(f"{host}:443")[0].split(" ", 2)
+        if status[1:2] != ["200"]:
+            refuse(f"the runner proxy did not open a tunnel to {host}")
+    print(f"runner egress: the proxy tunnels to {len(ALLOWLISTED)} GitHub endpoints")
+    raise SystemExit(0)
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    with opener.open("http://controller:8080/login", timeout=10) as response:
+        if response.status != 200:
+            refuse("the controller is unreachable over the runner network")
+except OSError:
+    refuse("the controller is unreachable over the runner network")
+
+for label, head in (
+    ("example.com", connect("example.com:443")),
+    # A github.com IPv4 address: IP literals are refused even for GitHub's own.
+    ("an IPv4 literal", connect("140.82.112.3:443")),
+    ("an IPv6 literal", connect("[2606:50c0::1]:443")),
+    (
+        "plain HTTP",
+        ask("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n"
+            "Connection: close\r\n\r\n"),
+    ),
+):
+    if head[0].split(" ", 2)[1:2] != ["403"] or not any(
+        line.lower().startswith("x-squid-error: err_access_denied")
+        for line in head[1:]
+    ):
+        refuse(f"the runner proxy did not refuse {label}")
+
+with open("/proc/net/route", encoding="ascii") as routes:
+    if any(line.split()[1] == "00000000" for line in list(routes)[1:]):
+        refuse("the runner has a default IPv4 route")
+try:
+    with open("/proc/net/ipv6_route", encoding="ascii") as routes:
+        if any(
+            fields[0] == "0" * 32 and fields[1] == "00" and fields[-1] != "lo"
+            for fields in (line.split() for line in routes)
+        ):
+            refuse("the runner has a default IPv6 route")
+except FileNotFoundError:
+    pass
+
+if resolves("example.com"):
+    refuse("the runner resolves external names")
+for name in ("controller", proxy.hostname):
+    if not resolves(name):
+        refuse(f"the runner cannot resolve {name}")
+print(
+    "runner network: controller direct; proxy refuses other hosts, IP literals, "
+    "and plain HTTP; no default route; no external DNS"
+)
+PY
+}
+
+registration() {
+    python3 - "$root/.runner" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+runner = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+print(f"{runner['gitHubUrl']} {runner['agentName']}")
+PY
+}
+
+action=${1:-run}
+[ "$#" -eq 0 ] || shift
+case "$action" in
+    run)
+        [ "$#" -eq 0 ] || fail 'run accepts no arguments'
+        [ -s "$root/.runner" ] || \
+            fail 'the runner is not registered; run stack register-runner first'
+        refresh_runner
+        cd "$root"
+        RUNNER_MANUALLY_TRAP_SIG=1
+        export RUNNER_MANUALLY_TRAP_SIG
+        exec ./run.sh
+        ;;
+    register)
+        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || \
+            fail 'register requires a repository URL, a runner name, and optionally --replace'
+        repository_url=$1
+        runner_name=$2
+        replace=${3-}
+        case "$repository_url" in
+            https://github.com/*/*) ;;
+            *) fail 'the repository URL must be an HTTPS GitHub repository URL' ;;
+        esac
+        case "$runner_name" in
+            ''|*[!A-Za-z0-9_.-]*) fail 'the runner name contains an invalid character' ;;
+        esac
+        case "$replace" in
+            ''|--replace) ;;
+            *) fail 'register accepts only --replace after the runner name' ;;
+        esac
+        [ ! -t 0 ] || fail 'the registration token must arrive on standard input'
+        token=$(tr -d '\r\n')
+        case "$token" in
+            ''|*[!A-Za-z0-9]*) fail 'the registration token is empty or invalid' ;;
+        esac
+        if [ -n "$replace" ]; then
+            rm -f -- "$root/.runner" "$root/.runner_migrated" \
+                "$root/.credentials" "$root/.credentials_migrated" \
+                "$root/.credentials_rsaparams"
+        fi
+        [ ! -e "$root/.runner" ] || \
+            fail 'the runner is already registered; pass --replace to register it again'
+        network egress || fail 'the runner proxy cannot reach GitHub'
+        refresh_runner
+        cd "$root"
+        ACTIONS_RUNNER_INPUT_TOKEN=$token
+        export ACTIONS_RUNNER_INPUT_TOKEN
+        ./config.sh \
+            --unattended \
+            --url "$repository_url" \
+            --name "$runner_name" \
+            --labels sdi-jenkins-handoff \
+            --no-default-labels \
+            --disableupdate \
+            --work "$work" \
+            ${replace:+--replace} || fail 'GitHub refused the registration'
+        [ -s "$root/.runner" ] || fail 'GitHub refused the registration'
+        registration
+        ;;
+    show)
+        [ "$#" -eq 0 ] || fail 'show accepts no arguments'
+        [ -s "$root/.runner" ] || exit 3
+        registration
+        ;;
+    check)
+        [ "$#" -eq 0 ] || fail 'check accepts no arguments'
+        [ -s /etc/sdi/integration-code-digest ] || fail 'the integration code digest is missing'
+        sdi-integration --version >/dev/null || fail 'the integration CLI is unusable'
+        git --no-lazy-fetch --version >/dev/null || fail 'Git is unusable or older than 2.44'
+        network isolation || fail 'the runner network is not confined to the controller and its proxy'
+        ;;
+    egress)
+        [ "$#" -eq 0 ] || fail 'egress accepts no arguments'
+        network egress || fail 'the runner proxy cannot reach GitHub'
+        ;;
+    *) fail "unknown action: $action" ;;
+esac

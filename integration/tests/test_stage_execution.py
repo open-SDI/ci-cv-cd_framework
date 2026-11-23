@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from sdi_pipeline_integration._git_input import GitRepository
+from sdi_pipeline_integration._run_input import identify_committed_run
+from sdi_pipeline_integration._stage_runtime import SuppliedInputs, stage_inputs
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
+    FIXTURE_SERVICE_REPOSITORY,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
     write_scripted_adapter,
 )
+
+if TYPE_CHECKING:
+    from sdi_pipeline_integration._stage_contracts import StageName
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 COMMITTED_FILES = (
@@ -22,6 +29,8 @@ COMMITTED_FILES = (
     "requirements/s-04/deliver-book-to-joe.md",
     "profiles/s-04/waffle-jetson-arm64.yaml",
     "integration/stage-profiles/composition-v1.yaml",
+    "integration/stage-profiles/image-build-v1.yaml",
+    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
     FIXTURE_COMPOSITION_CONFIG,
 )
 
@@ -59,10 +68,59 @@ def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
     return repository, _git(repository, "rev-parse", "HEAD")
 
 
+@pytest.mark.parametrize(
+    ("stage", "expected"),
+    [
+        (
+            "composition",
+            [
+                "run_request",
+                "requirements_specification",
+                "target_profile",
+                "service_repository",
+                "composition_settings",
+            ],
+        ),
+        ("image_build", ["target_profile"]),
+        ("cv", ["requirements_specification", "target_profile"]),
+        ("cd", ["target_profile"]),
+    ],
+)
+def test_each_stage_receives_only_its_granted_run_inputs(
+    tmp_path: Path, stage: StageName, expected: list[str]
+) -> None:
+    repository_path, commit_sha = _commit_fixture_repository(tmp_path)
+    identified = identify_committed_run(
+        repository_path=repository_path,
+        requested_ref="refs/heads/main",
+        resolved_commit=commit_sha,
+        run_request_path=COMMITTED_FILES[0],
+    )
+    supplied = (
+        SuppliedInputs(
+            service_repository=FIXTURE_SERVICE_REPOSITORY,
+            composition_config=FIXTURE_COMPOSITION_CONFIG,
+        )
+        if stage == "composition"
+        else SuppliedInputs()
+    )
+
+    inputs = stage_inputs(
+        GitRepository(repository_path, commit_sha),
+        identified,
+        supplied,
+        stage=stage,
+    )
+
+    assert list(inputs) == expected
+
+
 def _execute(
     repository: Path,
     commit_sha: str,
     attempt_root: Path,
+    supplied: tuple[str, ...] = SUPPLIED_INPUT_ARGUMENTS,
+    descriptor: str = "deployment/jenkins/adapters/composition-v1.yaml",
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -77,10 +135,10 @@ def _execute(
             "--run-request-path",
             "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
             "--descriptor-path",
-            "deployment/jenkins/adapters/composition-v1.yaml",
+            descriptor,
             "--attempt-root",
             str(attempt_root),
-            *SUPPLIED_INPUT_ARGUMENTS,
+            *supplied,
         ],
         check=False,
         capture_output=True,
@@ -127,6 +185,45 @@ def test_executes_the_committed_composition_fixture_deterministically(
     assert json.loads((first_root / "accepted-attempt.json").read_text()) == (
         first_envelope
     )
+
+
+def test_composition_requires_a_supplied_service_repository(tmp_path: Path) -> None:
+    repository, commit_sha = _commit_fixture_repository(tmp_path)
+    attempt_root = tmp_path / "accepted"
+
+    completed = _execute(
+        repository,
+        commit_sha,
+        attempt_root,
+        ("--composition-config", FIXTURE_COMPOSITION_CONFIG),
+    )
+
+    assert completed.returncode == 2
+    assert "composition Stage requires a supplied service repository" in (
+        completed.stderr
+    )
+    assert not attempt_root.exists()
+
+
+def test_a_stage_not_granted_the_service_repository_rejects_it(
+    tmp_path: Path,
+) -> None:
+    repository, commit_sha = _commit_fixture_repository(tmp_path)
+    attempt_root = tmp_path / "accepted"
+
+    completed = _execute(
+        repository,
+        commit_sha,
+        attempt_root,
+        ("--service-repository", str(FIXTURE_SERVICE_REPOSITORY)),
+        descriptor="deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+    )
+
+    assert completed.returncode == 2
+    assert "the image_build Stage is not granted a supplied service repository" in (
+        completed.stderr
+    )
+    assert not attempt_root.exists()
 
 
 def test_records_an_undeclared_candidate_without_salvaging_files(
@@ -263,57 +360,15 @@ response = {
     assert {path.name for path in attempt_root.iterdir()} == {"accepted-attempt.json"}
 
 
-@pytest.mark.parametrize(
-    "profile_path",
-    ["/absolute/output.json", "../traversing/output.json"],
-)
-def test_rejects_unconfined_output_grants_before_invocation(
-    tmp_path: Path, profile_path: str
-) -> None:
+def test_rejects_a_hand_edited_profile_before_invocation(tmp_path: Path) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     profile = repository / "integration/stage-profiles/composition-v1.yaml"
     profile.write_text(
-        profile.read_text().replace("outputs/composition-blueprint.json", profile_path),
-        encoding="utf-8",
-    )
-    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
-    descriptor.write_text(
-        descriptor.read_text().replace(
-            next(
-                line.split(": ", 1)[1]
-                for line in descriptor.read_text().splitlines()
-                if line.startswith("stage_profile_sha256:")
-            ),
-            hashlib.sha256(profile.read_bytes()).hexdigest(),
-        ),
+        profile.read_text().replace("max_bytes: 262144", "max_bytes: 262145"),
         encoding="utf-8",
     )
     _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Add invalid output grant")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
-
-    completed = _execute(repository, commit_sha, tmp_path / "must-not-exist")
-
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert "path" in completed.stderr.lower()
-
-
-def test_rejects_a_descriptor_profile_digest_mismatch_before_invocation(
-    tmp_path: Path,
-) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
-    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
-    old_digest = next(
-        line.split(": ", 1)[1]
-        for line in descriptor.read_text().splitlines()
-        if line.startswith("stage_profile_sha256:")
-    )
-    descriptor.write_text(
-        descriptor.read_text().replace(old_digest, "a" * 64), encoding="utf-8"
-    )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Add mismatched descriptor digest")
+    _git(repository, "commit", "-m", "Widen an output grant by hand")
     commit_sha = _git(repository, "rev-parse", "HEAD")
     attempt_root = tmp_path / "must-not-exist"
 
@@ -321,5 +376,9 @@ def test_rejects_a_descriptor_profile_digest_mismatch_before_invocation(
 
     assert completed.returncode == 2
     assert completed.stdout == ""
-    assert "descriptor digest" in completed.stderr
+    assert completed.stderr == (
+        "sdi-integration: integration/stage-profiles/composition-v1.yaml does not "
+        "match the composition profile rendered from the registry; run "
+        "sdi-integration stage-profiles --write\n"
+    )
     assert not attempt_root.exists()

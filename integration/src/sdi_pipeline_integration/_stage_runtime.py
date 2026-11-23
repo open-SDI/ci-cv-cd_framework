@@ -14,11 +14,15 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic import BaseModel, ValidationError
 
-from ._composition_config import CompositionSettings, resolve_composition_settings
+from ._composition_config import (
+    DEFAULT_COMPOSITION_CONFIG,
+    CompositionSettings,
+    resolve_composition_settings,
+)
 from ._contracts import (
     MobilityRequirementsSpecification,
     RunRequest,
@@ -49,9 +53,12 @@ from ._service_descriptions import (
 from ._stage_contracts import (
     ASCII_CONTROL_LIMIT,
     ASCII_DELETE,
+    COMMITTED_SLOTS,
     EXPECTED_STAGE_EVIDENCE,
     EXPECTED_STAGE_INPUT_SLOTS,
     EXPECTED_STAGE_OUTPUTS,
+    SLOT_BY_NAME,
+    SLOT_BY_SCHEMA,
     AcceptedAttemptEnvelope,
     AdapterDescriptor,
     AdapterRequest,
@@ -62,8 +69,10 @@ from ._stage_contracts import (
     StageProfile,
     contains_sensitive_contract_material,
     contains_sensitive_material,
+    render_stage_profile,
     require_unique_paths,
 )
+from ._stage_profiles import stage_profile_bytes
 from ._yaml_input import (
     InputError,
     parse_front_matter,
@@ -115,24 +124,37 @@ class ExternalCancellation(BaseException):
         super().__init__(f"externally cancelled by signal {signal_number}")
 
 
+def _schema_version(model: type[BaseModel]) -> str:
+    (version,) = get_args(model.model_fields["schema_version"].annotation)
+    return version
+
+
+# Each parse model names its slot through its own schema version.
+SLOT_MODELS: dict[str, type[BaseModel]] = {
+    SLOT_BY_SCHEMA[_schema_version(model)].name: model
+    for model in (
+        RunRequest,
+        MobilityRequirementsSpecification,
+        TargetExecutionProfile,
+        ServiceRepositoryManifest,
+        CompositionSettings,
+        CompositionBlueprint,
+        DeploymentSchema,
+        ImageBuildResult,
+        ValidationEvidence,
+        DeploymentResult,
+    )
+}
 INPUT_MODELS: dict[str, type[BaseModel]] = {
-    "sdi.pipeline-integration-run-request/v1": RunRequest,
-    "sdi.mobility-requirements-specification/v1": MobilityRequirementsSpecification,
-    "sdi.target-execution-profile/v1": TargetExecutionProfile,
-    "sdi.composition-blueprint/v1": CompositionBlueprint,
-    "sdi.deployment-schema/v1": DeploymentSchema,
-    "sdi.image-build-result/v1": ImageBuildResult,
-    "sdi.validation-evidence/v1": ValidationEvidence,
-    "sdi.service-repository-manifest/v1": ServiceRepositoryManifest,
-    "sdi.composition-settings/v1": CompositionSettings,
+    SLOT_BY_NAME[name].schema_version: model for name, model in SLOT_MODELS.items()
 }
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
-    "sdi.composition-blueprint/v1": CompositionBlueprint,
-    "sdi.deployment-schema/v1": DeploymentSchema,
-    "sdi.image-build-result/v1": ImageBuildResult,
-    "sdi.validation-evidence/v1": ValidationEvidence,
-    "sdi.deployment-result/v1": DeploymentResult,
-    "sdi.composition-evidence/v1": CompositionEvidence,
+    **{
+        SLOT_BY_NAME[name].schema_version: model
+        for name, model in SLOT_MODELS.items()
+        if SLOT_BY_NAME[name].origin not in {"committed", "supplied"}
+    },
+    _schema_version(CompositionEvidence): CompositionEvidence,
 }
 
 
@@ -872,29 +894,13 @@ def _materialize_stage_inputs(
 def committed_stage_sources(
     repository: GitRepository, identified: Mapping[str, Any]
 ) -> dict[str, StageInputSource]:
-    """Revalidate and capture the three immutable committed run inputs."""
-    expected = {
-        "sdi.pipeline-integration-run-request/v1": (
-            "run_request",
-            "application/yaml",
-        ),
-        "sdi.mobility-requirements-specification/v1": (
-            "requirements_specification",
-            "text/markdown",
-        ),
-        "sdi.target-execution-profile/v1": (
-            "target_profile",
-            "application/yaml",
-        ),
-    }
+    """Revalidate and capture the immutable committed run inputs."""
     sources: dict[str, StageInputSource] = {}
     for provenance in identified["inputs"]:
-        schema_version = provenance["schema_version"]
-        definition = expected.get(schema_version)
-        if definition is None:
+        slot = SLOT_BY_SCHEMA.get(provenance["schema_version"])
+        if slot is None or slot.origin != "committed":
             msg = "identified run contains an unsupported input contract"
             raise InputError(msg)
-        slot, media_type = definition
         blob = repository.read_regular_file(provenance["path"])
         digest = hashlib.sha256(blob.content).hexdigest()
         if (
@@ -905,78 +911,169 @@ def committed_stage_sources(
             raise InputError(msg)
         source = StageInputSource(
             source_path=blob.path,
-            media_type=media_type,
-            schema_version=schema_version,
+            media_type=slot.media_type,
+            schema_version=slot.schema_version,
             content=blob.content,
         )
-        model = INPUT_MODELS[schema_version]
-        _validate_source_model(model, source)
-        sources[slot] = source
-    if set(sources) != {"run_request", "requirements_specification", "target_profile"}:
+        _validate_source_model(SLOT_MODELS[slot.name], source)
+        sources[slot.name] = source
+    if list(sources) != [slot.name for slot in COMMITTED_SLOTS]:
         msg = "identified run does not contain its exact committed input set"
         raise InputError(msg)
     return sources
 
 
-def _service_repository_source(root: Path) -> StageInputSource:
+def _supplied_source(
+    name: str, content: bytes, attachments: tuple[tuple[str, bytes], ...] = ()
+) -> StageInputSource:
+    slot = SLOT_BY_NAME[name]
+    return StageInputSource(
+        source_path=slot.file_name,
+        media_type=slot.media_type,
+        schema_version=slot.schema_version,
+        content=content,
+        attachments=attachments,
+    )
+
+
+def service_repository_source(root: Path) -> StageInputSource:
     """Capture every description under a supplied directory and its manifest."""
     snapshot = capture_service_repository(root)
-    return StageInputSource(
-        source_path="service-repository.json",
-        media_type="application/json",
-        schema_version="sdi.service-repository-manifest/v1",
-        content=canonical_json(snapshot.manifest.model_dump(mode="json")),
-        attachments=tuple(
+    return _supplied_source(
+        "service_repository",
+        canonical_json(snapshot.manifest.model_dump(mode="json")),
+        tuple(
             (f"{SERVICE_REPOSITORY_ROOT}/{path}", content)
             for path, content in snapshot.files.items()
         ),
     )
 
 
-def supplied_stage_sources(
-    repository: GitRepository,
-    *,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
-) -> dict[str, StageInputSource]:
-    """Capture the service repository and the run's composition settings.
+@dataclass(frozen=True)
+class SuppliedInputs:
+    """The operator-supplied inputs a run names; only granted Stages read them.
 
-    The settings resolve the committed config to its default generator, or the
-    named one, and record the config's path and digest.
+    An omitted composition config selects the committed default.
     """
-    validate_repository_path(composition_config)
-    blob = repository.read_regular_file(composition_config)
-    settings = resolve_composition_settings(
-        blob.content, path=blob.path, generator=generator
-    )
-    return {
-        "service_repository": _service_repository_source(service_repository),
-        "composition_settings": StageInputSource(
-            source_path="composition-settings.json",
-            media_type="application/json",
-            schema_version="sdi.composition-settings/v1",
-            content=canonical_json(settings.model_dump(mode="json", exclude_none=True)),
+
+    service_repository: Path | None = None
+    composition_config: str | None = None
+    generator: str | None = None
+
+
+def _composition_config(
+    repository: GitRepository, supplied: SuppliedInputs
+) -> CommittedBlob:
+    path = supplied.composition_config or DEFAULT_COMPOSITION_CONFIG
+    validate_repository_path(path)
+    return repository.read_regular_file(path)
+
+
+def composition_key_names(
+    repository: GitRepository, supplied: SuppliedInputs
+) -> tuple[str, ...]:
+    """Name the model keys the run's composition settings use."""
+    blob = _composition_config(repository, supplied)
+    return resolve_composition_settings(
+        blob.content, path=blob.path, generator=supplied.generator
+    ).key_names
+
+
+def _resolve_supplied_slot(
+    repository: GitRepository, supplied: SuppliedInputs, name: str, stage: StageName
+) -> StageInputSource:
+    if name == "service_repository":
+        if supplied.service_repository is None:
+            msg = f"the {stage} Stage requires a supplied service repository"
+            raise InputError(msg)
+        return service_repository_source(supplied.service_repository)
+    if name == "composition_settings":
+        blob = _composition_config(repository, supplied)
+        return composition_settings_source(
+            blob.content, path=blob.path, generator=supplied.generator
+        )
+    msg = f"no resolver for the supplied input slot {name}"
+    raise InputError(msg)
+
+
+def stage_inputs(
+    repository: GitRepository,
+    identified: Mapping[str, Any],
+    supplied: SuppliedInputs,
+    *,
+    stage: StageName,
+) -> dict[str, StageInputSource]:
+    """Capture only the committed and supplied inputs granted to one Stage.
+
+    Supplied inputs are resolved here and nowhere else, so a Stage that is not
+    granted the service repository never reads it.
+    """
+    committed = committed_stage_sources(repository, identified)
+    sources: dict[str, StageInputSource] = {}
+    for name in EXPECTED_STAGE_INPUT_SLOTS[stage]:
+        origin = SLOT_BY_NAME[name].origin
+        if origin == "committed":
+            sources[name] = committed[name]
+        elif origin == "supplied":
+            sources[name] = _resolve_supplied_slot(repository, supplied, name, stage)
+    return sources
+
+
+def reject_ungranted_supplied_inputs(
+    supplied: SuppliedInputs, *, stage: StageName
+) -> None:
+    """Reject a supplied input that one Stage's command names but is not granted.
+
+    Local dispatch supplies one run's inputs to every Stage, so only commands
+    that execute a single Stage call this.
+    """
+    granted = EXPECTED_STAGE_INPUT_SLOTS[stage]
+    named = {
+        "service repository": (
+            "service_repository",
+            supplied.service_repository is not None,
         ),
+        "composition config": (
+            "composition_settings",
+            supplied.composition_config is not None,
+        ),
+        "generator": ("composition_settings", supplied.generator is not None),
     }
+    for label, (slot, given) in named.items():
+        if given and slot not in granted:
+            msg = f"the {stage} Stage is not granted a supplied {label}"
+            raise InputError(msg)
+
+
+def composition_settings_source(
+    content: bytes, *, path: str, generator: str | None
+) -> StageInputSource:
+    """Capture the settings a composition config's bytes resolve to."""
+    settings = resolve_composition_settings(content, path=path, generator=generator)
+    return _supplied_source(
+        "composition_settings",
+        canonical_json(settings.model_dump(mode="json", exclude_none=True)),
+    )
 
 
 def check_key_bindings(
-    descriptor: AdapterDescriptor, available_inputs: Mapping[str, StageInputSource]
+    descriptor: AdapterDescriptor, key_names: Sequence[str]
 ) -> tuple[str, ...]:
     """Require the descriptor to bind every model key the run uses; name them.
 
-    Preflight calls this for every Stage, so a key the descriptor does not bind
-    rejects the run before any Stage starts.
+    Only a Stage granted the composition settings receives their keys. Preflight
+    calls this for every Stage, so a key the descriptor does not bind rejects
+    the run before any Stage starts.
     """
-    source = available_inputs.get("composition_settings")
-    if source is None or not descriptor.secret_bindings:
+    if (
+        "composition_settings" not in EXPECTED_STAGE_INPUT_SLOTS[descriptor.stage]
+        or not descriptor.secret_bindings
+    ):
         return ()
-    names = _validate_source_model(CompositionSettings, source).key_names
-    if not set(names) <= set(descriptor.secret_bindings):
+    if not set(key_names) <= set(descriptor.secret_bindings):
         msg = "composition settings name a key the adapter descriptor does not bind"
         raise InputError(msg)
-    return names
+    return tuple(key_names)
 
 
 def _read_accepted_envelope(
@@ -1287,7 +1384,10 @@ def _terminate_process_group(
         return
     if not immediate:
         deadline = time.monotonic() + ADAPTER_SHUTDOWN_GRACE_SECONDS
-        while _process_group_exists(process_group) and time.monotonic() < deadline:
+        # An unreaped adapter stays a zombie member and keeps its group alive.
+        while (
+            process.poll() is None or _process_group_exists(process_group)
+        ) and time.monotonic() < deadline:
             time.sleep(0.05)
     if _process_group_exists(process_group):
         with suppress(ProcessLookupError):
@@ -1304,9 +1404,7 @@ def execute_stage(  # noqa: PLR0913
     run_request_path: str,
     descriptor_path: str,
     attempt_root: Path,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
+    supplied: SuppliedInputs,
 ) -> dict[str, Any]:
     """Execute and transactionally accept one descriptor-selected Stage attempt."""
     if requested_ref != PROTECTED_MAIN_REF:
@@ -1320,17 +1418,15 @@ def execute_stage(  # noqa: PLR0913
     )
     repository = GitRepository(repository_path, resolved_commit)
     repository.require_ref_commit(requested_ref)
+    descriptor, _profile = load_stage_adapter(repository, descriptor_path)
+    reject_ungranted_supplied_inputs(supplied, stage=descriptor.stage)
     execution = execute_identified_stage(
         repository=repository,
         identified=identified,
         descriptor_path=descriptor_path,
         attempt_root=attempt_root,
-        available_inputs=committed_stage_sources(repository, identified)
-        | supplied_stage_sources(
-            repository,
-            service_repository=service_repository,
-            composition_config=composition_config,
-            generator=generator,
+        available_inputs=stage_inputs(
+            repository, identified, supplied, stage=descriptor.stage
         ),
     )
     return execution.envelope.model_dump(mode="json", exclude_none=True)
@@ -1339,25 +1435,23 @@ def execute_stage(  # noqa: PLR0913
 def load_stage_adapter(
     repository: GitRepository, descriptor_path: str
 ) -> tuple[AdapterDescriptor, StageProfile]:
-    """Load one descriptor and its digest-bound reviewed Stage profile."""
+    """Load one descriptor and the Stage profile rendered from the registry.
+
+    The committed profile must equal the rendering byte for byte, so a hand
+    edit fails here as well as in the freshness check.
+    """
     validate_repository_path(descriptor_path)
     descriptor_blob = repository.read_regular_file(descriptor_path)
     descriptor = _validate_yaml_model(AdapterDescriptor, descriptor_blob)
     profile_blob = repository.read_regular_file(descriptor.stage_profile)
-    if (
-        hashlib.sha256(profile_blob.content).hexdigest()
-        != descriptor.stage_profile_sha256
-    ):
-        msg = "Stage profile bytes do not match the reviewed descriptor digest"
+    if profile_blob.content != stage_profile_bytes(descriptor.stage):
+        msg = (
+            f"{descriptor.stage_profile} does not match the {descriptor.stage} "
+            "profile rendered from the registry; run "
+            "sdi-integration stage-profiles --write"
+        )
         raise InputError(msg)
-    profile = _validate_yaml_model(StageProfile, profile_blob)
-    if (
-        profile.stage != descriptor.stage
-        or profile.profile_version != descriptor.stage_profile_version
-    ):
-        msg = "Stage profile identity does not match the reviewed descriptor"
-        raise InputError(msg)
-    return descriptor, profile
+    return descriptor, render_stage_profile(descriptor.stage)
 
 
 def _adapter_environment(
@@ -1368,7 +1462,13 @@ def _adapter_environment(
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "LC_ALL": "C.UTF-8",
     }
-    key_names = check_key_bindings(descriptor, available_inputs)
+    settings = available_inputs.get("composition_settings")
+    key_names = check_key_bindings(
+        descriptor,
+        ()
+        if settings is None
+        else _validate_source_model(CompositionSettings, settings).key_names,
+    )
     if not key_names:
         return environment, ()
     environment.update(

@@ -33,12 +33,15 @@ services:
       - controller-cv
       - controller-cd
       - controller-egress
+      - runner-upstream-controller
+      - runner-fork-controller
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 5s
       timeout: 5s
       retries: 36
       start_period: 30s
+      start_interval: 1s
 
   integration:
     image: sdi-jenkins-agent-integration:3391.va-37fa-305d6d-2
@@ -47,7 +50,7 @@ services:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
       args:
-        RUNTIME_IMAGE: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+        RUNTIME_IMAGE: docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
         SDI_JENKINS_AGENT_LABEL: ""
         SDI_JENKINS_AGENT_ROLE: integration
     restart: "no"
@@ -73,6 +76,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 60s
+      start_interval: 1s
 
   ci:
     image: sdi-jenkins-agent-ci:3391.va-37fa-305d6d-2
@@ -107,6 +112,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 60s
+      start_interval: 1s
 
   image-build:
     image: sdi-jenkins-agent-image-build:3391.va-37fa-305d6d-2
@@ -141,6 +148,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 60s
+      start_interval: 1s
 
   cv:
     image: sdi-jenkins-agent-cv:3391.va-37fa-305d6d-2
@@ -175,6 +184,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 60s
+      start_interval: 1s
 
   cd:
     image: sdi-jenkins-agent-cd:3391.va-37fa-305d6d-2
@@ -209,9 +220,143 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 60s
+      start_interval: 1s
+
+  runner-upstream:
+    profiles: [runner-upstream]
+    image: sdi-jenkins-runner:2.337.0
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/runner/Dockerfile
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /home/runner:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000,size=2g
+      - /tmp:rw,nosuid,nodev,mode=1777,size=512m
+    volumes:
+      - runner-upstream-state:/var/lib/sdi-runner
+    environment:
+      https_proxy: http://runner-upstream-proxy:3128
+      HTTPS_PROXY: http://runner-upstream-proxy:3128
+      http_proxy: http://runner-upstream-proxy:3128
+      HTTP_PROXY: http://runner-upstream-proxy:3128
+      no_proxy: controller,localhost,127.0.0.1
+      NO_PROXY: controller,localhost,127.0.0.1
+    networks: [runner-upstream-controller]
+    depends_on:
+      controller:
+        condition: service_healthy
+      runner-upstream-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, sdi-runner-probe, listener]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+      start_interval: 1s
+
+  runner-fork:
+    profiles: [runner-fork]
+    image: sdi-jenkins-runner:2.337.0
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deployment/jenkins/runner/Dockerfile
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /home/runner:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000,size=2g
+      - /tmp:rw,nosuid,nodev,mode=1777,size=512m
+    volumes:
+      - runner-fork-state:/var/lib/sdi-runner
+    environment:
+      https_proxy: http://runner-fork-proxy:3128
+      HTTPS_PROXY: http://runner-fork-proxy:3128
+      http_proxy: http://runner-fork-proxy:3128
+      HTTP_PROXY: http://runner-fork-proxy:3128
+      no_proxy: controller,localhost,127.0.0.1
+      NO_PROXY: controller,localhost,127.0.0.1
+    networks: [runner-fork-controller]
+    depends_on:
+      controller:
+        condition: service_healthy
+      runner-fork-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, sdi-runner-probe, listener]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+      start_interval: 1s
+
+  runner-upstream-proxy:
+    profiles: [runner-upstream]
+    image: sdi-jenkins-runner-proxy:6
+    platform: linux/amd64
+    build:
+      context: runner-proxy
+      dockerfile: Dockerfile
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/squid:rw,nosuid,nodev,noexec,mode=0700,uid=13,gid=13,size=16m
+    networks: [runner-upstream-controller, runner-upstream-egress]
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import socket; socket.create_connection(("127.0.0.1", 3128), timeout=3).close()
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+      start_interval: 1s
+
+  runner-fork-proxy:
+    profiles: [runner-fork]
+    image: sdi-jenkins-runner-proxy:6
+    platform: linux/amd64
+    build:
+      context: runner-proxy
+      dockerfile: Dockerfile
+    restart: "no"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/squid:rw,nosuid,nodev,noexec,mode=0700,uid=13,gid=13,size=16m
+    networks: [runner-fork-controller, runner-fork-egress]
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import socket; socket.create_connection(("127.0.0.1", 3128), timeout=3).close()
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+      start_interval: 1s
 
 volumes:
   jenkins-home:
+  runner-upstream-state:
+  runner-fork-state:
 
 networks:
   controller-integration:
@@ -225,6 +370,12 @@ networks:
   controller-cd:
     internal: ${JENKINS_AGENT_NETWORK_INTERNAL:-false}
   controller-egress:
+  runner-upstream-controller:
+    internal: true
+  runner-upstream-egress:
+  runner-fork-controller:
+    internal: true
+  runner-fork-egress:
 
 secrets:
   jenkins-admin-password:

@@ -20,6 +20,7 @@
       "status": "unresolved"
     }
   ],
+  "profile_basis": "placeholder",
   "profile_id": "waffle-jetson-arm64",
   "scenario_id": "S-04",
   "schema_version": "sdi.deployment-schema/v1",
@@ -33,7 +34,7 @@
       "slot": "requirements_specification"
     },
     {
-      "sha256": "b18ef771accd5b48c7b50c2bc188fddedc0a599e5452f6d8bf40117a05983c93",
+      "sha256": "10927c0d576d7d949c827549ca0b39c2fdfd0e727eda016861553defebf3eac1",
       "slot": "target_profile"
     },
     {

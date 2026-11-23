@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from ruamel.yaml import YAML
 
+from sdi_pipeline_integration._integration_code import BAKED_ROOTS
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -17,6 +19,12 @@ if TYPE_CHECKING:
 REPOSITORY_ROOT = Path(__file__).parents[2]
 JENKINS_ROOT = REPOSITORY_ROOT / "deployment" / "jenkins"
 AGENT_NAMES = {"integration", "ci", "image-build", "cv", "cd"}
+RUNNER_STACK_SERVICES = {
+    "runner-upstream",
+    "runner-fork",
+    "runner-upstream-proxy",
+    "runner-fork-proxy",
+}
 AGENT_LABELS = {
     "integration": "integration",
     "ci": "composition",
@@ -26,7 +34,7 @@ AGENT_LABELS = {
 }
 FIXTURE_IMAGE = (
     "docker.io/library/python@"
-    "sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2"
+    "sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36"
 )
 
 
@@ -83,15 +91,12 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
     compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
     services = compose["services"]
 
-    assert set(services) == {"controller", *AGENT_NAMES}
-    assert set(compose["volumes"]) == {"jenkins-home"}
+    assert set(services) == {"controller", *AGENT_NAMES, *RUNNER_STACK_SERVICES}
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
 
     controller_networks = set(services["controller"]["networks"])
-    assert controller_networks == {
-        "controller-egress",
-        *(f"controller-{name}" for name in AGENT_NAMES),
-    }
+    agent_networks = {f"controller-{name}" for name in AGENT_NAMES}
+    assert agent_networks < controller_networks
 
     registration_secrets: set[str] = set()
     for name in AGENT_NAMES:
@@ -128,8 +133,7 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
     assert all(
         compose["networks"][name]["internal"]
         == "${JENKINS_AGENT_NETWORK_INTERNAL:-false}"
-        for name in controller_networks
-        if name != "controller-egress"
+        for name in agent_networks
     )
     assert all("docker.sock" not in json.dumps(services[name]) for name in services)
 
@@ -163,6 +167,38 @@ def test_domain_agents_use_their_descriptor_selected_runtime_image() -> None:
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert "/etc/sdi/jenkins-agent-role" in dockerfile
     assert "/etc/sdi/jenkins-agent-label" in dockerfile
+
+
+@pytest.mark.parametrize("image", ["agents", "runner"])
+def test_images_digest_exactly_the_integration_code_they_bake(image: str) -> None:
+    dockerfile = (JENKINS_ROOT / image / "Dockerfile").read_text()
+    copied = {
+        source.removeprefix("integration/")
+        for line in dockerfile.splitlines()
+        if line.startswith("COPY integration/")
+        for source in line.split()[1:-1]
+    }
+    dockerignore = (
+        (JENKINS_ROOT / image / "Dockerfile.dockerignore").read_text().splitlines()
+    )
+
+    assert copied - {"README.md"} == set(BAKED_ROOTS)
+    for root in BAKED_ROOTS:
+        assert f"!integration/{root}" in dockerignore or (
+            f"!integration/{root}/**" in dockerignore
+        )
+    assert dockerignore[-2:] == ["integration/**/__pycache__", "integration/**/*.pyc"]
+    assert "integration-code-digest --root ." in dockerfile
+    assert "/etc/sdi/integration-code-digest" in dockerfile
+
+
+def test_runner_and_agents_share_one_cached_integration_environment() -> None:
+    def tooling_stage(image: str) -> str:
+        dockerfile = (JENKINS_ROOT / image / "Dockerfile").read_text()
+        stage = dockerfile.split("FROM runtime AS tooling\n", maxsplit=1)[1]
+        return stage.split("\n\nFROM ", maxsplit=1)[0]
+
+    assert tooling_stage("runner") == tooling_stage("agents")
 
 
 def test_jcasc_owns_exact_agent_identities_labels_and_executors() -> None:

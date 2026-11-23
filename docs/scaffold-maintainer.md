@@ -4,8 +4,8 @@
 
 The supported interfaces are the committed file contracts, generated JSON
 Schemas, `uv run --project integration sdi-integration`, the Stage-adapter
-process contract, `deployment/jenkins/bin/stack`,
-`deployment/github-runner/bin/runner`, and
+process contract, `deployment/jenkins/bin/stack`, including its GitHub handoff
+runner services and `stack register-runner`, and
 `deployment/jenkins/bin/recovery`. Internal Python modules, Jenkins UI state,
 container IP addresses, mutable image tags, and local configuration are not
 compatibility contracts.
@@ -17,7 +17,8 @@ Authority is intentionally local:
 - `integration/src/sdi_pipeline_integration/` owns validation semantics and
   generates `integration/schemas/`; committed schemas are language-neutral
   consumer contracts.
-- `integration/stage-profiles/` owns Stage invocation policy and limits.
+- `integration/src/sdi_pipeline_integration/` also owns Stage invocation policy
+  and limits, and renders `integration/stage-profiles/` from them.
 - `deployment/jenkins/adapters/` owns which immutable implementation image and
   process satisfy each Stage seam.
 - `deployment/jenkins/casc/jenkins.yaml`, `jobs/`, `compose.yaml`, and the root
@@ -76,10 +77,12 @@ into integration code, or mutate a running container. With Jenkins idle:
 ## Verification And Readiness
 
 `integration/scripts/verify` is the deterministic repository acceptance command.
-It checks generated-schema freshness, formatting, linting, type safety, tests,
-and an ephemeral six-container Jenkins smoke. It does not prove GitHub
-protection, protected-environment delivery, the installed runner, production
-credentials, restoration, or a live protected-main run.
+It checks generated-schema, Stage-profile, and Fixture-case freshness, formatting, linting, type
+safety, tests, and an ephemeral Jenkins smoke of the controller, five agents,
+the handoff-runner image, and the runner's egress confinement through its proxy.
+It does not prove GitHub protection, protected-environment delivery, a
+registered runner, production credentials, restoration, or a live protected-main
+run or dispatch.
 
 Repeat the relevant readiness sections after any change to installation pins,
 workflow permissions, branch/environment protection, runner, controller,

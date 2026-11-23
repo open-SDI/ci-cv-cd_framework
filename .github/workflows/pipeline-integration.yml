@@ -24,25 +24,28 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/CV/
 
-      - name: Set up locked Python environment
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
-          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
-        with:
-          version: 0.12.1
-          enable-cache: false
+      - name: Confirm runner integration code matches the revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          REVISION_DIGEST="$(/opt/sdi/integration/.venv/bin/sdi-integration \
+            integration-code-digest --root integration)"
+          if [ "$REVISION_DIGEST" != "$(cat /etc/sdi/integration-code-digest)" ]; then
+            echo "::error::The runner image bakes different integration code than this revision; rebuild it with stack start."
+            exit 1
+          fi
 
       - name: Validate input and assign Execution ID
         id: identify
         shell: bash
         env:
           RUN_REQUEST_PATH: ${{ inputs.run_request_path }}
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
-          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: |
           set -euo pipefail
           OUTPUT_ROOT="$RUNNER_TEMP/pipeline-integration-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -50,12 +53,12 @@ jobs:
           mkdir -m 700 "$OUTPUT_ROOT"
           git update-ref refs/heads/main "$GITHUB_SHA"
           IDENTIFIED_RUN="$OUTPUT_ROOT/identified-run.json"
-          uv run --frozen --project integration sdi-integration identify-run \
+          /opt/sdi/integration/.venv/bin/sdi-integration identify-run \
             --repository . \
             --requested-ref refs/heads/main \
             --resolved-commit "$GITHUB_SHA" \
             --run-request-path "$RUN_REQUEST_PATH" > "$IDENTIFIED_RUN"
-          EXECUTION_ID="$(uv run --frozen --project integration python - "$IDENTIFIED_RUN" <<'PY'
+          EXECUTION_ID="$(/opt/sdi/integration/.venv/bin/python - "$IDENTIFIED_RUN" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -77,18 +80,15 @@ jobs:
           EXECUTION_ID: ${{ steps.identify.outputs.execution_id }}
           OUTPUT_ROOT: ${{ steps.identify.outputs.output_root }}
           RUN_REQUEST_PATH: ${{ inputs.run_request_path }}
-          SDI_JENKINS_BASE_URL: ${{ vars.SDI_JENKINS_BASE_URL }}
+          SDI_JENKINS_BASE_URL: http://controller:8080
           SDI_JENKINS_JOB_PATH: ${{ vars.SDI_JENKINS_JOB_PATH }}
           SDI_JENKINS_REPOSITORY: ${{ vars.SDI_JENKINS_REPOSITORY }}
           SDI_JENKINS_USERNAME: ${{ vars.SDI_JENKINS_USERNAME }}
           SDI_JENKINS_API_TOKEN: ${{ secrets.SDI_JENKINS_API_TOKEN }}
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
-          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: |
           set -euo pipefail
           HANDOFF_RESULT="$OUTPUT_ROOT/handoff-result.json"
-          exec integration/.venv/bin/sdi-integration handoff-jenkins \
+          exec /opt/sdi/integration/.venv/bin/sdi-integration handoff-jenkins \
             --repository . \
             --requested-ref refs/heads/main \
             --resolved-commit "$GITHUB_SHA" \
@@ -124,9 +124,6 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           OUTPUT_ROOT: ${{ steps.identify.outputs.output_root }}
           PUBLICATION_OUTCOME: ${{ steps.publication.outcome }}
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
-          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: |
           set -euo pipefail
           SUMMARY_ARGUMENTS=(
@@ -143,5 +140,5 @@ jobs:
           if [ "$JOB_STATUS" = cancelled ]; then
             SUMMARY_ARGUMENTS+=(--workflow-cancelled)
           fi
-          uv run --frozen --project integration sdi-integration github-summary \
+          /opt/sdi/integration/.venv/bin/sdi-integration github-summary \
             "${SUMMARY_ARGUMENTS[@]}" >> "$GITHUB_STEP_SUMMARY"

@@ -17,12 +17,16 @@ printf 'Acceptance tool pin: %s\n' "$uv_version"
 uv lock --check
 uv sync --frozen --all-groups
 uv run --frozen sdi-integration schemas --check --directory schemas
+uv run --frozen sdi-integration stage-profiles --check --directory stage-profiles
+uv run --frozen python -m sdi_pipeline_integration._fixture_regeneration --check
 uv run --frozen check-jsonschema --quiet --builtin-schema \
     vendor.github-workflows ../.github/workflows/pipeline-integration.yml
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen basedpyright
-uv run --frozen pytest
+# Slow tests wait out real limits, so parallel load must not stretch them.
+uv run --frozen pytest -m 'not slow' -n auto --dist worksteal
+uv run --frozen pytest -m slow
 
 printf '%s\n' 'Locked Python dependency closure:'
 uv tree --frozen --all-groups
@@ -39,5 +43,6 @@ done < ../deployment/jenkins/controller/plugins.txt
 
 printf '%s\n' \
     'Repository acceptance passed.' \
-    'Passing proves only the permanent integration scaffold and Fixture behavior.' \
-    'Real Domain stages, KPI evaluation, product security assurance, availability, and deferred infrastructure remain out of scope.'
+    'Passing proves the integration scaffold, the Fixture behavior of the image-build, CV, and CD Stages, and the composition Stage contract: outcomes, outputs, evidence, and diagnostics.' \
+    'Live-model composition tests are skipped when their provider keys are unavailable.' \
+    'Passing proves no real image build, CV verdict, deployment, or KPI evaluation; product security assurance, availability, and deferred infrastructure remain out of scope.'

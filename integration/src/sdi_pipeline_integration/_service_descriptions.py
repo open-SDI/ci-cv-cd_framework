@@ -23,6 +23,7 @@ from ._contracts import (
     Baseline,
     ContractModel,
     NonBlank,
+    Provenance,
     RoleMaps,
     Slug,
     reject_explicit_nulls,
@@ -41,25 +42,6 @@ MAX_DESCRIPTION_FILES = 256
 MAX_DESCRIPTION_BYTES = 1024 * 1024
 
 type Architecture = Literal["amd64", "arm64", "noarch"]
-
-
-class DeclaredProvenance(ContractModel):
-    """Facts asserted by an accountable upstream source."""
-
-    basis: Literal["declared"]
-    source: NonBlank
-
-
-class PlaceholderProvenance(ContractModel):
-    """Facts that only exercise an interface; the label is carried."""
-
-    basis: Literal["placeholder"]
-    note: NonBlank
-
-
-Provenance = Annotated[
-    DeclaredProvenance | PlaceholderProvenance, Field(discriminator="basis")
-]
 
 
 class Implementation(ContractModel):

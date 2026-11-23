@@ -21,3 +21,15 @@ output, oversized output, schema mismatch, and response identity mismatch. These
 deliberately adverse cases prove runtime and contract handling only. Their
 payloads and outcomes are not evidence that a Domain capability or KPI was
 evaluated.
+
+The input digests, payload `source_inputs`, and payload and diagnostic sizes and
+digests are generated, so do not edit them by hand. After changing a run input,
+the Fixture composition config or service repository under
+`integration/tests/data/`, a payload, or a diagnostic, run
+`integration/scripts/regenerate-fixtures --write`. It recomputes every case in
+Stage order from the working tree, so an input change reaches every downstream
+Stage. `integration/scripts/verify` runs `--check`, which names each stale file.
+Every other value in a case or payload stays hand-authored, but the command owns
+their layout: it writes each case in one fixed YAML form and each payload in one
+fixed JSON encoding. Digests are over the exact file bytes, so a checkout that
+rewrites line endings, such as `core.autocrlf` on Windows, does not match.

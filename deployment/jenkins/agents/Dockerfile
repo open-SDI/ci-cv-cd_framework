@@ -1,4 +1,4 @@
-ARG RUNTIME_IMAGE=docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+ARG RUNTIME_IMAGE=docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded
 ARG REMOTING_IMAGE=docker.io/jenkins/inbound-agent:3391.va_37fa_a_305d6d-2-jdk21@sha256:a2ee24c1dbd2080a9f03bb668f63a2c8d23c7b6e5bf20fe0033d4d28f4410048
 
@@ -13,6 +13,9 @@ COPY integration/README.md integration/pyproject.toml integration/uv.lock ./
 COPY integration/src src
 COPY integration/fixtures fixtures
 RUN uv sync --frozen --no-dev --no-editable
+RUN .venv/bin/sdi-integration integration-code-digest --root . \
+        > /opt/sdi/integration-code-digest \
+    && chmod 0444 /opt/sdi/integration-code-digest
 
 FROM runtime
 LABEL org.sdi.project=ci-cv-cd_framework
@@ -44,6 +47,9 @@ RUN case "$SDI_JENKINS_AGENT_ROLE" in \
     && uv --version \
     && git --version \
     && /opt/java/openjdk/bin/java -version
+COPY --from=tooling \
+    /opt/sdi/integration-code-digest \
+    /etc/sdi/integration-code-digest
 
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/sdi/integration/.venv/bin:/opt/java/openjdk/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin \

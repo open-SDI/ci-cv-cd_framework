@@ -13,3 +13,5 @@
 !integration/src/**
 !integration/fixtures/
 !integration/fixtures/**
+integration/**/__pycache__
+integration/**/*.pyc

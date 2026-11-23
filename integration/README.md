@@ -8,6 +8,16 @@ supported interfaces. Internal Python modules are not compatibility contracts.
 Run all checks through `scripts/verify` rather than using an ambient Python
 environment.
 
+Tests marked `live` call a real model provider; tests marked `slow` wait out a
+real work limit or deadline. `scripts/verify` runs every test: the non-`slow`
+tests in parallel, then the `slow` tests serially, because parallel load can
+push their timing past its bounds. For a fast check while developing, run from
+this directory:
+
+```sh
+uv run pytest -m "not live and not slow" -n auto --dist worksteal
+```
+
 ## Identify A Committed Run
 
 `identify-run` reads the request and every referenced input directly from one
@@ -30,7 +40,8 @@ write no record, and assign no Execution ID.
 ## Execute One Stage
 
 `execute-stage` identifies the committed run, selects its reviewed adapter
-descriptor, verifies the descriptor-bound Stage profile, and invokes the adapter
+descriptor, verifies that its Stage profile equals the one rendered from the
+slot registry, and invokes the adapter
 through the one-shot process interface. It accepts declared files only after the
 complete candidate bundle, response correlation, file limits, and Domain schemas
 validate:
@@ -46,7 +57,13 @@ uv run --project integration sdi-integration execute-stage \
   --attempt-root artifacts/composition-attempt
 ```
 
-Every Stage-executing command takes the same run-supplied composition inputs.
+Only the composition Stage is granted the run-supplied composition inputs.
+`execute-stage` and `execute-jenkins-stage` require `--service-repository` for
+composition and reject `--service-repository`, `--composition-config`, and
+`--generator` for any other Stage. `dispatch-local` runs composition, so it
+always requires `--service-repository`. The Jenkins preflight takes only
+`--composition-config` and `--generator`, to check the config's key names, and
+`finalize-jenkins-run` takes none of them.
 `--service-repository` names a directory of `SDI.md` descriptions; the runtime
 copies every description into the composition Stage's inputs and gives the
 adapter a manifest of their paths, sizes, and digests. It refuses symbolic
@@ -87,7 +104,10 @@ composition blueprint and deployment schema. The preferred proposal supports the
 most requirements, then has the fewest gaps; no performance evidence is
 available, so equal proposals keep the model's order. The blueprint records the
 `proposal_id` and each requirement's checked coverage status; each placement is
-`resolved` or `unresolved`.
+`resolved` or `unresolved`. A placement stays unresolved when its host omits the
+device list or baseline the service's artifact needs. Both files and the
+evidence carry the target profile's provenance basis as `profile_basis`, so a
+placeholder profile stays labelled.
 
 Discovery queries the service repository once per requirement, with its ID and
 original Shall statement, and once with the profile's architectures, devices,
@@ -201,12 +221,16 @@ six-combination verdict.
 The root `Jenkinsfile` composes five public CLI operations rather than parsing or
 constructing contracts in Groovy:
 
-- `preflight-jenkins-run` preserves the submitted Execution ID and revalidates
-  the seven scalar handoff values, committed inputs, all descriptors and Stage
-  profiles, settled default limits, and the allocated resource mapping.
-- `execute-jenkins-stage` reconstructs prior accepted attempts from bounded
-  Jenkins stashes, validates every transferred byte and the trusted deployment
-  work limit, and executes only the next reviewed descriptor on its matching
+- `preflight-jenkins-run` first compares the integration code digest each of
+  the five agent images recorded at build time with the digest of the
+  submitted checkout. It then preserves the submitted Execution ID and
+  revalidates the seven scalar handoff values, committed inputs, all
+  descriptors and Stage profiles, settled default limits, and the allocated
+  resource mapping.
+- `execute-jenkins-stage` first repeats that digest comparison for its own
+  agent. It then reconstructs prior accepted attempts from bounded Jenkins
+  stashes, validates every transferred byte and the trusted deployment work
+  limit, and executes only the next reviewed descriptor on its matching
   immutable agent. An expired run deadline returns control without launching an
   adapter so integration-owned finalization can create the typed skip.
 - `attempt-allows-continuation` derives whether another Domain Stage may run.
@@ -215,6 +239,14 @@ constructing contracts in Groovy:
 - `bundle-conclusion` revalidates the bundle and derives Jenkins machinery
   success without converting a valid negative Domain outcome into machinery
   failure.
+
+A digest mismatch exits with status 4 and the reason
+`sdi.agent.stale-image`, naming the stale agents, before any Stage work. When
+the integration agent itself is stale, it names only that agent, because its
+digest of the checkout cannot be trusted. `integration-code-digest --root
+<integration directory>` prints the digest over `pyproject.toml`, `uv.lock`,
+`src`, and `fixtures`, which the agent image build records in
+`/etc/sdi/integration-code-digest`.
 
 These commands are pipeline-facing primitives. Operators submit only through the
 fixed Jenkins job; they do not manually coordinate the primitives or reuse their
@@ -246,7 +278,9 @@ token, and safety limits are trusted environment configuration rather than
 command arguments or workflow inputs. The required settings are
 `SDI_JENKINS_BASE_URL`, `SDI_JENKINS_JOB_PATH`, `SDI_JENKINS_REPOSITORY`,
 `SDI_JENKINS_USERNAME`, and `SDI_JENKINS_API_TOKEN`. Plain HTTP is accepted only
-on loopback; relocated Jenkins endpoints require verified HTTPS. The command
+for loopback hosts and exactly the host `controller`, which the stack runner
+reaches over its internal network; relocated Jenkins endpoints require verified
+HTTPS. The command
 does not support passwords, crumbs, remote-trigger tokens, URL credentials, or
 redirects. Preflight verifies the authenticated machine identity and access to
 the configured fixed job before submission.

@@ -35,20 +35,21 @@ from ._stage_runtime import (
     OUTPUT_MODELS,
     StageExecution,
     StageInputSource,
+    SuppliedInputs,
     capture_tree,
     check_key_bindings,
-    committed_stage_sources,
+    composition_key_names,
     execute_identified_stage,
     expected_directories,
     load_stage_adapter,
     skipped_stage_execution,
-    supplied_stage_sources,
+    stage_inputs,
     validate_stage_documents,
 )
 from ._yaml_input import InputError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Sequence
 
 MAX_RESULT_BYTES = 1024 * 1024
 RUN_DEADLINE_SECONDS = 90 * 60
@@ -62,7 +63,7 @@ DESCRIPTORS: tuple[tuple[StageName, str], ...] = (
 
 
 def _descriptor_modes(
-    repository: GitRepository, available_inputs: Mapping[str, StageInputSource]
+    repository: GitRepository, key_names: Sequence[str]
 ) -> dict[StageName, ImplementationMode]:
     modes: dict[StageName, ImplementationMode] = {}
     for expected_stage, descriptor_path in DESCRIPTORS:
@@ -70,7 +71,7 @@ def _descriptor_modes(
         if descriptor.stage != expected_stage:
             msg = "reviewed descriptor order does not match its Stage"
             raise InputError(msg)
-        check_key_bindings(descriptor, available_inputs)
+        check_key_bindings(descriptor, key_names)
         modes[expected_stage] = descriptor.implementation_mode
     return modes
 
@@ -382,9 +383,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
     resolved_commit: str,
     run_request_path: str,
     bundle_root: Path,
-    service_repository: Path,
-    composition_config: str,
-    generator: str | None,
+    supplied: SuppliedInputs,
 ) -> dict[str, Any]:
     """Execute and atomically publish one complete local four-Stage run."""
     run_started_at = datetime.now(UTC)
@@ -400,15 +399,13 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
     )
     repository = GitRepository(repository_path, resolved_commit)
     repository.require_ref_commit(requested_ref)
-    available_inputs = committed_stage_sources(
-        repository, identified
-    ) | supplied_stage_sources(
-        repository,
-        service_repository=service_repository,
-        composition_config=composition_config,
-        generator=generator,
+    granted_inputs = {
+        stage: stage_inputs(repository, identified, supplied, stage=stage)
+        for stage, _descriptor_path in DESCRIPTORS
+    }
+    descriptor_modes = _descriptor_modes(
+        repository, composition_key_names(repository, supplied)
     )
-    descriptor_modes = _descriptor_modes(repository, available_inputs)
     run_deadline = (
         run_started_monotonic + RUN_DEADLINE_SECONDS - FINALIZATION_RESERVE_SECONDS
     )
@@ -441,6 +438,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
             )
         )
         executions: list[StageExecution] = []
+        outputs: dict[str, StageInputSource] = {}
         blocker: StageExecution | None = None
         for stage, descriptor_path in DESCRIPTORS:
             if blocker is None:
@@ -449,7 +447,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
                     identified=identified,
                     descriptor_path=descriptor_path,
                     attempt_root=work_root / stage,
-                    available_inputs=available_inputs,
+                    available_inputs=granted_inputs[stage] | outputs,
                     deadline_monotonic=run_deadline,
                 )
             else:
@@ -476,7 +474,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
             ):
                 blocker = blocker or execution
             else:
-                available_inputs.update(execution.outputs)
+                outputs.update(execution.outputs)
 
         result = _assemble_bundle_staging(
             identified=identified,

@@ -10,21 +10,19 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ValidationError
 
 from ._contracts import (
-    REQUIREMENTS_SCHEMA_VERSION,
-    RUN_REQUEST_SCHEMA_VERSION,
-    TARGET_PROFILE_SCHEMA_VERSION,
     MobilityRequirementsSpecification,
     RunRequest,
     TargetExecutionProfile,
 )
 from ._git_input import CommittedBlob, GitRepository, validate_repository_path
+from ._stage_contracts import COMMITTED_SLOTS, SLOT_BY_NAME
 from ._yaml_input import InputError, parse_front_matter, parse_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 PROTECTED_MAIN_REF = "refs/heads/main"
-INPUT_FILE_COUNT = 3
+INPUT_FILE_COUNT = len(COMMITTED_SLOTS)
 UUID_VERSION = 4
 
 
@@ -93,9 +91,12 @@ def identify_committed_run(
     profile = _validate_model(TargetExecutionProfile, profile_blob)
 
     inputs = [
-        _provenance(request_blob, RUN_REQUEST_SCHEMA_VERSION),
-        _provenance(requirements_blob, REQUIREMENTS_SCHEMA_VERSION),
-        _provenance(profile_blob, TARGET_PROFILE_SCHEMA_VERSION),
+        _provenance(request_blob, SLOT_BY_NAME["run_request"].schema_version),
+        _provenance(
+            requirements_blob,
+            SLOT_BY_NAME["requirements_specification"].schema_version,
+        ),
+        _provenance(profile_blob, SLOT_BY_NAME["target_profile"].schema_version),
     ]
     if execution_id is None:
         accepted_execution_id = str(uuid.uuid4())

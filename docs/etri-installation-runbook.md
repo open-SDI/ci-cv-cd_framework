@@ -14,25 +14,24 @@ Continuous Validation, deployment, or KPI results.
 
 | Role | Responsibility |
 | --- | --- |
-| Repository administrator | Protect `main`, configure the GitHub environment, and issue runner tokens |
+| Repository administrator | Protect `main`, configure the GitHub environment, and issue runner registration tokens |
 | Host administrator | Prepare Ubuntu, accounts, packages, network policy, and encrypted backup storage |
-| Stack operator | Configure and operate Jenkins and its five agents |
+| Stack operator | Configure and operate Jenkins, its five agents, and the GitHub handoff runner |
 | ETRI operator | Trigger runs in GitHub and retrieve artifacts; no Jenkins or host access is required |
 
-Keep the stack operator and runner as separate OS users. The stack operator
-needs Docker access. The runner must be non-root, outside `sudo`, `wheel`, and
-`docker`, unable to access the Docker socket, Jenkins state, or secret files,
-and have a working systemd user manager with lingering enabled.
+The stack operator needs Docker access. The GitHub runner needs no OS account:
+it is a stack container that runs as a non-root user without `sudo`, the Docker
+socket, Jenkins state, or secret files, and the stack operator registers it.
 
 ## 1. Prepare The Host
 
 Use Ubuntu LTS 24.04 or 26.04 on x86_64 with:
 
-- Docker Engine 27 or newer and Docker Compose v2, available to the stack
-  operator without privilege escalation;
+- Docker Engine 27 or newer and the Docker Compose plugin 2.20.2 or newer,
+  available to the stack operator without privilege escalation;
 - Git 2 or newer, Python 3, `uv` 0.12.1, systemd, `curl`, `sha256sum`, and
   `tar`;
-- the native libraries required by GitHub Actions runner 2.337.0;
+- the GitHub CLI `gh`, to pipe a runner registration token into the stack;
 - outbound HTTPS access to every URL listed in
   `deployment/installation.env`;
 - an unused loopback port for Jenkins and sufficient local container storage.
@@ -41,24 +40,9 @@ Install these through ETRI's approved package and account-management process.
 The repository intentionally does not modify the OS, firewall, SSH, accounts,
 or Docker installation. This keeps host security policy under ETRI control.
 
-To install the pinned runner's native dependencies without executing a
-runner-owned file as root, the host administrator uses Bash and a separate
-staging area:
-
-```bash
-set -euo pipefail
-staging="$(mktemp -d)"
-archive="$staging/actions-runner-linux-x64-2.337.0.tar.gz"
-curl --fail --location --proto '=https' --tlsv1.2 --output "$archive" \
-  https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz
-printf '%s  %s\n' \
-  70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613 \
-  "$archive" | sha256sum --check
-mkdir "$staging/runner"
-tar --extract --gzip --file "$archive" --directory "$staging/runner"
-sudo "$staging/runner/bin/installdependencies.sh"
-rm -rf "$staging"
-```
+The host needs no GitHub Actions runner libraries. The runner image build
+downloads the pinned runner release, checks its SHA-256, and installs its
+dependencies inside the image.
 
 ## 2. Prepare The Repository
 
@@ -97,8 +81,8 @@ JENKINS_AGENT_CONTROLLER_URL=http://controller:8080
 
 `JENKINS_FORK_REPOSITORY_URL` must name a different repository, normally the
 maintainer's fork. The fork job `pipeline-integration-fork` stays idle unless a
-fork runner is registered; this runbook installs only the upstream runner, as
-`sdi-runner`. Before any upstream dispatch, a sync pull request must bring
+fork runner is registered; this runbook installs only the upstream runner
+service. Before any upstream dispatch, a sync pull request must bring
 upstream `main` level with the fork `main` commit the agent images were built
 from.
 
@@ -145,31 +129,29 @@ networks.
 
 ## 4. Install The GitHub Runner
 
-As the dedicated runner user, from a separate clean checkout:
+Add `GITHUB_RUNNERS=upstream` to
+`deployment/jenkins/config/local/controller.env`. With the stack running, a
+repository administrator creates a one-hour registration token, and the stack
+operator pipes it into `register-runner` with a runner name of ETRI's choice,
+then starts and validates the stack:
 
 ```sh
-deployment/github-runner/bin/runner preflight
-deployment/github-runner/bin/runner install
+gh api -X POST repos/open-SDI/ci-cv-cd_framework/actions/runners/registration-token \
+  --jq .token | deployment/jenkins/bin/stack register-runner upstream \
+  --name etri-jenkins-handoff
+deployment/jenkins/bin/stack start
+deployment/jenkins/bin/stack verify-live
 ```
 
-In GitHub, open **Settings > Actions > Runners > New self-hosted runner** and
-create a short-lived repository registration token. Configure and start the
-runner:
-
-```sh
-SDI_GITHUB_RUNNER_REPOSITORY=https://github.com/open-SDI/ci-cv-cd_framework \
-SDI_GITHUB_RUNNER_NAME=jenkins-handoff-host \
-SDI_GITHUB_RUNNER_REGISTRATION_TOKEN='<short-lived-token>' \
-deployment/github-runner/bin/runner configure
-
-deployment/github-runner/bin/runner install-service
-deployment/github-runner/bin/runner start
-deployment/github-runner/bin/runner status
-```
-
+`register-runner` refuses a token typed at a terminal and never prints it. The
+token is registration-time input only and is never stored by the stack.
 Confirm that exactly one online runner in the repository has only the custom
-label `sdi-jenkins-handoff`. The token is configuration-time input and must not
-be stored in the service environment.
+label `sdi-jenkins-handoff`.
+
+GitHub assigns a queued job to any online runner with that label, so only one
+installation may have an online upstream runner. When ETRI's runner goes live,
+the development host's upstream runner must be stopped by setting its
+`GITHUB_RUNNERS=fork` and restarting its stack.
 
 ## 5. Configure GitHub
 
@@ -182,23 +164,28 @@ protected branches, and add reviewers if ETRI policy requires approval. Add:
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| Variable | `SDI_JENKINS_BASE_URL` | `http://127.0.0.1:<configured-port>` |
 | Variable | `SDI_JENKINS_JOB_PATH` | `pipeline-integration` |
 | Variable | `SDI_JENKINS_REPOSITORY` | `github.com/open-SDI/ci-cv-cd_framework` |
 | Variable | `SDI_JENKINS_USERNAME` | Handoff-machine-user ID |
 | Secret | `SDI_JENKINS_API_TOKEN` | Named API token issued for that user |
 
+The workflow hard-codes the Jenkins base URL `http://controller:8080`, so the
+environment has no `SDI_JENKINS_BASE_URL` variable.
+
 Issue the API token in the handoff user's Jenkins configuration while signed in
 as the administrator. Use an API token, not either bootstrap password. GitHub
 delivers it only to the protected job; it must not be placed in the checkout,
-runner service, command line, or readiness evidence.
+runner container, command line, or readiness evidence.
 
 The supported installation uses a repository-scoped runner and treats its label
 as an operational selector, not an authorization boundary. Trust every write
 collaborator and reviewer who can approve protected-main or external-fork
 workflow code. An organization workflow-restricted runner group requires a
-separately reviewed extension to the runner interface before it can replace this
-configuration.
+separately reviewed extension to the runner service before it can replace this
+configuration. The runner's outbound traffic passes only through its own
+proxy, which admits only the GitHub Actions endpoints; the proxy limits where
+job code can connect but does not prevent data exfiltration. See the security
+review in `deployment/jenkins/README.md`.
 
 ## 6. Accept The Installation
 
@@ -229,14 +216,15 @@ private paths, hostnames, Jenkins console output, or archive contents.
 
 ## Operation
 
-Before shutdown, stop the runner and prevent new environment delivery. Then:
+Before shutdown, prevent new environment delivery. Then quiesce, which also
+stops the runner, and stop the stack:
 
 ```sh
 deployment/jenkins/bin/stack quiesce
 deployment/jenkins/bin/stack stop
 ```
 
-Use `stack start`, `verify-live`, and then `runner start` to resume. Follow
+Use `stack start` and `verify-live` to resume; `start` also starts the runner. Follow
 `deployment/jenkins/README.md` for snapshot, restore, reconstruction, and
 one-at-a-time credential or agent replacement.
 
@@ -244,8 +232,9 @@ one-at-a-time credential or agent replacement.
 
 - **GitHub is the only external surface:** ETRI operators need one familiar,
   auditable trigger and artifact interface; Jenkins remains private.
-- **Loopback-only Jenkins:** the handoff runner can reach Jenkins without adding
-  an externally exposed control plane, reverse proxy, or TLS credential.
+- **Loopback-only Jenkins:** Jenkins is still published only on loopback; the
+  handoff runner reaches it over an internal Compose network without an
+  externally exposed control plane, reverse proxy, or TLS credential.
 - **Separate identities:** administrator, handoff user, runner, integration
   agent, and four Domain agents receive only the authority required for their
   roles.

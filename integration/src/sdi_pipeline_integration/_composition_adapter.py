@@ -45,6 +45,7 @@ from ._service_descriptions import (
     parse_service_repository,
 )
 from ._stage_contracts import (
+    SLOT_BY_NAME,
     AdapterRequest,
     AdapterResponse,
     contains_sensitive_material,
@@ -252,7 +253,7 @@ def _blueprint_documents(
         CompositionBlueprint,
         identity
         | {
-            "schema_version": "sdi.composition-blueprint/v1",
+            "schema_version": SLOT_BY_NAME["composition_blueprint"].schema_version,
             "blueprint_id": blueprint_id,
             "proposal_id": preferred.proposal_id,
             "requirement_ids": requirement_ids,
@@ -278,13 +279,13 @@ def _blueprint_documents(
                 for requirement_id in requirement_ids
             ],
         },
-        "composition-blueprint.json",
+        SLOT_BY_NAME["composition_blueprint"].file_name,
     )
     deployment = validate_contract(
         DeploymentSchema,
         identity
         | {
-            "schema_version": "sdi.deployment-schema/v1",
+            "schema_version": SLOT_BY_NAME["deployment_schema"].schema_version,
             "deployment_schema_id": f"{blueprint_id}-deployment",
             "blueprint_id": blueprint_id,
             # Only a placement with both an artifact and a host is resolved.
@@ -299,7 +300,7 @@ def _blueprint_documents(
                 for item in kept
             ],
         },
-        "deployment-schema.json",
+        SLOT_BY_NAME["deployment_schema"].file_name,
     )
     return {"composition_blueprint": blueprint, "deployment_schema": deployment}
 
@@ -308,13 +309,11 @@ type Outcome = tuple[str, dict[str, BaseModel]]
 
 
 def _composition_settings(
-    content: bytes, work_limit_seconds: int
+    content: bytes, path: str, work_limit_seconds: int
 ) -> CompositionSettings:
     """Return the run's settings, with a generation timeout that fits the limit."""
     settings = validate_contract(
-        CompositionSettings,
-        parse_json(content, "composition-settings.json", max_bytes=len(content)),
-        "composition-settings.json",
+        CompositionSettings, parse_json(content, path, max_bytes=len(content)), path
     )
     reserve = TIMEOUT_RESERVE_SECONDS + (
         0 if settings.discovery.embeddings is None else EMBEDDINGS_TIMEOUT_SECONDS
@@ -336,14 +335,15 @@ def _compose(run: _Run, input_root: Path) -> Outcome:
         slot: _read_input(input_root / item.path, item.byte_size, item.sha256)
         for slot, item in declared.items()
     }
+    paths = {slot: item.path for slot, item in declared.items()}
     manifest = validate_contract(
         ServiceRepositoryManifest,
         parse_json(
             contents["service_repository"],
-            "service-repository.json",
+            paths["service_repository"],
             max_bytes=len(contents["service_repository"]),
         ),
-        "service-repository.json",
+        paths["service_repository"],
     )
     snapshot = capture_service_repository(input_root / SERVICE_REPOSITORY_ROOT)
     if snapshot.manifest != manifest:
@@ -351,22 +351,26 @@ def _compose(run: _Run, input_root: Path) -> Outcome:
         raise InputError(msg)
     run_request = validate_contract(
         RunRequest,
-        parse_yaml(contents["run_request"], "run-request.yaml"),
-        "run-request.yaml",
+        parse_yaml(contents["run_request"], paths["run_request"]),
+        paths["run_request"],
     )
     profile = validate_contract(
         TargetExecutionProfile,
-        parse_yaml(contents["target_profile"], "target-profile.yaml"),
-        "target-profile.yaml",
+        parse_yaml(contents["target_profile"], paths["target_profile"]),
+        paths["target_profile"],
     )
     front_matter, requirements_body = parse_front_matter(
-        contents["requirements_specification"], "requirements-specification.md"
+        contents["requirements_specification"], paths["requirements_specification"]
     )
     requirements = validate_contract(
-        MobilityRequirementsSpecification, front_matter, "requirements-specification.md"
+        MobilityRequirementsSpecification,
+        front_matter,
+        paths["requirements_specification"],
     )
     composition = _composition_settings(
-        contents["composition_settings"], request.work_limit_seconds
+        contents["composition_settings"],
+        paths["composition_settings"],
+        request.work_limit_seconds,
     )
     config = composition.generator_config
     embeddings = composition.discovery.embeddings
@@ -379,6 +383,7 @@ def _compose(run: _Run, input_root: Path) -> Outcome:
         "testcase_id": run_request.testcase_id,
         "combination_id": run_request.combination.combination_id,
         "profile_id": profile.profile_id,
+        "profile_basis": profile.provenance.basis,
         "source_inputs": [
             {"slot": item.slot, "sha256": item.sha256} for item in request.inputs
         ],

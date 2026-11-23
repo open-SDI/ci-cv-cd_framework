@@ -24,6 +24,7 @@ from ._discovery import discover
 from ._generation import generate_proposals
 from ._github_actions import render_github_summary
 from ._github_dispatch import GitHubDispatchError, dispatch_s04
+from ._integration_code import StaleAgentImageError, integration_code_digest
 from ._jenkins_handoff import HandoffError, handoff_jenkins
 from ._jenkins_pipeline import (
     RunDeadlineExpiredError,
@@ -42,7 +43,8 @@ from ._run_input import identify_committed_run
 from ._schemas import check_schemas, write_schemas
 from ._service_descriptions import read_service_repository
 from ._stage_contracts import AdapterDescriptor
-from ._stage_runtime import ExternalCancellation, execute_stage
+from ._stage_profiles import check_stage_profiles, write_stage_profiles
+from ._stage_runtime import ExternalCancellation, SuppliedInputs, execute_stage
 from ._yaml_input import InputError, parse_yaml
 
 if TYPE_CHECKING:
@@ -92,6 +94,19 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     schema_action.add_argument("--check", action="store_true")
     schema_action.add_argument("--write", action="store_true")
     schemas.add_argument("--directory", type=Path, default=Path("schemas"))
+    profiles = commands.add_parser(
+        "stage-profiles",
+        help="write or check the Stage profiles rendered from the slot registry",
+    )
+    profile_action = profiles.add_mutually_exclusive_group(required=True)
+    profile_action.add_argument("--check", action="store_true")
+    profile_action.add_argument("--write", action="store_true")
+    profiles.add_argument("--directory", type=Path, default=Path("stage-profiles"))
+    code_digest = commands.add_parser(
+        "integration-code-digest",
+        help="print the digest of the integration code an agent image bakes",
+    )
+    code_digest.add_argument("--root", type=Path, required=True)
     installation = commands.add_parser(
         "validate-installation",
         help="validate every tracked source against the installation authority",
@@ -143,7 +158,7 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     execute.add_argument("--run-request-path", required=True)
     execute.add_argument("--descriptor-path", required=True)
     execute.add_argument("--attempt-root", type=Path, required=True)
-    _add_supplied_input_arguments(execute)
+    _add_supplied_input_arguments(execute, require_service_repository=False)
     preflight = commands.add_parser(
         "preflight-jenkins-run",
         help="revalidate one Jenkins submission and its complete execution topology",
@@ -158,7 +173,9 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     preflight.add_argument("--image-build-node", required=True)
     preflight.add_argument("--cv-node", required=True)
     preflight.add_argument("--cd-node", required=True)
-    _add_supplied_input_arguments(preflight)
+    for resource in ("integration", "composition", "image-build", "cv", "cd"):
+        preflight.add_argument(f"--{resource}-baked-code-digest", required=True)
+    _add_composition_selection_arguments(preflight)
     handoff = commands.add_parser(
         "handoff-jenkins",
         help="submit one run and retrieve its exact validated Jenkins bundle",
@@ -180,7 +197,8 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     )
     jenkins_execute.add_argument("--work-limit-seconds", type=int, required=True)
     jenkins_execute.add_argument("--run-deadline-epoch-millis", required=True)
-    _add_supplied_input_arguments(jenkins_execute)
+    jenkins_execute.add_argument("--baked-code-digest", required=True)
+    _add_supplied_input_arguments(jenkins_execute, require_service_repository=False)
     attempt_status = commands.add_parser(
         "attempt-allows-continuation",
         help="derive whether an accepted attempt permits the next Stage",
@@ -199,7 +217,6 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     finalize.add_argument("--attempt-root", type=Path, action="append", default=[])
     finalize.add_argument("--run-deadline-expired", action="store_true")
     finalize.add_argument("--bundle-root", type=Path, required=True)
-    _add_supplied_input_arguments(finalize)
     conclusion = commands.add_parser(
         "bundle-conclusion",
         help="validate a bundle and derive its Jenkins machinery conclusion",
@@ -215,7 +232,7 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     dispatch.add_argument("--resolved-commit", required=True)
     dispatch.add_argument("--run-request-path", required=True)
     dispatch.add_argument("--bundle-root", type=Path, required=True)
-    _add_supplied_input_arguments(dispatch)
+    _add_supplied_input_arguments(dispatch, require_service_repository=True)
     validate = commands.add_parser(
         "validate-bundle",
         help="validate one complete Pipeline integration archive candidate",
@@ -259,20 +276,33 @@ def _add_submitted_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--execution-id", required=True)
 
 
-def _add_supplied_input_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_supplied_input_arguments(
+    parser: argparse.ArgumentParser, *, require_service_repository: bool
+) -> None:
     parser.add_argument(
         "--service-repository",
         type=Path,
-        required=True,
+        required=require_service_repository,
         help="directory of SDI.md service descriptions given to composition",
     )
+    _add_composition_selection_arguments(parser)
+
+
+def _add_composition_selection_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--composition-config",
-        default=DEFAULT_COMPOSITION_CONFIG,
         help="repository path of the composition config, read at the resolved "
         f"commit (default {DEFAULT_COMPOSITION_CONFIG})",
     )
     _add_generator_argument(parser)
+
+
+def _supplied_inputs(arguments: argparse.Namespace) -> SuppliedInputs:
+    return SuppliedInputs(
+        service_repository=arguments.service_repository,
+        composition_config=arguments.composition_config,
+        generator=arguments.generator,
+    )
 
 
 def _add_generator_argument(parser: argparse.ArgumentParser) -> None:
@@ -413,6 +443,24 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
         return 0
+    if arguments.command == "stage-profiles":
+        try:
+            if arguments.write:
+                write_stage_profiles(arguments.directory)
+            else:
+                check_stage_profiles(arguments.directory)
+        except (InputError, OSError) as error:
+            sys.stderr.write(f"sdi-integration: {error}\n")
+            return 2
+        return 0
+    if arguments.command == "integration-code-digest":
+        try:
+            digest = integration_code_digest(arguments.root)
+        except (InputError, OSError) as error:
+            sys.stderr.write(f"sdi-integration: {error}\n")
+            return 2
+        sys.stdout.write(f"{digest}\n")
+        return 0
     if arguments.command == "validate-installation":
         try:
             authority = load_installation_authority(arguments.installation)
@@ -483,9 +531,7 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     run_request_path=arguments.run_request_path,
                     descriptor_path=arguments.descriptor_path,
                     attempt_root=arguments.attempt_root,
-                    service_repository=arguments.service_repository,
-                    composition_config=arguments.composition_config,
-                    generator=arguments.generator,
+                    supplied=_supplied_inputs(arguments),
                 )
         except ExternalCancellation as cancellation:
             if not attempt_existed:
@@ -520,10 +566,21 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     "cv": arguments.cv_node,
                     "cd": arguments.cd_node,
                 },
-                service_repository=arguments.service_repository,
-                composition_config=arguments.composition_config,
-                generator=arguments.generator,
+                baked_code_digests={
+                    "integration": arguments.integration_baked_code_digest,
+                    "composition": arguments.composition_baked_code_digest,
+                    "image_build": arguments.image_build_baked_code_digest,
+                    "cv": arguments.cv_baked_code_digest,
+                    "cd": arguments.cd_baked_code_digest,
+                },
+                supplied=SuppliedInputs(
+                    composition_config=arguments.composition_config,
+                    generator=arguments.generator,
+                ),
             )
+        except StaleAgentImageError as error:
+            sys.stderr.write(f"sdi-integration: {error}\n")
+            return 4
         except (InputError, OSError, ValidationError) as error:
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
@@ -580,9 +637,8 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     prior_attempt_roots=arguments.prior_attempt_root,
                     work_limit_seconds=arguments.work_limit_seconds,
                     run_deadline_epoch_millis=arguments.run_deadline_epoch_millis,
-                    service_repository=arguments.service_repository,
-                    composition_config=arguments.composition_config,
-                    generator=arguments.generator,
+                    baked_code_digest=arguments.baked_code_digest,
+                    supplied=_supplied_inputs(arguments),
                 )
         except ExternalCancellation as cancellation:
             if not attempt_existed:
@@ -593,6 +649,9 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
             return 128 + cancellation.signal_number
         except RunDeadlineExpiredError:
             return 3
+        except StaleAgentImageError as error:
+            sys.stderr.write(f"sdi-integration: {error}\n")
+            return 4
         except (InputError, OSError, ValidationError) as error:
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
@@ -623,9 +682,6 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
                 attempt_roots=arguments.attempt_root,
                 run_deadline_expired=arguments.run_deadline_expired,
                 bundle_root=arguments.bundle_root,
-                service_repository=arguments.service_repository,
-                composition_config=arguments.composition_config,
-                generator=arguments.generator,
             )
         except (InputError, OSError, ValidationError) as error:
             sys.stderr.write(f"sdi-integration: {error}\n")
@@ -656,9 +712,7 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     resolved_commit=arguments.resolved_commit,
                     run_request_path=arguments.run_request_path,
                     bundle_root=arguments.bundle_root,
-                    service_repository=arguments.service_repository,
-                    composition_config=arguments.composition_config,
-                    generator=arguments.generator,
+                    supplied=_supplied_inputs(arguments),
                 )
         except ExternalCancellation as cancellation:
             if not bundle_existed:

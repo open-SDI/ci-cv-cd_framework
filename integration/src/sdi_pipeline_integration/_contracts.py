@@ -14,9 +14,6 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema  # noqa: TC002
 
-RUN_REQUEST_SCHEMA_VERSION = "sdi.pipeline-integration-run-request/v1"
-REQUIREMENTS_SCHEMA_VERSION = "sdi.mobility-requirements-specification/v1"
-TARGET_PROFILE_SCHEMA_VERSION = "sdi.target-execution-profile/v1"
 REPOSITORY_PATH_SCHEMA_PATTERN = (
     r"^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*//)(?!.*\\)"
     r"(?!.*[\x00-\x1f\x7f]).*[^/]$"
@@ -105,6 +102,25 @@ class MobilityRequirementsSpecification(ContractModel):
         return self
 
 
+class DeclaredProvenance(ContractModel):
+    """Facts asserted by an accountable upstream source."""
+
+    basis: Literal["declared"]
+    source: NonBlank
+
+
+class PlaceholderProvenance(ContractModel):
+    """Facts that only exercise an interface; the label is carried."""
+
+    basis: Literal["placeholder"]
+    note: NonBlank
+
+
+Provenance = Annotated[
+    DeclaredProvenance | PlaceholderProvenance, Field(discriminator="basis")
+]
+
+
 class MobilityTarget(ContractModel):
     """The mobility target described by a reusable profile."""
 
@@ -191,6 +207,7 @@ class TargetExecutionProfile(ContractModel):
 
     schema_version: Literal["sdi.target-execution-profile/v1"]
     profile_id: Slug
+    provenance: Provenance
     target: MobilityTarget
     hosts: Annotated[dict[Slug, Host], Field(min_length=1)]
     connections: list[Connection] | SkipJsonSchema[None] = None

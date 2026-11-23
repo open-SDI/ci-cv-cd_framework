@@ -11,10 +11,11 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 REPOSITORY_ROOT = Path(__file__).parents[2]
 INSTALLATION = REPOSITORY_ROOT / "deployment" / "installation.env"
 RECOVERY = REPOSITORY_ROOT / "deployment" / "jenkins" / "bin" / "recovery"
-RUNNER = REPOSITORY_ROOT / "deployment" / "github-runner" / "bin" / "runner"
 SMOKE_CHECK = REPOSITORY_ROOT / "deployment" / "jenkins" / "bin" / "smoke-check"
 TOKEN_REMOVER = (
     REPOSITORY_ROOT
@@ -94,7 +95,11 @@ def _write_fake_recovery_tools(fake_bin: Path) -> None:
 
     stack = fake_bin / "stack"
     stack.write_text(
-        '#!/bin/sh\nprintf \'stack %s\\n\' "$*" >> "$OPERATIONS_LOG"\n',
+        "#!/bin/sh\n"
+        'printf \'stack %s\\n\' "$*" >> "$OPERATIONS_LOG"\n'
+        "runners=$(grep '^GITHUB_RUNNERS=' \"$2\" || printf none)\n"
+        'printf \'stack-runners %s %s\\n\' "$5" "$runners" \\\n'
+        '    >> "$OPERATIONS_LOG.runners"\n',
         encoding="utf-8",
     )
     stack.chmod(0o755)
@@ -159,6 +164,7 @@ def _write_fresh_credential_config(tmp_path: Path, manifest: Path) -> Path:
             timestamp = created_at.timestamp() + 1
             os.utime(path, (timestamp, timestamp))
         lines.append(f"{key}={path}")
+    lines.append("GITHUB_RUNNERS=fork")
     config = tmp_path / "controller.env"
     config.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return config
@@ -313,6 +319,30 @@ def test_archived_api_token_removal_rejects_a_user_symlink(tmp_path: Path) -> No
     assert "jenkins.security.ApiTokenProperty" in config.read_text(encoding="utf-8")
 
 
+PINNED_SOURCES = (
+    ".github/workflows/pipeline-integration.yml",
+    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    "deployment/jenkins/adapters/composition-v1.yaml",
+    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
+    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+    "deployment/jenkins/agents/Dockerfile",
+    "deployment/jenkins/compose.yaml",
+    "deployment/jenkins/controller/Dockerfile",
+    "deployment/jenkins/controller/plugins.txt",
+    "deployment/jenkins/runner/Dockerfile",
+    "deployment/jenkins/runner/sdi-runner-entrypoint",
+    "deployment/jenkins/runner-proxy/Dockerfile",
+    "integration/.python-version",
+)
+
+
+def _copy_pinned_sources(repository: Path) -> None:
+    for relative in PINNED_SOURCES:
+        target = repository / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPOSITORY_ROOT / relative, target)
+
+
 def test_reviewed_installation_authority_matches_all_pinned_sources() -> None:
     completed = subprocess.run(
         [
@@ -338,23 +368,7 @@ def test_reviewed_installation_authority_matches_all_pinned_sources() -> None:
 
 def test_authority_rejects_shadowed_active_pin_assignments(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
-    required = (
-        ".github/workflows/pipeline-integration.yml",
-        "deployment/github-runner/bin/runner",
-        "deployment/jenkins/adapters/cd-fixture-v1.yaml",
-        "deployment/jenkins/adapters/composition-v1.yaml",
-        "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-        "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
-        "deployment/jenkins/agents/Dockerfile",
-        "deployment/jenkins/compose.yaml",
-        "deployment/jenkins/controller/Dockerfile",
-        "deployment/jenkins/controller/plugins.txt",
-        "integration/.python-version",
-    )
-    for relative in required:
-        target = repository / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(REPOSITORY_ROOT / relative, target)
+    _copy_pinned_sources(repository)
     agents = repository / "deployment/jenkins/agents/Dockerfile"
     agents.write_text(
         agents.read_text()
@@ -566,6 +580,9 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
     assert "volume inspect recovery-test_jenkins-home" in operations[1]
     assert "find /target -mindepth 1 -print -quit" in operations[2]
     _assert_restore_credential_rotation_order(operations)
+    runner_configs = Path(f"{restore_log}.runners").read_text().splitlines()
+    assert runner_configs.count("stack-runners start none") == 1
+    assert runner_configs.count("stack-runners start GITHUB_RUNNERS=fork") == 1
     config_values: dict[str, str] = {}
     for line in config.read_text().splitlines():
         key, _, value = line.partition("=")
@@ -595,28 +612,106 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
     assert not rejected_log.exists()
 
 
-def test_runner_interface_covers_validation_and_removal_lifecycle() -> None:
-    script = RUNNER.read_text(encoding="utf-8")
+@pytest.mark.parametrize(
+    ("relative", "original", "replacement", "message"),
+    [
+        (
+            "deployment/jenkins/runner/Dockerfile",
+            "ARG RUNNER_VERSION=2.337.0",
+            "ARG RUNNER_VERSION=2.338.0",
+            "runner version pin does not match",
+        ),
+        (
+            "deployment/jenkins/runner/Dockerfile",
+            "ARG RUNNER_SHA256=7",
+            "ARG RUNNER_SHA256=8",
+            "runner digest pin does not match",
+        ),
+        (
+            "deployment/jenkins/runner/Dockerfile",
+            "ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1@sha256:c",
+            "ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1@sha256:d",
+            "uv image pin does not match",
+        ),
+        (
+            "deployment/jenkins/compose.yaml",
+            "image: sdi-jenkins-runner:2.337.0",
+            "image: sdi-jenkins-runner:2.336.0",
+            "runner image tag does not match",
+        ),
+        (
+            "deployment/jenkins/runner/sdi-runner-entrypoint",
+            "--labels sdi-jenkins-handoff",
+            "--labels self-hosted",
+            "runner label pin does not match",
+        ),
+        (
+            "deployment/jenkins/runner-proxy/Dockerfile",
+            "ARG RUNTIME_IMAGE=docker.io/library/python@sha256:2",
+            "ARG RUNTIME_IMAGE=docker.io/library/python@sha256:3",
+            "runner proxy runtime pin does not match",
+        ),
+        (
+            "deployment/jenkins/runner-proxy/Dockerfile",
+            "FROM ${RUNTIME_IMAGE}",
+            "FROM docker.io/library/debian:trixie",
+            "runner proxy build does not consume the reviewed runtime pin",
+        ),
+        (
+            "deployment/jenkins/compose.yaml",
+            "image: sdi-jenkins-runner-proxy:6",
+            "image: sdi-jenkins-runner-proxy:7",
+            "runner proxy image tag does not match its Squid major version",
+        ),
+        (
+            "deployment/jenkins/runner-proxy/Dockerfile",
+            "ARG SQUID_MAJOR=6",
+            "ARG SQUID_MAJOR=7",
+            "runner proxy image tag does not match its Squid major version",
+        ),
+        (
+            "deployment/jenkins/runner-proxy/Dockerfile",
+            "ARG SQUID_MAJOR=6",
+            "ARG SQUID=6",
+            "runner proxy Dockerfile must declare ARG SQUID_MAJOR exactly once",
+        ),
+        (
+            "deployment/jenkins/runner-proxy/Dockerfile",
+            "ARG SQUID_MAJOR=6",
+            "ARG SQUID_MAJOR=6\nARG SQUID_MAJOR=6",
+            "runner proxy Dockerfile must declare ARG SQUID_MAJOR exactly once",
+        ),
+    ],
+)
+def test_authority_rejects_a_runner_image_that_drifts_from_the_pins(
+    tmp_path: Path,
+    relative: str,
+    original: str,
+    replacement: str,
+    message: str,
+) -> None:
+    _copy_pinned_sources(tmp_path)
+    drifted = tmp_path / relative
+    text = drifted.read_text(encoding="utf-8")
+    assert original in text
+    drifted.write_text(text.replace(original, replacement, 1), encoding="utf-8")
 
-    assert "deployment/installation.env" in script
-    assert all(
-        f"{command})" in script
-        for command in (
-            "preflight",
-            "install",
-            "configure",
-            "install-service",
-            "start",
-            "stop",
-            "status",
-            "unregister",
-            "remove-service",
-            "remove",
-        )
+    completed = subprocess.run(
+        [
+            "sdi-integration",
+            "validate-installation",
+            "--repository",
+            tmp_path,
+            "--installation",
+            INSTALLATION,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
-    assert "SDI_GITHUB_RUNNER_REMOVAL_TOKEN" in script
-    assert "systemctl --user disable" in script
-    assert "--disableupdate" in script
+
+    assert completed.returncode == 2
+    assert message in completed.stderr
 
 
 def test_quiesce_refuses_an_active_run_and_cancels_quiet_mode(tmp_path: Path) -> None:

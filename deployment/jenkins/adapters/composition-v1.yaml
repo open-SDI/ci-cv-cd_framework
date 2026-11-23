@@ -1,12 +1,11 @@
 schema_version: sdi.adapter-descriptor/v1
 stage: composition
 implementation_mode: implemented
-image: docker.io/library/python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+image: docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 entrypoint: sdi-composition-adapter
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/composition-v1.yaml
 stage_profile_version: sdi.composition-stage-profile/v1
-stage_profile_sha256: 39c0bf3bc3f7724b71795b30d8dfcb1a2294f7a44f080af7dd7621ca5c45259d
 agent_label: composition
 secret_bindings:
   - OPENAI_API_KEY

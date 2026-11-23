@@ -1,0 +1,17 @@
+**
+!deployment/
+!deployment/jenkins/
+!deployment/jenkins/runner/
+!deployment/jenkins/runner/Dockerfile
+!deployment/jenkins/runner/sdi-runner-entrypoint
+!deployment/jenkins/runner/sdi-runner-probe
+!integration/
+!integration/README.md
+!integration/pyproject.toml
+!integration/uv.lock
+!integration/src/
+!integration/src/**
+!integration/fixtures/
+!integration/fixtures/**
+integration/**/__pycache__
+integration/**/*.pyc

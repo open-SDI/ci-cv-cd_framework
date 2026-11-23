@@ -14,7 +14,7 @@ fail() {
 
 usage() {
     printf '%s\n' \
-        'usage: stack [--config PATH] [--project-name NAME] setup|preflight|validate|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT'
+        'usage: stack [--config PATH] [--project-name NAME] setup|preflight|validate|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT|register-runner upstream|fork [--name NAME] [--replace]'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -53,12 +53,41 @@ action=$1
 shift
 
 reconcile_agent=
+runner=
+runner_name=
+runner_replace=
 if [ "$action" = reconcile-agent ]; then
     [ "$#" -eq 1 ] || fail 'reconcile-agent requires one Domain agent name'
     reconcile_agent=$1
     case "$reconcile_agent" in
         ci|image-build|cv|cd) ;;
         *) fail 'reconcile-agent accepts ci, image-build, cv, or cd' ;;
+    esac
+elif [ "$action" = register-runner ]; then
+    [ "$#" -ge 1 ] || fail 'register-runner requires upstream or fork'
+    runner=$1
+    shift
+    case "$runner" in
+        upstream) runner_name=jenkins-handoff-stack ;;
+        fork) runner_name=jenkins-handoff-stack-fork ;;
+        *) fail 'register-runner accepts upstream or fork' ;;
+    esac
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --name)
+                [ "$#" -ge 2 ] || fail '--name requires a value'
+                runner_name=$2
+                shift 2
+                ;;
+            --replace)
+                runner_replace=--replace
+                shift
+                ;;
+            *) fail "register-runner does not accept $1" ;;
+        esac
+    done
+    case "$runner_name" in
+        ''|*[!A-Za-z0-9_.-]*) fail 'the runner name contains an invalid character' ;;
     esac
 elif [ "$#" -ne 0 ]; then
     fail "$action accepts no arguments"
@@ -89,8 +118,32 @@ compose() {
         "$@"
 }
 
+# Running containers of the named runner services, or of both, whatever the
+# configured runner profiles.
+running_runner_containers() {
+    [ "$#" -gt 0 ] || set -- runner-upstream runner-fork
+    for service in "$@"; do
+        docker ps --quiet \
+            --filter "label=com.docker.compose.project=$project_name" \
+            --filter "label=com.docker.compose.service=$service" \
+            --filter label=com.docker.compose.oneoff=False \
+            --filter status=running || return 1
+    done
+}
+
+runner_job_active() {
+    containers=$(running_runner_containers) || \
+        fail 'cannot inspect the GitHub runner containers'
+    for container in $containers; do
+        ! docker exec "$container" sdi-runner-probe worker || return 0
+    done
+    return 1
+}
+
 case "$action" in
     stop|status|logs|destroy)
+        COMPOSE_PROFILES='*'
+        export COMPOSE_PROFILES
         config=/dev/null
         JENKINS_HTTP_PORT=1
         JENKINS_ADMIN_ID=unused
@@ -174,6 +227,7 @@ JENKINS_CI_AGENT_SECRET_FILE=
 JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=
 JENKINS_CV_AGENT_SECRET_FILE=
 JENKINS_CD_AGENT_SECRET_FILE=
+GITHUB_RUNNERS=
 
 while IFS='=' read -r key value; do
     case "$key" in
@@ -197,6 +251,7 @@ while IFS='=' read -r key value; do
         JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE) JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$value ;;
         JENKINS_CV_AGENT_SECRET_FILE) JENKINS_CV_AGENT_SECRET_FILE=$value ;;
         JENKINS_CD_AGENT_SECRET_FILE) JENKINS_CD_AGENT_SECRET_FILE=$value ;;
+        GITHUB_RUNNERS) GITHUB_RUNNERS=$value ;;
         *) fail "unknown configuration key: $key" ;;
     esac
 done < "$config"
@@ -304,6 +359,27 @@ valid = (
 raise SystemExit(0 if valid else 1)
 PY
 JENKINS_AGENT_NETWORK_INTERNAL=false
+
+case "$GITHUB_RUNNERS" in
+    ''|upstream|fork|upstream,fork|fork,upstream) ;;
+    *) fail 'GITHUB_RUNNERS must be empty or list upstream, fork, or both, separated by a comma' ;;
+esac
+# Each runner's egress proxy shares its profile but stays out of
+# runner_services, whose names map to runner registrations.
+runner_services=
+proxy_services=
+for configured_runner in upstream fork; do
+    case ",$GITHUB_RUNNERS," in
+        *",$configured_runner,"*)
+            runner_services="$runner_services runner-$configured_runner"
+            proxy_services="$proxy_services runner-$configured_runner-proxy"
+            ;;
+    esac
+done
+runner_services=${runner_services# }
+proxy_services=${proxy_services# }
+COMPOSE_PROFILES=$(printf '%s' "$runner_services" | tr ' ' ',')
+export COMPOSE_PROFILES
 
 load_installation() {
     [ -f "$installation" ] || fail 'reviewed installation authority is missing'
@@ -568,6 +644,7 @@ case "$action" in
     quiesce|resume)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         ;;
+    register-runner) ;;
     *)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
@@ -666,6 +743,11 @@ $plugin
         >/dev/null 2>&1 || fail 'the controller Dockerfile is not buildable'
     docker build --check --file "$root/agents/Dockerfile" "$repository_root" \
         >/dev/null 2>&1 || fail 'the agent Dockerfile is not buildable'
+    docker build --check --file "$root/runner/Dockerfile" "$repository_root" \
+        >/dev/null 2>&1 || fail 'the runner Dockerfile is not buildable'
+    docker build --check --file "$root/runner-proxy/Dockerfile" \
+        "$root/runner-proxy" >/dev/null 2>&1 || \
+        fail 'the runner proxy Dockerfile is not buildable'
     compose config --quiet >/dev/null 2>&1 || \
         fail 'the Compose configuration is invalid'
 }
@@ -704,6 +786,36 @@ admin_check() {
         --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE"
 }
 
+runner_repository_url() {
+    case "$1" in
+        upstream) printf '%s\n' "${JENKINS_REPOSITORY_URL%.git}" ;;
+        fork) printf '%s\n' "${JENKINS_FORK_REPOSITORY_URL%.git}" ;;
+    esac
+}
+
+# Exit status 0: registered; 3: not registered; anything else: unreadable.
+runner_registration() {
+    compose run --rm --no-deps -T "runner-$1" show </dev/null
+}
+
+require_runner_registration() {
+    status=0
+    runner_registration "$1" >/dev/null 2>&1 || status=$?
+    case "$status" in
+        0) ;;
+        3)
+            repository=$(runner_repository_url "$1")
+            fail "the $1 runner is not registered; run: gh api -X POST repos/${repository#https://github.com/}/actions/runners/registration-token --jq .token | deployment/jenkins/bin/stack register-runner $1"
+            ;;
+        *) fail "cannot read the $1 runner registration" ;;
+    esac
+}
+
+refuse_active_runner_job() {
+    ! runner_job_active || \
+        fail 'a GitHub runner is executing a handoff job; retry after it finishes'
+}
+
 case "$action" in
     preflight)
         host_preflight
@@ -720,11 +832,41 @@ case "$action" in
     start)
         validate
         build_controller
-        compose build integration ci image-build cv cd
+        compose build integration ci image-build cv cd $runner_services \
+            $proxy_services
         for agent in integration ci image-build cv cd; do
             validate_agent_image "$agent"
         done
+        for service in $runner_services; do
+            require_runner_registration "${service#runner-}"
+        done
+        refuse_active_runner_job
         compose up --no-build --detach --wait --wait-timeout 240
+        ;;
+    register-runner)
+        case ",$GITHUB_RUNNERS," in
+            *",$runner,"*) ;;
+            *) fail "add $runner to GITHUB_RUNNERS before registering its runner" ;;
+        esac
+        [ ! -t 0 ] || fail 'pipe the registration token on standard input'
+        running=$(running_runner_containers "runner-$runner") || \
+            fail 'cannot inspect the GitHub runner containers'
+        [ -z "$running" ] || fail "stop the $runner runner before registering it"
+        compose build "runner-$runner" "runner-$runner-proxy"
+        status=0
+        runner_registration "$runner" >/dev/null 2>&1 || status=$?
+        case "$status:$runner_replace" in
+            3:*|0:--replace) ;;
+            0:) fail "the $runner runner is already registered; pass --replace to register it again" ;;
+            *) fail "cannot read the $runner runner registration" ;;
+        esac
+        # The proxy stays up if registration fails; stop or destroy removes it.
+        compose up --no-build --no-deps --detach --wait --wait-timeout 240 \
+            "runner-$runner-proxy"
+        compose run --rm --no-deps -T "runner-$runner" check </dev/null || \
+            fail "the $runner runner failed its network check; start the stack first"
+        compose run --rm --no-deps -T "runner-$runner" register \
+            "$(runner_repository_url "$runner")" "$runner_name" $runner_replace
         ;;
     reconcile-agent)
         validate
@@ -749,10 +891,26 @@ case "$action" in
             "$reconcile_agent"
         ;;
     quiesce)
-        admin_check quiesce
+        refuse_active_runner_job
+        stopped_runners=$(running_runner_containers) || \
+            fail 'cannot inspect the GitHub runner containers'
+        if [ -n "$stopped_runners" ]; then
+            docker stop --time 60 $stopped_runners >/dev/null || \
+                fail 'the GitHub runners did not stop cleanly'
+        fi
+        status=0
+        admin_check quiesce || status=$?
+        if [ "$status" -ne 0 ] && [ -n "$stopped_runners" ]; then
+            docker start $stopped_runners >/dev/null || \
+                printf '%s\n' 'stack: the GitHub runners could not be restarted' >&2
+        fi
+        exit "$status"
         ;;
     resume)
         admin_check resume
+        [ -z "$runner_services" ] || \
+            compose up --no-build --no-deps --detach --wait --wait-timeout 240 \
+                $proxy_services $runner_services
         ;;
     verify-live)
         validate
@@ -767,13 +925,28 @@ case "$action" in
             --plugin-lock "$root/controller/plugins.txt" \
             --casc "$root/casc/jenkins.yaml" \
             --jenkinsfile "$repository_root/Jenkinsfile"
+        for service in $runner_services; do
+            container=$(running_runner_containers "$service") || \
+                fail "cannot inspect the $service container"
+            [ -n "$container" ] || fail "the $service container is not running"
+            docker exec "$container" sdi-runner-probe listener || \
+                fail "the $service container is not listening for GitHub jobs"
+            docker exec "$container" sdi-runner-entrypoint check || \
+                fail "the $service container failed its network check"
+            docker exec "$container" sdi-runner-entrypoint egress || \
+                fail "the $service container cannot reach GitHub through its proxy"
+        done
         ;;
     exercise-live)
         validate
+        integration_code_digest=$(uv run --project "$repository_root/integration" \
+            --frozen --quiet sdi-integration integration-code-digest \
+            --root "$repository_root/integration")
         "$root/bin/smoke-check" exercise-agents \
             --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
             --admin-id "$JENKINS_ADMIN_ID" \
-            --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE"
+            --admin-password-file "$JENKINS_ADMIN_PASSWORD_FILE" \
+            --integration-code-digest "$integration_code_digest"
         ;;
     *)
         usage >&2

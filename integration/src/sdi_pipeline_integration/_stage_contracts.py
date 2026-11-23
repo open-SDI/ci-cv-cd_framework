@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Self, cast
 
@@ -39,6 +40,7 @@ CV_PROFILE_VERSION = "sdi.cv-stage-profile/v1"
 CD_PROFILE_VERSION = "sdi.cd-stage-profile/v1"
 
 type StageName = Literal["composition", "image_build", "cv", "cd"]
+type SlotOrigin = Literal["committed", "supplied"] | StageName
 type ImplementationMode = Literal["fixture", "implemented", "not_implemented"]
 type ExecutionConclusion = Literal["succeeded", "failed", "timed_out", "skipped"]
 type AdapterExecutionConclusion = Literal["succeeded", "failed"]
@@ -89,138 +91,217 @@ ImageReference = Annotated[
 
 RESERVED_RESPONSE_PATH = "response.json"
 RESERVED_ACCEPTED_ENVELOPE_PATH = "accepted-attempt.json"
-PROFILE_VERSIONS: dict[StageName, str] = {
-    "composition": COMPOSITION_PROFILE_VERSION,
-    "image_build": IMAGE_BUILD_PROFILE_VERSION,
-    "cv": CV_PROFILE_VERSION,
-    "cd": CD_PROFILE_VERSION,
-}
-BASE_INPUT_GRANTS = {
-    "run_request": (
+DIAGNOSTIC_PATH = "diagnostic.txt"
+
+
+@dataclass(frozen=True)
+class Slot:
+    """One Domain artifact a Stage may be granted, in canonical order.
+
+    A committed slot comes from the run's committed inputs, a supplied slot from
+    the operator's flags, and any other slot is the Domain output of its Stage.
+    """
+
+    name: str
+    file_name: str
+    media_type: str
+    schema_version: str
+    origin: SlotOrigin
+
+
+SLOTS = (
+    Slot(
+        "run_request",
         "run-request.yaml",
         "application/yaml",
         "sdi.pipeline-integration-run-request/v1",
+        "committed",
     ),
-    "requirements_specification": (
+    Slot(
+        "requirements_specification",
         "requirements-specification.md",
         "text/markdown",
         "sdi.mobility-requirements-specification/v1",
+        "committed",
     ),
-    "target_profile": (
+    Slot(
+        "target_profile",
         "target-profile.yaml",
         "application/yaml",
         "sdi.target-execution-profile/v1",
+        "committed",
     ),
-    "composition_blueprint": (
-        "composition-blueprint.json",
-        "application/json",
-        "sdi.composition-blueprint/v1",
-    ),
-    "deployment_schema": (
-        "deployment-schema.json",
-        "application/json",
-        "sdi.deployment-schema/v1",
-    ),
-    "image_build_result": (
-        "image-build-result.json",
-        "application/json",
-        "sdi.image-build-result/v1",
-    ),
-    "validation_evidence": (
-        "validation-evidence.json",
-        "application/json",
-        "sdi.validation-evidence/v1",
-    ),
-    "service_repository": (
+    Slot(
+        "service_repository",
         "service-repository.json",
         "application/json",
         "sdi.service-repository-manifest/v1",
+        "supplied",
     ),
-    "composition_settings": (
+    Slot(
+        "composition_settings",
         "composition-settings.json",
         "application/json",
         "sdi.composition-settings/v1",
+        "supplied",
     ),
-}
+    Slot(
+        "composition_blueprint",
+        "composition-blueprint.json",
+        "application/json",
+        "sdi.composition-blueprint/v1",
+        "composition",
+    ),
+    Slot(
+        "deployment_schema",
+        "deployment-schema.json",
+        "application/json",
+        "sdi.deployment-schema/v1",
+        "composition",
+    ),
+    Slot(
+        "image_build_result",
+        "image-build-result.json",
+        "application/json",
+        "sdi.image-build-result/v1",
+        "image_build",
+    ),
+    Slot(
+        "validation_evidence",
+        "validation-evidence.json",
+        "application/json",
+        "sdi.validation-evidence/v1",
+        "cv",
+    ),
+    Slot(
+        "deployment_result",
+        "deployment-result.json",
+        "application/json",
+        "sdi.deployment-result/v1",
+        "cd",
+    ),
+)
+SLOT_BY_NAME = {slot.name: slot for slot in SLOTS}
+SLOT_BY_SCHEMA = {slot.schema_version: slot for slot in SLOTS}
+COMMITTED_SLOTS = tuple(slot for slot in SLOTS if slot.origin == "committed")
 # Run-supplied inputs come from the operator's flags, not from committed run
 # inputs or an earlier Stage, so no result provenance names their source.
-SUPPLIED_INPUT_SLOTS = frozenset({"service_repository", "composition_settings"})
+SUPPLIED_INPUT_SLOTS = frozenset(
+    slot.name for slot in SLOTS if slot.origin == "supplied"
+)
+
+
+@dataclass(frozen=True)
+class EvidenceGrant:
+    """Optional evidence of how a Stage reached its outcome.
+
+    Evidence is never a Domain input to a later Stage, so it is not a slot.
+    """
+
+    name: str
+    file_name: str
+    media_type: str
+    schema_version: str
+    max_bytes: int
+
+
+@dataclass(frozen=True)
+class StageGrant:
+    """Everything one Stage is granted; its profile is rendered from this.
+
+    A Stage's Domain outputs are the slots it originates, each bounded by
+    `domain_output_max_bytes`.
+    """
+
+    profile_version: str
+    inputs: tuple[str, ...]
+    work_limit_seconds: int
+    domain_output_max_bytes: int
+    diagnostic_max_bytes: int
+    evidence: tuple[EvidenceGrant, ...] = ()
+
+
+STAGE_GRANTS: dict[StageName, StageGrant] = {
+    "composition": StageGrant(
+        COMPOSITION_PROFILE_VERSION,
+        (
+            "run_request",
+            "requirements_specification",
+            "target_profile",
+            "service_repository",
+            "composition_settings",
+        ),
+        work_limit_seconds=10 * 60,
+        domain_output_max_bytes=32768,
+        diagnostic_max_bytes=16384,
+        evidence=(
+            EvidenceGrant(
+                "composition_evidence",
+                "composition-evidence.json",
+                "application/json",
+                "sdi.composition-evidence/v1",
+                max_bytes=262144,
+            ),
+        ),
+    ),
+    "image_build": StageGrant(
+        IMAGE_BUILD_PROFILE_VERSION,
+        ("target_profile", "composition_blueprint", "deployment_schema"),
+        work_limit_seconds=30 * 60,
+        domain_output_max_bytes=32768,
+        diagnostic_max_bytes=4096,
+    ),
+    "cv": StageGrant(
+        CV_PROFILE_VERSION,
+        (
+            "requirements_specification",
+            "target_profile",
+            "composition_blueprint",
+            "deployment_schema",
+            "image_build_result",
+        ),
+        work_limit_seconds=45 * 60,
+        domain_output_max_bytes=32768,
+        diagnostic_max_bytes=4096,
+    ),
+    "cd": StageGrant(
+        CD_PROFILE_VERSION,
+        (
+            "target_profile",
+            "composition_blueprint",
+            "deployment_schema",
+            "image_build_result",
+            "validation_evidence",
+        ),
+        work_limit_seconds=15 * 60,
+        domain_output_max_bytes=32768,
+        diagnostic_max_bytes=4096,
+    ),
+}
+PROFILE_VERSIONS: dict[StageName, str] = {
+    stage: grant.profile_version for stage, grant in STAGE_GRANTS.items()
+}
 EXPECTED_STAGE_INPUT_SLOTS: dict[StageName, tuple[str, ...]] = {
-    "composition": (
-        "run_request",
-        "requirements_specification",
-        "target_profile",
-        "service_repository",
-        "composition_settings",
-    ),
-    "image_build": (
-        "target_profile",
-        "composition_blueprint",
-        "deployment_schema",
-    ),
-    "cv": (
-        "requirements_specification",
-        "target_profile",
-        "composition_blueprint",
-        "deployment_schema",
-        "image_build_result",
-    ),
-    "cd": (
-        "target_profile",
-        "composition_blueprint",
-        "deployment_schema",
-        "image_build_result",
-        "validation_evidence",
-    ),
+    stage: grant.inputs for stage, grant in STAGE_GRANTS.items()
 }
 EXPECTED_STAGE_OUTPUTS: dict[StageName, dict[str, tuple[str, str, str]]] = {
-    "composition": {
-        "composition_blueprint": (
-            "outputs/composition-blueprint.json",
-            "application/json",
-            "sdi.composition-blueprint/v1",
-        ),
-        "deployment_schema": (
-            "outputs/deployment-schema.json",
-            "application/json",
-            "sdi.deployment-schema/v1",
-        ),
-    },
-    "image_build": {
-        "image_build_result": (
-            "outputs/image-build-result.json",
-            "application/json",
-            "sdi.image-build-result/v1",
-        ),
-    },
-    "cv": {
-        "validation_evidence": (
-            "outputs/validation-evidence.json",
-            "application/json",
-            "sdi.validation-evidence/v1",
-        ),
-    },
-    "cd": {
-        "deployment_result": (
-            "outputs/deployment-result.json",
-            "application/json",
-            "sdi.deployment-result/v1",
-        ),
-    },
+    stage: {
+        slot.name: (f"outputs/{slot.file_name}", slot.media_type, slot.schema_version)
+        for slot in SLOTS
+        if slot.origin == stage
+    }
+    for stage in STAGE_GRANTS
 }
-# Optional evidence records how an implemented Stage reached its outcome. It is
-# never a Domain input to a later Stage.
 EXPECTED_STAGE_EVIDENCE: dict[StageName, dict[str, tuple[str, str, str]]] = {
-    "composition": {
-        "composition_evidence": (
-            "outputs/composition-evidence.json",
-            "application/json",
-            "sdi.composition-evidence/v1",
-        ),
-    },
-    "image_build": {},
-    "cv": {},
-    "cd": {},
+    stage: {
+        evidence.name: (
+            f"outputs/{evidence.file_name}",
+            evidence.media_type,
+            evidence.schema_version,
+        )
+        for evidence in grant.evidence
+    }
+    for stage, grant in STAGE_GRANTS.items()
 }
 MAX_ARTIFACT_PATH_BYTES = 512
 MAX_ARTIFACT_COMPONENT_BYTES = 255
@@ -388,7 +469,6 @@ class AdapterDescriptor(ContractModel):
     process_contract_version: Literal["sdi.stage-adapter-process/v1"]
     stage_profile: RepositoryPath
     stage_profile_version: NonBlank
-    stage_profile_sha256: Sha256
     agent_label: Slug
     secret_bindings: list[EnvironmentName]
 
@@ -483,30 +563,61 @@ class StageProfile(ContractModel):
         if self.profile_version != PROFILE_VERSIONS[self.stage]:
             msg = f"{self.stage} profile has an unsupported profile version"
             raise ValueError(msg)
-        expected_inputs = {
-            slot: BASE_INPUT_GRANTS[slot]
-            for slot in EXPECTED_STAGE_INPUT_SLOTS[self.stage]
-        }
-        actual_inputs = {
-            item.slot: (item.path, item.media_type, item.schema_version)
-            for item in self.inputs
-        }
-        if actual_inputs != expected_inputs:
-            msg = f"{self.stage} input grants do not match the reviewed profile"
-            raise ValueError(msg)
-        for role, expected_outputs in (
-            ("domain_output", EXPECTED_STAGE_OUTPUTS[self.stage]),
-            ("stage_evidence", EXPECTED_STAGE_EVIDENCE[self.stage]),
-        ):
-            actual_outputs = {
-                item.slot: (item.path, item.media_type, item.schema_version)
-                for item in self.outputs
-                if item.role == role
-            }
-            if actual_outputs != expected_outputs:
-                msg = f"{self.stage} output grants do not match the reviewed profile"
-                raise ValueError(msg)
         return self
+
+
+def render_stage_profile(stage: StageName) -> StageProfile:
+    """Render one Stage's profile from the registry as it stands now."""
+    grant = STAGE_GRANTS[stage]
+    # Read SLOTS now rather than the import-time SLOT_BY_NAME view.
+    slots = {slot.name: slot for slot in SLOTS}
+    return StageProfile.model_validate(
+        {
+            "schema_version": STAGE_PROFILE_SCHEMA_VERSION,
+            "profile_version": grant.profile_version,
+            "stage": stage,
+            "work_limit_seconds": grant.work_limit_seconds,
+            "inputs": [
+                {
+                    "slot": name,
+                    "path": slots[name].file_name,
+                    "media_type": slots[name].media_type,
+                    "schema_version": slots[name].schema_version,
+                }
+                for name in grant.inputs
+            ],
+            "outputs": [
+                *(
+                    {
+                        "slot": slot.name,
+                        "path": f"outputs/{slot.file_name}",
+                        "media_type": slot.media_type,
+                        "schema_version": slot.schema_version,
+                        "role": "domain_output",
+                        "max_bytes": grant.domain_output_max_bytes,
+                    }
+                    for slot in SLOTS
+                    if slot.origin == stage
+                ),
+                *(
+                    {
+                        "slot": evidence.name,
+                        "path": f"outputs/{evidence.file_name}",
+                        "media_type": evidence.media_type,
+                        "schema_version": evidence.schema_version,
+                        "role": "stage_evidence",
+                        "max_bytes": evidence.max_bytes,
+                    }
+                    for evidence in grant.evidence
+                ),
+            ],
+            "diagnostic": {
+                "path": DIAGNOSTIC_PATH,
+                "media_type": "text/plain; charset=utf-8",
+                "max_bytes": grant.diagnostic_max_bytes,
+            },
+        }
+    )
 
 
 class DeclaredInput(InputGrant):

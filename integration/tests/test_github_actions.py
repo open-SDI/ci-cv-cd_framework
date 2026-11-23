@@ -20,7 +20,8 @@ from tests._fixture_inputs import (
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = SOURCE_ROOT / ".github/workflows/pipeline-integration.yml"
-RUNNER_SCRIPT = SOURCE_ROOT / "deployment/github-runner/bin/runner"
+BAKED_VENV = "/opt/sdi/integration/.venv"
+BAKED_CLI = f"{BAKED_VENV}/bin/sdi-integration"
 RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
 COMMITTED_FILES = (
     RUN_REQUEST_PATH,
@@ -542,7 +543,7 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
     )
     assert [step["name"] for step in steps] == [
         "Check out immutable protected revision",
-        "Set up locked Python environment",
+        "Confirm runner integration code matches the revision",
         "Validate input and assign Execution ID",
         "Handoff to Jenkins",
         "Publish accepted evidence",
@@ -555,19 +556,16 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
         "ref": "${{ github.sha }}",
         "fetch-depth": 1,
         "persist-credentials": False,
+        "filter": "blob:none",
+        "sparse-checkout-cone-mode": False,
+        "sparse-checkout": "/*\n!/CV/\n",
     }
-    assert steps[1]["uses"] == (
-        "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
-    )
-    assert steps[1]["with"] == {"version": "0.12.1", "enable-cache": False}
-
     identify_run = steps[2]["run"]
     handoff_run = steps[3]["run"]
     assert "identify-run" in identify_run
     assert "handoff-jenkins" not in identify_run
     assert handoff_run.count("handoff-jenkins") == 1
-    assert "exec integration/.venv/bin/sdi-integration handoff-jenkins" in handoff_run
-    assert "uv run" not in handoff_run
+    assert f"exec {BAKED_CLI} handoff-jenkins" in handoff_run
     assert '> "$HANDOFF_RESULT"' in handoff_run
     assert all(
         operation not in handoff_run.casefold()
@@ -578,10 +576,7 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
         steps[3]["env"]["SDI_JENKINS_API_TOKEN"]
         == "${{ secrets.SDI_JENKINS_API_TOKEN }}"  # noqa: S105
     )
-    for step in (steps[1], steps[2], steps[3], steps[5]):
-        assert step["env"]["UV_CACHE_DIR"] == "${{ runner.temp }}/uv-cache"
-        assert step["env"]["UV_PYTHON_INSTALL_DIR"] == ("${{ runner.temp }}/uv-python")
-        assert step["env"]["ZIG_GLOBAL_CACHE_DIR"] == ("${{ runner.temp }}/zig-cache")
+    assert steps[3]["env"]["SDI_JENKINS_BASE_URL"] == "http://controller:8080"
 
     publication = steps[4]
     assert publication["id"] == "publication"
@@ -608,6 +603,25 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
     assert "cancelled()" not in summary["env"].values()
     assert '[ "$JOB_STATUS" = cancelled ]' in summary["run"]
     assert "$GITHUB_STEP_SUMMARY" in summary["run"]
+
+
+def test_workflow_runs_the_runner_images_checked_integration_environment() -> None:
+    workflow = YAML(typ="safe").load(  # pyright: ignore[reportUnknownMemberType]
+        WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["handoff"]["steps"]
+
+    digest_run = steps[1]["run"]
+    assert "integration-code-digest --root integration" in digest_run
+    assert "/etc/sdi/integration-code-digest" in digest_run
+    assert "exit 1" in digest_run
+    run_steps = [step for step in steps if "run" in step]
+    assert all(step.get("shell") == "bash" for step in run_steps)
+    for step in run_steps:
+        assert "uv " not in step["run"]
+        assert "integration/.venv" not in step["run"].replace(BAKED_VENV, "")
+        assert not any(name.startswith(("UV_", "ZIG_")) for name in step.get("env", {}))
+    assert all(BAKED_CLI in step["run"] for step in run_steps)
 
 
 def test_invalid_workflow_input_fails_before_any_jenkins_contact(
@@ -817,45 +831,4 @@ raise SystemExit(2)
         entry["request"].get("ref") == "main"
         for entry in entries
         if entry["operation"] == "dispatch"
-    )
-
-
-def test_host_runner_interface_is_pinned_user_managed_and_handoff_only() -> None:
-    script = RUNNER_SCRIPT.read_text(encoding="utf-8")
-
-    assert 'RUNNER_VERSION="2.337.0"' in script
-    assert (
-        'RUNNER_SHA256="70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"'
-        in script
-    )
-    assert "actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" in script
-    assert "sha256sum --check" in script
-    assert "--disableupdate" in script
-    assert "--no-default-labels" in script
-    assert "--runnergroup" not in script
-    assert "--labels sdi-jenkins-handoff" in script
-    assert "systemctl --user" in script
-    assert "NoNewPrivileges=true" in script
-    assert "ProtectSystem=strict" in script
-    assert "ReadWritePaths=$RUNNER_HOME/_diag $RUNNER_HOME/_work" in script
-    assert 'ReadWritePaths=$RUNNER_HOME"' not in script
-    assert "RestrictSUIDSGID=true" not in script
-    assert script.count("$RUNNER_HOME/bin/runsvc.sh") == 2
-    assert "SDI_JENKINS_API_TOKEN" in script
-    assert "JENKINS_HOME" in script
-    assert "/var/run/docker.sock" in script
-    assert "sudo systemctl" not in script
-    assert "show_registration\n        systemctl --user status" in script
-    assert '"$RUNNER_HOME/.runner"' in script
-    assert "sudo ./" not in script
-    assert all(
-        command in script
-        for command in (
-            "install)",
-            "configure)",
-            "install-service)",
-            "start)",
-            "stop)",
-            "status)",
-        )
     )

@@ -13,11 +13,20 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, cast, final, override
+from typing import TYPE_CHECKING, Any, cast, final, override
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import requests
+from urllib3.connectionpool import HTTPConnectionPool
 
+from sdi_pipeline_integration._jenkins_handoff import (
+    HandoffError,
+    _JenkinsClient,  # pyright: ignore[reportPrivateUsage]
+    _preflight,  # pyright: ignore[reportPrivateUsage]
+    load_handoff_settings,
+)
+from sdi_pipeline_integration._yaml_input import InputError
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
     SUPPLIED_INPUT_ARGUMENTS,
@@ -29,6 +38,13 @@ if TYPE_CHECKING:
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
+HANDOFF_TIMEOUT_SECONDS = 60
+JENKINS_ENVIRONMENT = {
+    "SDI_JENKINS_JOB_PATH": "pipeline-integration",
+    "SDI_JENKINS_REPOSITORY": "github.com/example/sdi-fixture",
+    "SDI_JENKINS_USERNAME": "github-handoff",
+    "SDI_JENKINS_API_TOKEN": "test-api-token",
+}
 COMMITTED_FILES = (
     RUN_REQUEST_PATH,
     "requirements/s-04/deliver-book-to-joe.md",
@@ -100,6 +116,7 @@ def _valid_bundle(
         check=False,
         capture_output=True,
         text=True,
+        timeout=HANDOFF_TIMEOUT_SECONDS,
     )
     assert completed.returncode == 0, completed.stderr
     result = cast("dict[str, object]", json.loads(completed.stdout))
@@ -121,11 +138,13 @@ class FakeJenkins:
         *,
         mode: str = "success",
         jenkins_result: str = "SUCCESS",
+        description: str | None = None,
     ) -> None:
         """Initialize exact artifacts and expected run identity."""
         self.artifacts: dict[str, bytes] = artifacts
         self.mode: str = mode
         self.jenkins_result: str = jenkins_result
+        self.description: str | None = description
         self.base_url: str = ""
         self.requests: list[tuple[str, str, str | None]] = []
         self.submitted_parameters: dict[str, list[str]] = {}
@@ -242,6 +261,7 @@ class FakeJenkins:
                             "queueId": 42,
                             "building": building,
                             "result": result,
+                            "description": None if building else fake.description,
                             "url": (f"{fake.base_url}/job/pipeline-integration/7/"),
                             "actions": [
                                 {
@@ -361,14 +381,14 @@ def _handoff(  # noqa: PLR0913, PLR0917
     fake: FakeJenkins,
     environment_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    environment = os.environ | {
-        "SDI_JENKINS_BASE_URL": fake.base_url,
-        "SDI_JENKINS_JOB_PATH": "pipeline-integration",
-        "SDI_JENKINS_REPOSITORY": "github.com/example/sdi-fixture",
-        "SDI_JENKINS_USERNAME": "github-handoff",
-        "SDI_JENKINS_API_TOKEN": "test-api-token",
-        "SDI_HANDOFF_POLL_INTERVAL_SECONDS": "0.01",
-    }
+    environment = (
+        os.environ
+        | JENKINS_ENVIRONMENT
+        | {
+            "SDI_JENKINS_BASE_URL": fake.base_url,
+            "SDI_HANDOFF_POLL_INTERVAL_SECONDS": "0.01",
+        }
+    )
     environment.update(environment_overrides or {})
     return subprocess.run(
         [
@@ -397,6 +417,7 @@ def _handoff(  # noqa: PLR0913, PLR0917
         capture_output=True,
         env=environment,
         text=True,
+        timeout=HANDOFF_TIMEOUT_SECONDS,
     )
 
 
@@ -522,6 +543,7 @@ def test_handoff_fails_once_with_typed_preflight_or_submission_fact(
     assert fake.base_url not in completed.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("mode", "environment_overrides", "code", "phase"),
     [
@@ -715,6 +737,37 @@ def test_handoff_preserves_typed_terminal_jenkins_failure(
     assert (tmp_path / "returned/bundle").exists() is (jenkins_result == "FAILURE")
 
 
+def test_handoff_names_a_build_failed_by_stale_agent_images(tmp_path: Path) -> None:
+    repository, commit_sha = _repository(tmp_path)
+    execution_id, _artifacts = _valid_bundle(
+        repository, commit_sha, tmp_path / "jenkins-bundle"
+    )
+    fake = FakeJenkins(
+        {}, jenkins_result="FAILURE", description="sdi.agent.stale-image"
+    )
+
+    with _serve(fake):
+        completed = _handoff(
+            repository,
+            commit_sha,
+            execution_id,
+            tmp_path / "returned",
+            fake,
+        )
+
+    assert completed.returncode == 1
+    assert "handoff failed: stale_agent_image" in completed.stderr
+    receipt = cast(
+        "dict[str, object]",
+        json.loads((tmp_path / "returned/handoff-receipt.json").read_text()),
+    )
+    terminal = cast("dict[str, object]", receipt["terminal"])
+    assert terminal["code"] == "stale_agent_image"
+    assert terminal["phase"] == "running"
+    assert terminal["jenkins_result"] == "FAILURE"
+    assert not (tmp_path / "returned/bundle").exists()
+
+
 @pytest.mark.parametrize(
     ("mutation", "code"),
     [
@@ -790,6 +843,7 @@ def test_handoff_rejects_incomplete_or_invalid_exact_build_artifacts(
     ("mode", "expected_path"),
     [
         ("queue_deadline", "/queue/cancelItem?id=42"),
+        ("http_header_deadline", "/queue/cancelItem?id=42"),
         ("build_deadline", "/job/pipeline-integration/7/stop"),
     ],
 )
@@ -804,14 +858,14 @@ def test_cancellation_targets_only_the_correlated_queue_item_or_build(
     )
     fake = FakeJenkins(artifacts, mode=mode)
     output_root = tmp_path / "returned"
-    environment = os.environ | {
-        "SDI_JENKINS_BASE_URL": "placeholder",
-        "SDI_JENKINS_JOB_PATH": "pipeline-integration",
-        "SDI_JENKINS_REPOSITORY": "github.com/example/sdi-fixture",
-        "SDI_JENKINS_USERNAME": "github-handoff",
-        "SDI_JENKINS_API_TOKEN": "test-api-token",
-        "SDI_HANDOFF_POLL_INTERVAL_SECONDS": "0.01",
-    }
+    environment = (
+        os.environ
+        | JENKINS_ENVIRONMENT
+        | {
+            "SDI_JENKINS_BASE_URL": "placeholder",
+            "SDI_HANDOFF_POLL_INTERVAL_SECONDS": "0.01",
+        }
+    )
 
     with _serve(fake):
         environment["SDI_JENKINS_BASE_URL"] = fake.base_url
@@ -845,9 +899,10 @@ def test_cancellation_targets_only_the_correlated_queue_item_or_build(
         )
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            if (mode == "queue_deadline" and fake.queue_polls > 0) or (
-                mode == "build_deadline" and fake.build_polls > 0
-            ):
+            if (
+                mode in {"queue_deadline", "http_header_deadline"}
+                and fake.queue_polls > 0
+            ) or (mode == "build_deadline" and fake.build_polls > 0):
                 break
             time.sleep(0.01)
         else:
@@ -873,3 +928,113 @@ def test_cancellation_targets_only_the_correlated_queue_item_or_build(
     assert terminal == expected_terminal
     assert "test-api-token" not in stdout
     assert "test-api-token" not in stderr
+
+
+def _client(base_url: str, overrides: dict[str, str]) -> _JenkinsClient:
+    settings = load_handoff_settings(
+        JENKINS_ENVIRONMENT | {"SDI_JENKINS_BASE_URL": base_url} | overrides
+    )
+    return _JenkinsClient(settings, time.monotonic())
+
+
+def test_handoff_requests_take_pool_locks_only_on_signal_blocking_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool_threads: list[threading.Thread] = []
+    blocked_signals: list[set[int]] = []
+    get_conn = HTTPConnectionPool._get_conn  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    put_conn = HTTPConnectionPool._put_conn  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+    def record_get(pool: HTTPConnectionPool, timeout: float | None = None) -> object:
+        pool_threads.append(threading.current_thread())
+        blocked_signals.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+        return get_conn(pool, timeout)
+
+    def record_put(pool: HTTPConnectionPool, conn: object) -> None:
+        pool_threads.append(threading.current_thread())
+        put_conn(pool, cast("Any", conn))
+
+    monkeypatch.setattr(HTTPConnectionPool, "_get_conn", record_get)
+    monkeypatch.setattr(HTTPConnectionPool, "_put_conn", record_put)
+    fake = FakeJenkins({})
+    previous_alarm = signal.getsignal(signal.SIGALRM)
+
+    with _serve(fake):
+        client = _client(fake.base_url, {})
+        _preflight(client)
+        client.close()
+
+    assert pool_threads
+    assert threading.main_thread() not in pool_threads
+    assert all({signal.SIGINT, signal.SIGTERM} <= mask for mask in blocked_signals)
+    assert signal.getsignal(signal.SIGALRM) is previous_alarm
+
+
+@pytest.mark.slow
+def test_http_deadline_does_not_strand_a_lock_held_by_the_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client("http://127.0.0.1:9", {"SDI_HANDOFF_HTTP_LIMIT_SECONDS": "1"})
+    # Stands in for urllib3's pool mutex: taken and released without a
+    # ``finally``, so an exception raised mid-call would strand it.
+    pool_lock = threading.Lock()
+    released = threading.Event()
+
+    def hold_pool_lock(*_arguments: object, **_options: object) -> requests.Response:
+        _ = pool_lock.acquire()
+        time.sleep(1.5)
+        pool_lock.release()
+        released.set()
+        return requests.Response()
+
+    monkeypatch.setattr(client.session, "request", hold_pool_lock)
+    started = time.monotonic()
+
+    with pytest.raises(HandoffError) as raised:
+        _ = client.request(
+            "GET",
+            "api/json",
+            phase_started=started,
+            last_known_state="queued",
+        )
+
+    assert raised.value.code == "http_operation"
+    assert raised.value.limit_seconds == 1
+    assert not released.is_set()
+    assert pool_lock.acquire(timeout=3)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+        "http://[::1]:8080",
+        "http://controller:8080",
+        "https://jenkins.example",
+    ],
+)
+def test_handoff_accepts_plaintext_only_on_loopback_or_the_stack_controller(
+    base_url: str,
+) -> None:
+    settings = load_handoff_settings(
+        JENKINS_ENVIRONMENT | {"SDI_JENKINS_BASE_URL": base_url}
+    )
+
+    assert settings.base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://controller.example:8080",
+        "http://controllerx:8080",
+        "http://10.0.0.5:8080",
+        "http://jenkins.example",
+    ],
+)
+def test_handoff_rejects_plaintext_beyond_loopback_and_the_stack_controller(
+    base_url: str,
+) -> None:
+    with pytest.raises(InputError, match="plaintext Jenkins base URL"):
+        load_handoff_settings(JENKINS_ENVIRONMENT | {"SDI_JENKINS_BASE_URL": base_url})

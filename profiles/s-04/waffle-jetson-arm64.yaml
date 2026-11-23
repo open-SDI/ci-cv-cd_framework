@@ -1,5 +1,11 @@
 schema_version: sdi.target-execution-profile/v1
 profile_id: waffle-jetson-arm64
+provenance:
+  basis: placeholder
+  note: >-
+    The Waffle's devices and its Ubuntu 24.04 and ROS 2 Jazzy baseline are
+    assumed, not sourced or measured. The Orin's JetPack, Ubuntu and ROS 2
+    baseline and its NVIDIA GPU are unsourced values.
 target:
   target_id: turtlebot3-waffle
   kind: sdv

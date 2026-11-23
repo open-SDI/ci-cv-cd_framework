@@ -378,10 +378,19 @@ def _place(
     if artifact is not None:
         if not {"noarch", host.architecture} & set(artifact.architectures):
             conflicts.append(f"no {host.architecture} artifact")
-        if artifact.host_requirement is not None and host.baseline is not None:
-            conflict = _baseline_conflict(artifact.host_requirement, host.baseline)
-            if conflict is not None:
-                conflicts.append(conflict)
+        if artifact.host_requirement is not None:
+            if host.baseline is None:
+                findings.append(
+                    _finding(
+                        "unresolved-placement",
+                        f"host {placement.host} declares no baseline",
+                        service_id=service_id,
+                    )
+                )
+            else:
+                conflict = _baseline_conflict(artifact.host_requirement, host.baseline)
+                if conflict is not None:
+                    conflicts.append(conflict)
     if description.devices:
         if host.devices is None:
             findings.append(

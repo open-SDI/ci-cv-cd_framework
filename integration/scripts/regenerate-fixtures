@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_dir"
+
+exec uv run --frozen python -m sdi_pipeline_integration._fixture_regeneration "$@"

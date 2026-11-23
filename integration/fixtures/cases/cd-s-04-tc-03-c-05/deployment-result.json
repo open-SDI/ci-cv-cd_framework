@@ -29,23 +29,23 @@
   "schema_version": "sdi.deployment-result/v1",
   "source_inputs": [
     {
-      "sha256": "b18ef771accd5b48c7b50c2bc188fddedc0a599e5452f6d8bf40117a05983c93",
+      "sha256": "10927c0d576d7d949c827549ca0b39c2fdfd0e727eda016861553defebf3eac1",
       "slot": "target_profile"
     },
     {
-      "sha256": "de321ca90d30399e91ff50e8bef62bb8b9afba86658edd5e6389e5f53f4a2e05",
+      "sha256": "4fe20a33975cdba64dbd6be3521282cd712b4f9c888cae1515f08a71ac1e1a3e",
       "slot": "composition_blueprint"
     },
     {
-      "sha256": "646183c4b73299019e1566000df8ea638406a178f84205536ec8247191000ed7",
+      "sha256": "129b7fb28b3e4afa1343c1fb9baf91ebd2fdfdba8d2b9b8209c40a30361b056d",
       "slot": "deployment_schema"
     },
     {
-      "sha256": "d710304b42b495d4e834cc7b6538063ebf0610ba67ed10dc3200629d3242f422",
+      "sha256": "1c0b108f3ffba4966009585aa2e04355110eed35301b2096f72701ff2a6fb529",
       "slot": "image_build_result"
     },
     {
-      "sha256": "950e76e32debd4332be9c1412a67a76117123d987794aac4eda66cabdf4677c0",
+      "sha256": "f2920784b7e89e39da651d82c19feda3c2a63f88d4f25e8a147bc3e785b7c52f",
       "slot": "validation_evidence"
     }
   ],

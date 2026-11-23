@@ -69,11 +69,6 @@
       "title": "Stage Profile",
       "type": "string"
     },
-    "stage_profile_sha256": {
-      "pattern": "^[0-9a-f]{64}$",
-      "title": "Stage Profile Sha256",
-      "type": "string"
-    },
     "stage_profile_version": {
       "minLength": 1,
       "title": "Stage Profile Version",
@@ -89,7 +84,6 @@
     "process_contract_version",
     "stage_profile",
     "stage_profile_version",
-    "stage_profile_sha256",
     "agent_label",
     "secret_bindings"
   ],

@@ -24,18 +24,22 @@ if (runLimitSeconds < 180) {
 def stages = [
     [name: 'Composition', stage: 'composition', label: 'composition',
      descriptor: 'deployment/jenkins/adapters/composition-v1.yaml',
+     suppliedArguments: '--service-repository service-repository',
      workLimitSeconds: readPositiveSeconds(
          'JENKINS_COMPOSITION_WORK_LIMIT_SECONDS', env.JENKINS_COMPOSITION_WORK_LIMIT_SECONDS)],
     [name: 'Image build', stage: 'image_build', label: 'image-build',
      descriptor: 'deployment/jenkins/adapters/image-build-fixture-v1.yaml',
+     suppliedArguments: '',
      workLimitSeconds: readPositiveSeconds(
          'JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS', env.JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS)],
     [name: 'Continuous Validation', stage: 'cv', label: 'cv',
      descriptor: 'deployment/jenkins/adapters/cv-fixture-v1.yaml',
+     suppliedArguments: '',
      workLimitSeconds: readPositiveSeconds(
          'JENKINS_CV_WORK_LIMIT_SECONDS', env.JENKINS_CV_WORK_LIMIT_SECONDS)],
     [name: 'Continuous Deployment', stage: 'cd', label: 'cd',
      descriptor: 'deployment/jenkins/adapters/cd-fixture-v1.yaml',
+     suppliedArguments: '',
      workLimitSeconds: readPositiveSeconds(
          'JENKINS_CD_WORK_LIMIT_SECONDS', env.JENKINS_CD_WORK_LIMIT_SECONDS)],
 ]
@@ -50,6 +54,13 @@ def isTimeoutInterruption = { interruption ->
 // against the repository that submitted the run. The job names match
 // deployment/jenkins/jobs/pipeline-integration.groovy; this installation does
 // not bind the scm variable, so the URL is selected by job name.
+//
+// The clone keeps full protected-main commit history for the ancestry check but
+// fetches only the blobs a sparse checkout without the unused CV/ Gazebo assets
+// needs; CV/ is nearly all of the repository's bytes. The CLI reads committed
+// blobs with lazy fetching disabled, so it fails closed outside that set. The
+// git plugin's checkout step cannot filter blobs, so plain git is used. Only the
+// transfer is retried, with stalled transfers aborted; no Stage attempt is.
 def checkoutSubmittedCommit = {
     def repositoryUrl = [
         'pipeline-integration': env.SDI_REPOSITORY_URL,
@@ -58,39 +69,65 @@ def checkoutSubmittedCommit = {
     if (!repositoryUrl) {
         error("Job ${env.JOB_NAME} has no configured repository")
     }
-    checkout([
-        $class: 'GitSCM',
-        branches: [[name: env.RESOLVED_COMMIT_SHA]],
-        extensions: [[$class: 'CloneOption', honorRefspec: true, noTags: true]],
-        userRemoteConfigs: [[
-            refspec: '+refs/heads/main:refs/remotes/origin/main',
-            url: repositoryUrl,
-        ]],
-    ])
-    sh '''set -eu
-test "$(git rev-parse HEAD)" = "$RESOLVED_COMMIT_SHA"
-git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/sdi-protected-main'
+    withEnv(["SDI_CHECKOUT_REPOSITORY_URL=${repositoryUrl}"]) {
+        sh '''set -eu
+# Runs one git transfer up to three times. Each attempt is killed after 300
+# seconds and aborts sooner if it moves under 1000 bytes/s for 60 seconds;
+# reset_attempt undoes a failed attempt's partial state before the next.
+git_transfer_with_retries() {
+  description=$1
+  reset_attempt=$2
+  shift 2
+  attempt=1
+  until timeout 300 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 "$@"; do
+    if [ "$attempt" -ge 3 ]; then
+      echo "$description failed after $attempt attempts" >&2
+      exit 1
+    fi
+    attempt=$((attempt + 1))
+    "$reset_attempt"
+  done
+}
+reset_clone() {
+  find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+reset_checkout() {
+  rm -f .git/index.lock
+}
+git_transfer_with_retries 'protected-main clone' reset_clone clone --filter=blob:none --no-checkout --no-tags --single-branch --branch main "$SDI_CHECKOUT_REPOSITORY_URL" .
+git update-ref refs/remotes/origin/sdi-protected-main refs/remotes/origin/main
 git merge-base --is-ancestor "$RESOLVED_COMMIT_SHA" refs/remotes/origin/sdi-protected-main
+git sparse-checkout set --no-cone '/*' '!/CV/'
+git_transfer_with_retries 'submitted-commit checkout' reset_checkout checkout --quiet --detach "$RESOLVED_COMMIT_SHA"
+test "$(git rev-parse HEAD)" = "$RESOLVED_COMMIT_SHA"
 git update-ref refs/heads/main "$RESOLVED_COMMIT_SHA"
 '''
+    }
 }
 
-// The Domain agents reach only the OpenAI endpoint, so Jenkins composes with
-// the config's default luna generator and passes no generator. The config is
-// read from the submitted commit, and its key comes from the sdi-openai-api-key
-// credential bound around the composition Stage only.
-def compositionConfigPath = 'integration/composition-config.yaml'
-
+// Only composition is given the checked-out service repository. The Domain
+// agents reach only the OpenAI endpoint, so Jenkins composes with the committed
+// composition config's default luna generator and names neither; its key comes
+// from the sdi-openai-api-key credential bound around the composition Stage only.
 def commonArguments = '''\
   --repository . \
   --requested-ref "$REQUESTED_GIT_REF" \
   --resolved-commit "$RESOLVED_COMMIT_SHA" \
   --run-request-path "$RUN_REQUEST_PATH" \
-  --execution-id "$EXECUTION_ID" \
-  --service-repository service-repository \
-  --composition-config ''' + "'${compositionConfigPath}'"
+  --execution-id "$EXECUTION_ID"'''
+
+// Each agent image records a digest of the integration code it bakes in. An
+// image built before that record existed reports `missing`. Exit status 4 means
+// an agent image bakes integration code other than the submitted commit's; the
+// build description lets the handoff report that as a typed failure.
+def bakedCodeDigestCommand = 'cat /etc/sdi/integration-code-digest 2>/dev/null || printf missing'
+def failStaleAgentImages = { stageName ->
+    currentBuild.description = 'sdi.agent.stale-image'
+    error("${stageName} found stale agent images; rebuild them from a clean checkout")
+}
 
 def resourceNodes = [:]
+def bakedCodeDigests = [:]
 def acceptedStages = []
 def continueChain = true
 def runDeadlineExpired = false
@@ -109,6 +146,10 @@ timeout(time: runLimitSeconds, unit: 'SECONDS') {
                 try {
                     deleteDir()
                     resourceNodes[definition.stage] = env.NODE_NAME
+                    bakedCodeDigests[definition.stage] = sh(
+                        returnStdout: true,
+                        script: bakedCodeDigestCommand,
+                    ).trim()
                 } finally {
                     deleteDir()
                 }
@@ -128,8 +169,12 @@ timeout(time: runLimitSeconds, unit: 'SECONDS') {
                     "SDI_IMAGE_BUILD_NODE=${resourceNodes.image_build}",
                     "SDI_CV_NODE=${resourceNodes.cv}",
                     "SDI_CD_NODE=${resourceNodes.cd}",
+                    "SDI_COMPOSITION_BAKED_CODE_DIGEST=${bakedCodeDigests.composition}",
+                    "SDI_IMAGE_BUILD_BAKED_CODE_DIGEST=${bakedCodeDigests.image_build}",
+                    "SDI_CV_BAKED_CODE_DIGEST=${bakedCodeDigests.cv}",
+                    "SDI_CD_BAKED_CODE_DIGEST=${bakedCodeDigests.cd}",
                 ]) {
-                    sh """set -eu
+                    def preflightStatus = sh(returnStatus: true, script: """set -eu
 sdi-integration preflight-jenkins-run \\
 ${commonArguments} \\
   --handoff-contract-version \"\$HANDOFF_CONTRACT_VERSION\" \\
@@ -140,8 +185,18 @@ ${commonArguments} \\
   --composition-node \"\$SDI_COMPOSITION_NODE\" \\
   --image-build-node \"\$SDI_IMAGE_BUILD_NODE\" \\
   --cv-node \"\$SDI_CV_NODE\" \\
-  --cd-node \"\$SDI_CD_NODE\" >/dev/null
-"""
+  --cd-node \"\$SDI_CD_NODE\" \\
+  --integration-baked-code-digest \"\$(${bakedCodeDigestCommand})\" \\
+  --composition-baked-code-digest \"\$SDI_COMPOSITION_BAKED_CODE_DIGEST\" \\
+  --image-build-baked-code-digest \"\$SDI_IMAGE_BUILD_BAKED_CODE_DIGEST\" \\
+  --cv-baked-code-digest \"\$SDI_CV_BAKED_CODE_DIGEST\" \\
+  --cd-baked-code-digest \"\$SDI_CD_BAKED_CODE_DIGEST\" >/dev/null
+""")
+                    if (preflightStatus == 4) {
+                        failStaleAgentImages('Run preflight')
+                    } else if (preflightStatus != 0) {
+                        error('Run preflight failed')
+                    }
                 }
             } finally {
                 deleteDir()
@@ -174,9 +229,11 @@ ${commonArguments} \\
                         sh(returnStatus: true, script: """set -eu
 sdi-integration execute-jenkins-stage \\
 ${commonArguments} \\
+  ${definition.suppliedArguments} \\
   --descriptor-path '${definition.descriptor}' \\
   --attempt-root 'transfers/${definition.stage}' \\
   ${priorArguments} \\
+  --baked-code-digest \"\$(${bakedCodeDigestCommand})\" \\
   --run-deadline-epoch-millis \"\$SDI_RUN_DEADLINE_EPOCH_MILLIS\" >/dev/null
 """)
                     }
@@ -207,6 +264,8 @@ ${commonArguments} \\
                     if (stageExecutionStatus == 3) {
                         runDeadlineExpired = true
                         continueChain = false
+                    } else if (stageExecutionStatus == 4) {
+                        failStaleAgentImages(definition.name)
                     } else if (stageExecutionStatus != 0) {
                         error("${definition.name} Stage execution failed before acceptance")
                     } else {

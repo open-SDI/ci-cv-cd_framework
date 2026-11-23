@@ -53,6 +53,7 @@ type FailureCode = Literal[
     "jenkins_failure",
     "jenkins_aborted",
     "jenkins_unstable",
+    "stale_agent_image",
     "missing_artifact",
     "invalid_artifact",
     "identity_mismatch",
