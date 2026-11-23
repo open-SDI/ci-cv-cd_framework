@@ -6,9 +6,10 @@ and is started only on demand. One dedicated `integration` agent performs only
 integration work; four independently replaceable agents provide the
 `composition`, `image-build`, `cv`, and `cd` scheduling labels. The root pipeline
 executes one submitted run across those five agents: implemented composition,
-then the image-build, CV, and CD Fixtures. A BuildKit builder and a pipeline
-registry, reachable only from the `image-build` agent, are ready for the real
-image-build adapter. Optional GitHub self-hosted runner
+image build and CV, then the CD Fixture. The image-build adapter uses a BuildKit
+builder and a pipeline registry, reachable only from the `image-build` agent.
+The CV adapter uses a `docker:dind` CV engine, reachable only from the `cv`
+agent. Optional GitHub self-hosted runner
 services, one per repository, pick up the protected handoff job, reach the
 controller over an internal network, and reach GitHub only through their own
 allowlisting proxy.
@@ -39,6 +40,7 @@ The tracked authority is:
 - `compose.yaml`: loopback-only controller publication, named controller state,
   five agent services, a separate egress-capable network for each agent, the
   `buildkitd` builder and `registry` services with their named volumes, the
+  `cv-engine` service with its named volume, the
   two optional runner services `runner-upstream` and `runner-fork`, and each
   runner's proxy service `runner-upstream-proxy` or `runner-fork-proxy`.
 - `Jenkinsfile`: the thin repository-owned scheduler over public integration CLI
@@ -189,9 +191,9 @@ destroyed controller volume:
 
 Never copy one registration secret between nodes. Destroying `jenkins-home`
 invalidates the old files; remove them and repeat provisioning. The integration
-agent receives no Domain credential and has no Domain label. The three Fixture
-descriptors declare no Domain secret binding, and no agent container sees a
-controller password.
+agent receives no Domain credential and has no Domain label. The image-build,
+CV, and CD descriptors declare no Domain secret binding, and no agent container
+sees a controller password.
 
 The composition descriptor binds `OPENAI_API_KEY` and `VLLM_KEY`. The root
 pipeline names no composition config or generator, so it composes with the
@@ -233,19 +235,22 @@ deployment/jenkins/bin/stack exercise-live
 deployment/jenkins/bin/stack stop
 ```
 
-`start` pulls the pinned builder and registry images when they are missing,
+`start` pulls the pinned builder, registry, and CV engine images when they are missing,
 builds the exact
 controller and five agent images and the runner and proxy images of every
 runner configured in `GITHUB_RUNNERS`, starts the controller, all five agents,
-the builder, the registry, and those runners with their proxies, rejects an
+the builder, the registry, the CV engine, and those runners with their proxies, rejects an
 agent image that declares any volume, and waits for process health. It refuses
 a configured runner that is not registered and refuses while a runner executes
-a job. Jenkins is published on the host only
+a job. Before it starts the agents and runners, `start` builds the CV
+simulation image into the CV engine (see [CV Engine](#cv-engine)). Jenkins is
+published on the host only
 at
 `http://127.0.0.1:<configured-port>`. No inbound-agent TCP port is published;
 all agents connect over WebSocket. `stop` removes all containers and networks
 but retains every named volume: `jenkins-home`, the runner state volumes, and
-the builder's `buildkit-state` and `pipeline-registry`. Agent workspaces are
+the builder's `buildkit-state` and `pipeline-registry`, and the CV engine's
+`cv-engine-state`. Agent workspaces are
 separate tmpfs mounts, have no shared or persistent filesystem, and disappear
 whenever their container is replaced. Their five separate networks allow GitHub
 checkout without making peer agents reachable. `stop`, `status`, `logs`, and `destroy`
@@ -262,10 +267,14 @@ skip configuration validation and the controller and agent image builds. Each
 refuses to run when the stamp does not match the current checkout and images;
 run `build` again. Runner and proxy images are still built.
 
+`--no-cv-warm` applies only to `start` and skips the CV simulation image build.
+`bin/smoke` and the recovery staging stack use it because they run no CV Stage.
+
 ### Builder And Pipeline Registry
 
-The always-on stack has eight containers: the controller, the five agents,
-`buildkitd`, and `registry`. Both images are pinned by digest in
+The always-on stack has nine containers: the controller, the five agents,
+`buildkitd`, `registry`, and `cv-engine` (see [CV Engine](#cv-engine)). Both
+builder images are pinned by digest in
 `deployment/installation.env` as `SDI_BUILDKIT_IMAGE` and `SDI_REGISTRY_IMAGE`.
 
 - `buildkitd` runs privileged, listens on `tcp://buildkitd:1234` without TLS,
@@ -288,6 +297,39 @@ Building for `linux/arm64` relies on QEMU emulation registered with the host
 kernel's binfmt_misc. Docker Desktop registers it; on a plain Docker Engine
 host, register the arm64 emulator before `start`, or the smoke check fails
 because `buildkitd` lists no `linux/arm64` platform.
+
+### CV Engine
+
+`cv-engine` is a privileged `docker:dind` daemon for the real CV Stage, pinned
+by digest in `deployment/installation.env` as `SDI_CV_ENGINE_IMAGE`.
+
+- It listens on `tcp://cv-engine:2375` without TLS and on its own Unix socket,
+  and trusts `registry:5000` as an insecure registry. The CV adapter reaches it
+  through the Python `docker` SDK. No service mounts the host Docker socket.
+- The internal `cv-engine-agent` network joins only the `cv` agent and
+  `cv-engine`. The internal `cv-engine-registry` network joins only
+  `cv-engine` and `registry`, so the engine pulls from `registry:5000` while
+  the `image-build` agent and `buildkitd` have no route to its root API. The
+  `cv` agent joins no builder network. Only `cv-engine` joins the unrestricted
+  `cv-engine-egress` network, for base images and packages.
+- Its `/var/lib/docker` lives in the `cv-engine-state` named volume. Nothing
+  pre-pulls or prunes it. It survives `stop` and `start`; deleting the volume,
+  or `destroy`, is the reset. Recovery snapshots do not include it.
+- `start` builds the S-04 simulation image into the engine before it starts
+  the agents and runners, so no run reaches an engine without it. It runs
+  `sdi-cv-warm`, the CV adapter's own build, in a one-off `cv` container. The
+  image therefore has the tag and layers that the CV Stage looks for. On a new
+  or reset engine the build took 675 to 4400 s in measured runs. `start` prints
+  each `Step` line and then `sdi-cv-warm: <tag> built in <seconds> s`. When the
+  engine already holds the image, `start` prints `present in` after about a
+  second.
+- If the build fails, `start` exits with an error before it starts the agents
+  and runners. Run `start` again.
+- After `start --no-cv-warm` on a new engine, the first CV run builds the image
+  inside its 2700 s Stage limit. That run can end `sdi.cv.no-time-to-start` and
+  turn the run red.
+- The smoke check pings the engine through the SDK from the `cv` agent and
+  checks that no other agent resolves `cv-engine`.
 
 ### GitHub Handoff Runners
 
@@ -340,7 +382,7 @@ that revision. The container runs as the non-root `runner` user without sudo,
 with a read-only root, all capabilities dropped, `no-new-privileges`, no
 environment except its proxy settings, no secrets, Docker socket, or published
 ports, and no automatic restart. Its job workspace and `/tmp` are tmpfs mounts,
-so every checkout, including its sparse-checkout patterns, is discarded whenever
+so every checkout is discarded whenever
 the container restarts. The named volume `runner-<repo>-state` holds the runner
 binaries, which the entrypoint replaces from the image on every start, and the
 registration. The registration files `.runner`, `.credentials`, and
@@ -410,9 +452,9 @@ no submitted commit matches, and every run then fails as stale.
 
 The root pipeline deletes every allocated workspace before checkout and in a
 `finally` block. Each agent independently checks out and verifies the submitted
-protected-main commit. The checkout is a blobless partial clone with a sparse
-checkout that omits the unused `CV/` Gazebo assets, nearly all of the
-repository's bytes; full commit history is kept for the ancestry check. The
+protected-main commit. The checkout is a blobless partial clone that fetches
+only the submitted commit's blobs; full commit history is kept for the ancestry
+check. The
 controller's Pipeline-script checkout keeps its repository between builds and
 fetches only new commits. Accepted envelopes and their declared bounded files are
 the only cross-agent Stage data, transferred through Execution-ID-qualified
@@ -421,8 +463,9 @@ archiving all and only its declared files from the current build.
 
 The pipeline uses the Stage registry's 10, 30, 45, and 15 minute Stage work
 limits, a 90-minute Jenkins run limit, and a two-minute finalization limit. A
-handled machinery failure archives its structured result before Jenkins ends in
-`FAILURE`; a contract-valid negative Domain outcome can remain `SUCCESS`.
+handled machinery failure or a CV `failed` verdict archives its structured
+result before Jenkins ends in `FAILURE`; any other contract-valid negative Domain
+outcome can remain `SUCCESS`.
 External cancellation propagates immediately, cleans active workspaces and
 process trees, ends as `ABORTED`, and does not manufacture a result.
 
@@ -431,13 +474,15 @@ local image tag. `bin/stack` loads each image through the integration CLI's stri
 descriptor model and injects it only into the matching Compose service. A
 reviewed descriptor image replacement followed by
 `bin/stack reconcile-agent <ci|image-build|cv|cd>` builds and replaces only the
-affected Domain agent without starting or rebuilding the controller. The node
+affected Domain agent without starting or rebuilding the controller. For `cv`,
+it first builds the rebuilt agent's simulation image into the CV engine, and
+keeps the old agent if that build fails. The node
 identity and scheduling label remain unchanged. Only the selected agent's
 registration secret is validated or mounted during reconciliation.
 
 `bin/stack destroy` is the explicit destructive operation for reconstruction. It
 removes the controller, its named volume, the runner state volumes with their
-registrations, and the builder cache and pipeline registry volumes. Back up
+registrations, and the builder cache, pipeline registry, and CV engine volumes. Back up
 operational state first if it must be retained.
 
 ## Safe Shutdown
@@ -480,7 +525,7 @@ storage encryption or GitHub-side quiescence. The command then runs
 `stack quiesce`, which stops the runners and quiesces Jenkins, refuses queued
 or building runs, cleanly stops every container, and archives the complete
 `jenkins-home` named volume with numeric ownership. The runner state volumes,
-and so the runner registrations, and the builder cache and pipeline registry
+and so the runner registrations, and the builder cache, pipeline registry, and CV engine
 volumes are not part of the snapshot. It creates an
 owner-only archive and a path-free recovery manifest containing the approved
 commit, UTC timestamp, byte size, SHA-256, and every exact installation pin.
@@ -738,8 +783,9 @@ one review unit; a runtime pin change rebuilds the proxy with the runner.
 
 `SDI_BUILDKIT_IMAGE` must match the `BUILDKIT_IMAGE` argument in
 `agents/Dockerfile` and the `buildkitd` image in `compose.yaml`, and
-`SDI_REGISTRY_IMAGE` must match the `registry` image there;
-`validate-installation` checks them. The `image-build` agent's `buildctl` is
+`SDI_REGISTRY_IMAGE` must match the `registry` image there, and
+`SDI_CV_ENGINE_IMAGE` the `cv-engine` image; `validate-installation` checks
+them. The `image-build` agent's `buildctl` is
 copied from that BuildKit image, so client and daemon match by construction.
 The smoke check asserts the client version through `EXPECTED_BUILDCTL_VERSION`
 in `bin/smoke-check`. Change the BuildKit pin in all of those places as one

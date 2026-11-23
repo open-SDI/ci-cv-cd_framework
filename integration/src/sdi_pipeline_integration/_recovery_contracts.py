@@ -49,6 +49,7 @@ class InstallationPins(ContractModel):
     jenkins_remoting_image: PinnedImage
     buildkit_image: PinnedImage
     registry_image: PinnedImage
+    cv_engine_image: PinnedImage
     composition_adapter_image: PinnedImage
     image_build_adapter_image: PinnedImage
     cv_adapter_image: PinnedImage
@@ -147,6 +148,7 @@ _EXPECTED_KEYS = {
     "SDI_JENKINS_REMOTING_IMAGE",
     "SDI_BUILDKIT_IMAGE",
     "SDI_REGISTRY_IMAGE",
+    "SDI_CV_ENGINE_IMAGE",
     "SDI_COMPOSITION_ADAPTER_IMAGE",
     "SDI_IMAGE_BUILD_ADAPTER_IMAGE",
     "SDI_CV_ADAPTER_IMAGE",
@@ -210,6 +212,7 @@ def load_installation_authority(path: Path) -> InstallationAuthority:
             jenkins_remoting_image=values["SDI_JENKINS_REMOTING_IMAGE"],
             buildkit_image=values["SDI_BUILDKIT_IMAGE"],
             registry_image=values["SDI_REGISTRY_IMAGE"],
+            cv_engine_image=values["SDI_CV_ENGINE_IMAGE"],
             composition_adapter_image=values["SDI_COMPOSITION_ADAPTER_IMAGE"],
             image_build_adapter_image=values["SDI_IMAGE_BUILD_ADAPTER_IMAGE"],
             cv_adapter_image=values["SDI_CV_ADAPTER_IMAGE"],
@@ -340,6 +343,7 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
     for service_name, image in (
         ("buildkitd", pins.buildkit_image),
         ("registry", pins.registry_image),
+        ("cv-engine", pins.cv_engine_image),
     ):
         service = _mapping(
             services.get(service_name), label=f"Compose {service_name} service"

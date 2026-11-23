@@ -9,8 +9,8 @@ match_inputs:
     byte_size: 8550
     sha256: 852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55
   - slot: target_profile
-    byte_size: 923
-    sha256: 10927c0d576d7d949c827549ca0b39c2fdfd0e727eda016861553defebf3eac1
+    byte_size: 1027
+    sha256: 93fedcfb4767aaf69a357c020044479e161505bfaca0d81aa20db1dc3b140c24
   - slot: service_repository
     byte_size: 329
     sha256: 98498e09e10e7a9be2c356ff5cfcdcafb26767d698ea677fff2d95c038e3b49c
@@ -27,11 +27,11 @@ outputs:
   - slot: composition_blueprint
     source_path: composition-blueprint.json
     byte_size: 2650
-    sha256: 58da1149dc48d4701b817697186f440cbd75cd3f015c5a7e9541142b84962a39
+    sha256: e4218e0ff86aab6a7a4304161b1fea0823c47a0ca445b430514178565844be90
   - slot: deployment_schema
     source_path: deployment-schema.json
     byte_size: 1370
-    sha256: 472a0a23d491f3c81a81c24d6a2a4724c8e6a9a403612c6d214cff71cc61e5d8
+    sha256: 240d7c46b794db3482c5519b712ea808c3d03d3b547011507cd2964ee8f4f6f5
 diagnostic:
   source_path: diagnostic.txt
   byte_size: 96

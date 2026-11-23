@@ -28,6 +28,7 @@ from sdi_pipeline_integration._stage_runtime import (
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
     FIXTURE_SERVICE_REPOSITORY,
+    RED_RUN_EXIT,
     RUN_REQUEST_PATH,
     S04_COMBINATION_EXPECTATIONS,
     SUPPLIED_INPUT_ARGUMENTS,
@@ -126,7 +127,9 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
         repository, commit_sha, second_root, expected["run_request_path"]
     )
 
-    assert first.returncode == second.returncode == 0, first.stderr + second.stderr
+    assert first.returncode == second.returncode == RED_RUN_EXIT, (
+        first.stderr + second.stderr
+    )
     first_result = json.loads(first.stdout)
     second_result = json.loads(second.stdout)
     assert first_result == json.loads(
@@ -145,16 +148,32 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     assert all(
         attempt["correlation"]["execution_id"] == first_result["execution_id"]
         and attempt["correlation"]["attempt_number"] == 1
-        and attempt["lifecycle_state"] == "completed"
-        and attempt["execution_conclusion"] == "succeeded"
-        and attempt["implementation_mode"] == "fixture"
         and attempt["domain_outcome"] == "not_evaluated"
         for attempt in first_result["attempts"]
     )
     assert [
+        (
+            attempt["lifecycle_state"],
+            attempt["execution_conclusion"],
+            attempt["implementation_mode"],
+            attempt["reason"]["code"],
+        )
+        for attempt in first_result["attempts"]
+    ] == [
+        ("completed", "succeeded", "fixture", "sdi.fixture.composition-executed"),
+        ("completed", "succeeded", "fixture", "sdi.fixture.image-build-executed"),
+        ("skipped", "skipped", "implemented", "sdi.dependency.fixture-evidence"),
+        ("skipped", "skipped", "fixture", "sdi.dependency.prerequisite-blocked"),
+    ]
+    assert [
         [item["slot"] for item in attempt["accepted_inputs"]]
         for attempt in first_result["attempts"]
-    ] == [list(slots) for slots in EXPECTED_STAGE_INPUT_SLOTS.values()]
+    ] == [
+        list(EXPECTED_STAGE_INPUT_SLOTS["composition"]),
+        list(EXPECTED_STAGE_INPUT_SLOTS["image_build"]),
+        [],
+        [],
+    ]
 
     expected_paths = {
         "pipeline-integration-result.json",
@@ -166,7 +185,15 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
         if path.is_file()
     }
     assert actual_paths == expected_paths
-    assert len(first_result["artifacts"]) == 9
+    assert [
+        (artifact["stage"], artifact["slot"]) for artifact in first_result["artifacts"]
+    ] == [
+        ("composition", "composition_blueprint"),
+        ("composition", "deployment_schema"),
+        ("composition", "diagnostic"),
+        ("image_build", "image_build_result"),
+        ("image_build", "diagnostic"),
+    ]
     deployment_artifact = next(
         artifact
         for artifact in first_result["artifacts"]

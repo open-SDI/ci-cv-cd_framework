@@ -1,32 +1,181 @@
 {
   "$defs": {
-    "FixtureValidationRecord": {
+    "CountingTopic": {
       "additionalProperties": false,
-      "description": "One declared validation case that was deliberately not evaluated.",
+      "description": "Messages counted on one of a service's counting outputs.",
       "properties": {
-        "description": {
+        "messages": {
+          "minimum": 0,
+          "title": "Messages",
+          "type": "integer"
+        },
+        "topic": {
           "minLength": 1,
-          "title": "Description",
-          "type": "string"
-        },
-        "evaluation_status": {
-          "const": "not_evaluated",
-          "title": "Evaluation Status",
-          "type": "string"
-        },
-        "validation_case_id": {
-          "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-          "title": "Validation Case Id",
+          "title": "Topic",
           "type": "string"
         }
       },
       "required": [
-        "validation_case_id",
-        "description",
-        "evaluation_status"
+        "topic",
+        "messages"
       ],
-      "title": "FixtureValidationRecord",
+      "title": "CountingTopic",
+      "type": "object"
+    },
+    "Mission": {
+      "additionalProperties": false,
+      "description": "The scenario's setup and one step per requirement, in requirement order.",
+      "properties": {
+        "setup": {
+          "enum": [
+            "passed",
+            "timed_out"
+          ],
+          "title": "Setup",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/MissionStep"
+          },
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "setup",
+        "steps"
+      ],
+      "title": "Mission",
+      "type": "object"
+    },
+    "MissionStep": {
+      "additionalProperties": false,
+      "description": "One requirement's mission step; waited_on names the topic or action.",
+      "properties": {
+        "requirement_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "timed_out",
+            "scripted",
+            "not_reached"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "waited_on": {
+          "minLength": 1,
+          "title": "Waited On",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "status"
+      ],
+      "title": "MissionStep",
+      "type": "object"
+    },
+    "NonParticipatingService": {
+      "additionalProperties": false,
+      "description": "A service that failed to start, exited, or sent no counted message.",
+      "properties": {
+        "counting_topics": {
+          "items": {
+            "$ref": "#/$defs/CountingTopic"
+          },
+          "title": "Counting Topics",
+          "type": "array"
+        },
+        "detail": {
+          "pattern": "^[\\x20\\x21\\x23-\\x5b\\x5d-\\x7e]{1,256}$",
+          "title": "Detail",
+          "type": "string"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "participation": {
+          "const": "did_not_participate",
+          "title": "Participation",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "container-exited",
+            "failed-to-start",
+            "no-message"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "participation",
+        "reason"
+      ],
+      "title": "NonParticipatingService",
+      "type": "object"
+    },
+    "ParticipatingService": {
+      "additionalProperties": false,
+      "description": "A service still running when the orchestrator exited.\n\nUnless its participation is loosened, it also sent a message on a\ncounting output.",
+      "properties": {
+        "counting_topics": {
+          "items": {
+            "$ref": "#/$defs/CountingTopic"
+          },
+          "title": "Counting Topics",
+          "type": "array"
+        },
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "participation": {
+          "enum": [
+            "participated",
+            "participated_loosened"
+          ],
+          "title": "Participation",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "participation",
+        "image_digest",
+        "counting_topics"
+      ],
+      "title": "ParticipatingService",
       "type": "object"
     },
     "SourceInputDigest": {
@@ -51,10 +200,64 @@
       ],
       "title": "SourceInputDigest",
       "type": "object"
+    },
+    "UnevaluatedService": {
+      "additionalProperties": false,
+      "description": "A service whose participation a pipeline gap kept from being judged.",
+      "properties": {
+        "counting_topics": {
+          "items": {
+            "$ref": "#/$defs/CountingTopic"
+          },
+          "title": "Counting Topics",
+          "type": "array"
+        },
+        "detail": {
+          "pattern": "^[\\x20\\x21\\x23-\\x5b\\x5d-\\x7e]{1,256}$",
+          "title": "Detail",
+          "type": "string"
+        },
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "participation": {
+          "const": "not_evaluated",
+          "title": "Participation",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "image-unavailable",
+            "no-amd64",
+            "needs-gpu-or-device",
+            "unsupported-command",
+            "no-counting-output",
+            "unloadable-type",
+            "blocked"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "participation",
+        "reason"
+      ],
+      "title": "UnevaluatedService",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "Fixture-qualified CV handoff that contains no Validation verdict.",
+  "description": "How CV reached its verdict on one composition in the Validation scenario.\n\nThe verdict is the attempt's domain outcome: not evaluated when a pipeline\ngap kept any service from being judged, succeeded when every service\nparticipated and the mission completed, and failed otherwise.",
   "properties": {
     "blueprint_id": {
       "maxLength": 63,
@@ -74,12 +277,16 @@
       "type": "string"
     },
     "domain_outcome": {
-      "const": "not_evaluated",
+      "enum": [
+        "succeeded",
+        "failed",
+        "not_evaluated"
+      ],
       "title": "Domain Outcome",
       "type": "string"
     },
     "evidence_basis": {
-      "const": "fixture",
+      "const": "implemented",
       "title": "Evidence Basis",
       "type": "string"
     },
@@ -92,6 +299,19 @@
     "kpi_evaluation": {
       "const": "not_evaluated",
       "title": "Kpi Evaluation",
+      "type": "string"
+    },
+    "mission": {
+      "$ref": "#/$defs/Mission"
+    },
+    "negative_cases": {
+      "const": "not_evaluated",
+      "title": "Negative Cases",
+      "type": "string"
+    },
+    "platform": {
+      "const": "linux/amd64",
+      "title": "Platform",
       "type": "string"
     },
     "profile_id": {
@@ -110,12 +330,39 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "services": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "did_not_participate": "#/$defs/NonParticipatingService",
+            "not_evaluated": "#/$defs/UnevaluatedService",
+            "participated": "#/$defs/ParticipatingService",
+            "participated_loosened": "#/$defs/ParticipatingService"
+          },
+          "propertyName": "participation"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ParticipatingService"
+          },
+          {
+            "$ref": "#/$defs/NonParticipatingService"
+          },
+          {
+            "$ref": "#/$defs/UnevaluatedService"
+          }
+        ]
+      },
+      "minItems": 1,
+      "title": "Services",
+      "type": "array"
+    },
     "source_inputs": {
       "items": {
         "$ref": "#/$defs/SourceInputDigest"
       },
-      "maxItems": 5,
-      "minItems": 5,
+      "maxItems": 6,
+      "minItems": 6,
       "prefixItems": [
         {
           "allOf": [
@@ -138,6 +385,18 @@
           "properties": {
             "slot": {
               "const": "target_profile"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SourceInputDigest"
+            }
+          ],
+          "properties": {
+            "slot": {
+              "const": "service_repository"
             }
           }
         },
@@ -191,14 +450,6 @@
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
       "title": "Validation Evidence Id",
       "type": "string"
-    },
-    "validation_records": {
-      "items": {
-        "$ref": "#/$defs/FixtureValidationRecord"
-      },
-      "minItems": 1,
-      "title": "Validation Records",
-      "type": "array"
     }
   },
   "required": [
@@ -215,7 +466,9 @@
     "source_inputs",
     "domain_outcome",
     "kpi_evaluation",
-    "validation_records"
+    "negative_cases",
+    "platform",
+    "services"
   ],
   "title": "ValidationEvidence",
   "type": "object"

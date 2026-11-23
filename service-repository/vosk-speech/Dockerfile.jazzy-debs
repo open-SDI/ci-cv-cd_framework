@@ -1,0 +1,86 @@
+# Recipe for the jazzy-debs artifact, built for linux/amd64 and linux/arm64.
+# Every input is fixed so both platforms resolve from one repository state:
+#   - base image by multi-arch index digest;
+#   - ROS packages from one snapshots.ros.org sync (jazzy/2026-10-05);
+#   - Ubuntu packages from snapshot.ubuntu.com at that sync's Release time;
+#   - the Vosk wheel and model by hash.
+# The ROS snapshot key (ros-snapshot-archive-keyring.asc) expires 2027-06-01.
+# There is no `# syntax=` line: the builder's built-in Dockerfile frontend is
+# pinned with BuildKit itself, while a syntax image would be pulled unpinned.
+FROM ubuntu:noble@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 ROS_DISTRO=jazzy
+
+COPY ros-snapshot-archive-keyring.asc /etc/apt/keyrings/ros-snapshot-archive-keyring.asc
+
+# Replace the base sources on both architectures (arm64 would otherwise use
+# live ports.ubuntu.com). The bare image has no CA bundle, so the first update
+# skips TLS peer checks; apt still verifies every index by signature.
+# snapshots.ros.org is slow and returns occasional 5xx errors, so apt retries,
+# and downloaded packages persist in a per-architecture cache mount so a
+# failed build does not fetch them again.
+ARG TARGETARCH
+RUN --mount=type=cache,id=apt-archives-${TARGETARCH},target=/var/cache/apt/archives,sharing=locked \
+    rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt.conf.d/docker-clean \
+ && printf '%s\n' 'Acquire::Retries "5";' 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+    > /etc/apt/apt.conf.d/90sdi \
+ && printf '%s\n' \
+    'Types: deb' \
+    'URIs: https://snapshot.ubuntu.com/ubuntu/20261012T164422Z/' \
+    'Suites: noble noble-updates noble-security' \
+    'Components: main universe' \
+    'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+    > /etc/apt/sources.list.d/ubuntu-snapshot.sources \
+ && printf '%s\n' \
+    'Types: deb' \
+    'URIs: http://snapshots.ros.org/jazzy/2026-10-05/ubuntu/' \
+    'Suites: noble' \
+    'Components: main' \
+    'Signed-By: /etc/apt/keyrings/ros-snapshot-archive-keyring.asc' \
+    > /etc/apt/sources.list.d/ros-snapshot.sources \
+ && apt-get -o Acquire::https::Verify-Peer=false update \
+ && apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+    ros-jazzy-ros2run \
+    ros-jazzy-rclpy=7.1.12-1* \
+    ros-jazzy-std-msgs=5.3.8-1* \
+    python3-pip=24.0+dfsg-1ubuntu1.3 \
+    python3-cffi=1.16.0-2build1 \
+    python3-requests=2.31.0+dfsg-1ubuntu1.2 \
+    python3-tqdm=4.66.2-2 \
+    python3-srt=3.5.3-1 \
+    python3-websockets=10.4-1 \
+ && mkdir -p /usr/share/sdi \
+ && dpkg-query -W -f='${Package}=${Version}\n' > /usr/share/sdi/installed-packages.txt \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY vosk-requirements.txt /tmp/vosk-requirements.txt
+RUN pip install --no-deps --break-system-packages --no-cache-dir --only-binary=:all: \
+      --require-hashes -r /tmp/vosk-requirements.txt \
+ && rm /tmp/vosk-requirements.txt \
+ && python3 -c 'import vosk'
+
+# alphacephei.com serves the model slowly, so the checked archive persists in
+# a cache mount that both architectures share.
+RUN --mount=type=cache,id=vosk-model,target=/var/cache/vosk-model,sharing=locked \
+    cd /var/cache/vosk-model \
+ && sum=30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498 \
+ && for attempt in 1 2 3 4 5; do \
+      echo "$sum  model.zip" | sha256sum -c --quiet - 2>/dev/null && break; \
+      python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "model.zip")' \
+        https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip || true; \
+    done \
+ && echo "$sum  model.zip" | sha256sum -c - \
+ && mkdir -p /opt/sdi/share/vosk_speech \
+ && python3 -m zipfile -e model.zip /opt/sdi/share/vosk_speech \
+ && mv /opt/sdi/share/vosk_speech/vosk-model-small-en-us-0.15 /opt/sdi/share/vosk_speech/model
+
+COPY --chmod=0755 ros_entrypoint.sh /ros_entrypoint.sh
+ENTRYPOINT ["/ros_entrypoint.sh"]
+ENV AMENT_PREFIX_PATH=/opt/sdi
+# `ros2 run` finds a package by its ament index marker; there is no colcon build.
+RUN mkdir -p /opt/sdi/share/ament_index/resource_index/packages \
+ && touch /opt/sdi/share/ament_index/resource_index/packages/vosk_speech
+COPY --chmod=0755 vosk_speech.py /opt/sdi/lib/vosk_speech/vosk_speech
+CMD ["ros2", "run", "vosk_speech", "vosk_speech"]

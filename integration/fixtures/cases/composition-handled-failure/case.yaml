@@ -9,8 +9,8 @@ match_inputs:
     byte_size: 8550
     sha256: 852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55
   - slot: target_profile
-    byte_size: 643
-    sha256: 814b45b0fb84820dcb4644f320f77fca85014c8638b7dc93fa1fb32d714ee4df
+    byte_size: 747
+    sha256: 2f507cd6e3a4c4c72fe0554d542e33d9217a7453abc33316877c37f6c47ed371
   - slot: service_repository
     byte_size: 329
     sha256: 98498e09e10e7a9be2c356ff5cfcdcafb26767d698ea677fff2d95c038e3b49c

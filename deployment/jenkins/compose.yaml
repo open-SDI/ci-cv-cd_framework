@@ -174,7 +174,7 @@ services:
     tmpfs:
       - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
       - /tmp:rw,nosuid,nodev,mode=1777
-    networks: [controller-cv]
+    networks: [controller-cv, cv-engine-agent]
     depends_on:
       controller:
         condition: service_healthy
@@ -241,6 +241,33 @@ services:
       start_period: 30s
       start_interval: 1s
 
+  cv-engine:
+    image: docker.io/library/docker:29.9.1-dind@sha256:3e5756e2b6dad6a5f1f5deacf0a19f9eaa2581b76ae092b2d4a118162e1d4d4e
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command:
+      - dockerd
+      - -H
+      - unix:///var/run/docker.sock
+      - -H
+      - tcp://0.0.0.0:2375
+      - --tls=false
+      - --insecure-registry
+      - registry:5000
+    volumes:
+      - cv-engine-state:/var/lib/docker
+    networks: [cv-engine-agent, cv-engine-registry, cv-engine-egress]
+    healthcheck:
+      test: [CMD, docker, -H, "tcp://127.0.0.1:2375", version]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+      start_interval: 1s
+
   registry:
     image: docker.io/library/registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
     platform: linux/amd64
@@ -254,7 +281,7 @@ services:
       - /tmp:rw,nosuid,nodev,mode=1777
     volumes:
       - pipeline-registry:/var/lib/registry
-    networks: [image-build-builder]
+    networks: [image-build-builder, cv-engine-registry]
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:5000/v2/"]
       interval: 5s
@@ -399,6 +426,7 @@ volumes:
   runner-fork-state:
   buildkit-state:
   pipeline-registry:
+  cv-engine-state:
 
 networks:
   controller-integration:
@@ -421,6 +449,11 @@ networks:
   image-build-builder:
     internal: true
   builder-egress:
+  cv-engine-agent:
+    internal: true
+  cv-engine-registry:
+    internal: true
+  cv-engine-egress:
 
 secrets:
   jenkins-admin-password:

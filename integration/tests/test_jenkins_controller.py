@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
+import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -93,6 +96,9 @@ def _write_fake_deployment_tools(fake_bin: Path) -> None:
         'for image do printf \'sha256:%s-%s\\n\' "${FAKE_IMAGE_ID:-1}" "$image"; '
         "done ;;\n"
         "  *' -T runner-'*' show') exit 3 ;;\n"
+        "  *' --entrypoint sdi-cv-warm cv') "
+        '[ -z "${FAKE_WARM_FAIL:-}" ] || exit 1; '
+        '[ -z "${FAKE_WARM_HANG:-}" ] || exec sleep 30 ;;\n'
         "  *' -T runner-'*' register '*) "
         "printf 'the registration token is empty or invalid\\n' >&2; exit 2 ;;\n"
         "esac\n"
@@ -261,6 +267,14 @@ def _assert_single_agent_reconciliation(
         )
     assert "--tag sdi-jenkins-controller" not in reconcile_log
     assert reconcile_log.count("image inspect --format {{json .Config.Volumes}}") == 4
+    assert reconcile_log.count("--entrypoint sdi-cv-warm cv") == 1
+    assert (
+        reconcile_log.index("build cv")
+        < reconcile_log.index("--entrypoint sdi-cv-warm cv")
+        < reconcile_log.index(
+            "up --no-build --no-deps --detach --wait --wait-timeout 240 cv"
+        )
+    )
 
 
 def _assert_stack_lifecycle_log(lifecycle_log: str) -> None:
@@ -328,6 +342,7 @@ def test_compose_exposes_only_loopback_http_and_persists_only_named_state() -> N
         "runner-fork-state",
         "buildkit-state",
         "pipeline-registry",
+        "cv-engine-state",
     }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
 
@@ -434,7 +449,7 @@ def test_job_dsl_defines_no_build_trigger_or_credential() -> None:
     assert "credential" not in job_dsl.lower()
 
 
-def test_root_pipeline_checks_out_the_submitted_commit_without_cv_assets() -> None:
+def test_root_pipeline_checks_out_the_submitted_commit() -> None:
     pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
 
     assert "$class: 'GitSCM'" not in pipeline
@@ -442,7 +457,6 @@ def test_root_pipeline_checks_out_the_submitted_commit_without_cv_assets() -> No
         "reset_clone clone --filter=blob:none --no-checkout --no-tags --single-branch "
         '--branch main "$SDI_CHECKOUT_REPOSITORY_URL" .'
     ) in pipeline
-    assert "git sparse-checkout set --no-cone '/*' '!/CV/'" in pipeline
     assert 'reset_checkout checkout --quiet --detach "$RESOLVED_COMMIT_SHA"' in pipeline
     assert (
         "until timeout 300 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 "
@@ -1188,6 +1202,7 @@ def test_smoke_validates_and_builds_each_image_once(tmp_path: Path) -> None:
     assert log.count(" build integration ci image-build cv cd\n") == 1
     assert log.count(" build runner-fork runner-fork-proxy\n") == 2
     assert log.count("up --no-build --detach --wait --wait-timeout 240\n") == 3
+    assert "sdi-cv-warm" not in log
     adapter_image_calls = [line for line in log.splitlines() if "adapter-image" in line]
     assert adapter_image_calls
     assert all(STAGE_ARGUMENTS in line for line in adapter_image_calls)
@@ -1244,6 +1259,13 @@ class _BuiltStack:
             env={"DOCKER_LOG": str(self.docker_log), "PATH": self.path} | state,
             text=True,
         )
+
+    def calls(self) -> list[str]:
+        return [
+            line.split("/compose.yaml ", 1)[-1]
+            for line in self.docker_log.read_text().splitlines()
+            if line.startswith(("compose ", "rm ", "ps "))
+        ]
 
     def refuses_prebuilt(self, action: str, **state: str) -> bool:
         completed = self.run("--prebuilt", action, **state)
@@ -1311,3 +1333,109 @@ def test_prebuilt_applies_only_to_start_and_live_checks(
 
     assert completed.returncode == 2
     assert f"--prebuilt does not apply to {action}" in completed.stderr
+
+
+WARM_UP = "up --no-build --detach --wait --wait-timeout 240 cv-engine"
+WARM = "run --rm --no-deps -T --name sdi-jenkins-cv-warm --entrypoint sdi-cv-warm cv"
+FULL_UP = "up --no-build --detach --wait --wait-timeout 240"
+
+
+def test_start_warms_the_cv_engine_before_any_run_can_reach_it(
+    tmp_path: Path,
+) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    completed = stack.run("start")
+
+    assert completed.returncode == 0, completed.stderr
+    calls = stack.calls()
+    runner_check = next(
+        index for index, call in enumerate(calls) if call.startswith("ps ")
+    )
+    assert calls.index(WARM_UP) < calls.index("rm --force sdi-jenkins-cv-warm")
+    assert calls.index("rm --force sdi-jenkins-cv-warm") < calls.index(WARM)
+    assert calls.index(WARM) < runner_check < calls.index(FULL_UP)
+
+
+def test_start_without_the_cv_warm_leaves_the_engine_cold(tmp_path: Path) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    completed = stack.run("--no-cv-warm", "start")
+
+    assert completed.returncode == 0, completed.stderr
+    calls = stack.calls()
+    assert WARM_UP not in calls
+    assert WARM not in calls
+    assert FULL_UP in calls
+
+
+def test_start_stops_before_the_agents_when_the_cv_warm_fails(tmp_path: Path) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    completed = stack.run("start", FAKE_WARM_FAIL="1")
+
+    assert completed.returncode == 2
+    assert completed.stderr == (
+        "stack: the CV engine has no simulation image, so start did not start"
+        " the agents and runners; rerun: deployment/jenkins/bin/stack start\n"
+    )
+    assert FULL_UP not in stack.calls()
+
+
+@pytest.mark.parametrize("action", ["start-controller", "verify-live", "destroy"])
+def test_no_cv_warm_applies_only_to_start(tmp_path: Path, action: str) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    completed = stack.run("--no-cv-warm", action)
+
+    assert completed.returncode == 2
+    assert completed.stderr == "stack: --no-cv-warm applies only to start\n"
+    assert not stack.calls()
+
+
+# A launcher that backgrounds pytest leaves SIGINT ignored, and sh can trap no
+# signal it inherits as ignored, so start the stack with SIGINT at its default,
+# as a terminal's foreground job has it.
+WITH_DEFAULT_SIGINT = (
+    sys.executable,
+    "-c",
+    (
+        "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+        "os.execv(sys.argv[1], sys.argv[1:])"
+    ),
+)
+
+
+def test_interrupting_start_mid_warm_removes_the_warm_container(
+    tmp_path: Path,
+) -> None:
+    stack = _BuiltStack(tmp_path)
+    stack.docker_log.write_text("")
+    started = subprocess.Popen(
+        [
+            *WITH_DEFAULT_SIGINT,
+            JENKINS_ROOT / "bin" / "stack",
+            "--config",
+            stack.config,
+            "start",
+        ],
+        env={
+            "DOCKER_LOG": str(stack.docker_log),
+            "PATH": stack.path,
+            "FAKE_WARM_HANG": "1",
+        },
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 20
+    while WARM not in stack.calls():
+        assert started.poll() is None, "start ended before the warm ran"
+        assert time.monotonic() < deadline, "the warm never ran"
+        time.sleep(0.1)
+
+    os.killpg(started.pid, signal.SIGINT)
+
+    assert started.wait(timeout=20) == 130
+    calls = stack.calls()
+    assert calls[calls.index(WARM) + 1 :] == ["rm --force sdi-jenkins-cv-warm"]

@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -49,8 +49,18 @@ class Outcome:
 
 
 @dataclass(frozen=True)
+class Succeeded:
+    code: Literal["succeeded"] = "succeeded"
+    conclusion: Literal["succeeded"] = "succeeded"
+    domain_outcome: Literal["succeeded"] = "succeeded"
+
+
+SUCCEEDED = Succeeded()
+
+
+@dataclass(frozen=True)
 class Verdict:
-    outcome: Outcome
+    outcome: Outcome | Succeeded
     documents: Mapping[str, BaseModel] = field(default_factory=dict[str, BaseModel])
 
 
@@ -85,14 +95,18 @@ class Diagnostic:
         )
         self._cut = self._cut or cut
 
-    def omit_block(self) -> None:
+    def mark_cut(self) -> None:
         self._cut = True
 
-    def block_room(self, outcome: Outcome, title: str, *, shares: int) -> int:
-        room = (self._max_bytes - len(self._header(outcome))) // shares
-        return room - len(_block_title(title).encode())
+    def room(self, outcome: Outcome | Succeeded) -> int:
+        return self._max_bytes - len(self._header(outcome))
 
-    def render(self, outcome: Outcome) -> tuple[bytes, bool]:
+    def block_room(
+        self, outcome: Outcome | Succeeded, title: str, *, shares: int
+    ) -> int:
+        return self.room(outcome) // shares - block_cost(title, ())
+
+    def render(self, outcome: Outcome | Succeeded) -> tuple[bytes, bool]:
         header = self._header(outcome)
         if contains_sensitive_material(header.decode()):
             return self._cut_to_budget(self._outcome_line(outcome)), True
@@ -105,10 +119,10 @@ class Diagnostic:
             return header, bool(self._blocks)
         return content, self._cut
 
-    def _outcome_line(self, outcome: Outcome) -> bytes:
+    def _outcome_line(self, outcome: Outcome | Succeeded) -> bytes:
         return f"outcome: {self._prefix}.{outcome.code}\n".encode()
 
-    def _header(self, outcome: Outcome) -> bytes:
+    def _header(self, outcome: Outcome | Succeeded) -> bytes:
         lines = [
             *(f"{name}: {text}" for name, text in self._facts.items()),
             *self._lines,
@@ -125,6 +139,12 @@ class Diagnostic:
 
 def _block_title(title: str) -> str:
     return f"--- {title}\n"
+
+
+def block_cost(title: str, lines: Sequence[str]) -> int:
+    return len(_block_title(title).encode()) + sum(
+        len(line.encode()) + 1 for line in lines
+    )
 
 
 @dataclass(frozen=True)
@@ -261,12 +281,18 @@ def _publish(output_root: Path, invocation: Invocation, verdict: Verdict) -> Non
             "correlation": request.correlation.model_dump(mode="json"),
             "execution_conclusion": outcome.conclusion,
             "domain_outcome": outcome.domain_outcome,
-            "reason": {
-                "category": outcome.category,
-                "code": f"sdi.{request.correlation.stage.replace('_', '-')}."
-                f"{outcome.code}",
-                "summary": outcome.summary,
-            },
+            **(
+                {}
+                if isinstance(outcome, Succeeded)
+                else {
+                    "reason": {
+                        "category": outcome.category,
+                        "code": f"sdi.{request.correlation.stage.replace('_', '-')}."
+                        f"{outcome.code}",
+                        "summary": outcome.summary,
+                    }
+                }
+            ),
             "consumed_inputs": [item.slot for item in request.inputs],
             "produced_outputs": list(verdict.documents),
             "diagnostic": {"present": True, "truncated": truncated},
@@ -275,5 +301,7 @@ def _publish(output_root: Path, invocation: Invocation, verdict: Verdict) -> Non
         extra="forbid",
     )
     atomic_write(
-        output_root, "response.json", canonical_json(response.model_dump(mode="json"))
+        output_root,
+        "response.json",
+        canonical_json(response.model_dump(mode="json", exclude_none=True)),
     )

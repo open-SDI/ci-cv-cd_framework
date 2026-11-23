@@ -21,3 +21,4 @@ orchestrator_provides:
     /navigate_to_pose: {type: nav2_msgs/action/NavigateToPose}
   publishes:
     /initialpose: {type: geometry_msgs/msg/PoseWithCovarianceStamped}
+    /face_enrollment: {type: sensor_msgs/msg/Image, reliability: reliable, durability: transient_local}

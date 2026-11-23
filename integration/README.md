@@ -9,15 +9,27 @@ Run all checks through `scripts/verify` rather than using an ambient Python
 environment.
 
 Tests marked `live` call a real model provider; tests marked `slow` wait out a
-real work limit or deadline. `scripts/verify` runs every test: the non-`slow`
-tests in parallel, then the `slow` tests serially, because parallel load can
-push their timing past its bounds. For a fast check while developing, run from
-this directory:
+real work limit or deadline. `scripts/verify` runs every test except the
+`cv_engine` tests: the non-`slow` tests in parallel, then the `slow` tests
+serially, because parallel load can push their timing past its bounds. For a
+fast check while developing, run from this directory:
 
 ```sh
 uv sync --frozen --all-groups
-uv run pytest -m "not live and not slow" -n auto --dist worksteal
+uv run pytest -m "not live and not slow and not cv_engine" -n auto --dist worksteal
 ```
+
+Tests marked `cv_engine` run real S-04 compositions in a Docker-in-Docker
+engine and its registry. They build every image they need inside that engine,
+which takes tens of minutes when the engine is cold. Run them only on request,
+with `SDI_CV_ENGINE_URL` and `SDI_CV_REGISTRY_URL` naming the engine pair:
+
+```sh
+uv run pytest -m cv_engine -v
+```
+
+When those tests are selected and the engine or registry does not answer, the
+session stops with a non-zero exit before any test runs.
 
 ## Identify A Committed Run
 
@@ -58,11 +70,11 @@ uv run --project integration sdi-integration execute-stage \
   --attempt-root artifacts/composition-attempt
 ```
 
-Composition is granted every run-supplied input, and image-build only the
-service repository, where the recipes live. `execute-stage` requires
-`--service-repository` for composition and image-build, rejects
+Composition is granted every run-supplied input, and image-build and CV only
+the service repository, where the recipes and descriptions live. `execute-stage`
+requires `--service-repository` for composition, image-build and CV, rejects
 `--composition-config` and `--generator` for any Stage but composition, and
-rejects all three for CV and CD. `execute-jenkins-stage` takes no
+rejects all three for CD. `execute-jenkins-stage` takes no
 `--service-repository`: a Stage granted the service repository reads
 `service-repository/` from the checked-out commit, and only composition accepts
 the other two. `dispatch-local` runs both
@@ -191,7 +203,10 @@ Fixture cases match exact input digests and cannot recognize real output, so a
 Fixture Stage whose inputs include implemented output is skipped with
 `sdi.dependency.implemented-evidence`. A successful composition therefore ends
 a `dispatch-local` run with image build skipped and CV and CD blocked; the run
-still exits 0.
+still exits 0. In the other direction, an implemented Stage whose inputs include
+unevaluated Fixture output is skipped with `sdi.dependency.fixture-evidence`,
+which turns the run red. The test-only chain of Fixture composition and Fixture
+image build ends that way at CV.
 
 ## Image-build Adapter
 
@@ -228,10 +243,80 @@ not mean any image is available. The input mismatch is a service repository
 whose digest differs from the deployment schema's, and the placement limit is
 48. The builder, registry and arm64 checks run only when some placement is
 buildable, so a run with nothing to build never touches the builder. In Jenkins,
-a successful composition is followed by a real image build, after which the
-Fixture CV skips with `sdi.dependency.implemented-evidence` and CD is blocked.
-A runtime hard timeout kills the adapter and its clients together and leaves
-its scratch directory on the agent's `/tmp` tmpfs until the agent restarts.
+a successful composition is followed by a real image build, after which CV runs
+the composition from the pushed images and the CD Fixture skips with
+`sdi.dependency.implemented-evidence`. A runtime hard timeout kills the adapter
+and its clients together and leaves its scratch directory on the agent's `/tmp`
+tmpfs until the agent restarts.
+
+## CV Adapter
+
+`sdi-cv-adapter` runs only in Jenkins, on the `cv` agent, against the stack's
+CV engine at `tcp://cv-engine:2375`. It judges one composition in one attempt,
+in one headless Gazebo scenario, and records one verdict.
+
+Before it opens a Docker client, the adapter checks every placement's
+declarations. For each service it records the first of these causes:
+
+1. The image-build result records no built image: `image-unavailable`.
+2. The built image has no linux/amd64 platform: `no-amd64`.
+3. The service declares a GPU, or a device other than `opencr`, `lidar`,
+   `camera` and `microphone`: `needs-gpu-or-device`.
+4. A service without devices has no counting output: `no-counting-output`.
+
+A counting output is a topic that the service declares in `publishes`. A topic
+that another composed service also declares does not count, and neither does a
+topic in CV's topic constant, which the scenario machinery publishes itself. Any
+cause makes the composition not evaluated, and every other service is
+`blocked`.
+
+When every placement passes, the adapter builds the sim image if the engine
+does not have it, and pulls each image by its amd64 digest. It then starts the
+sim, one container per placement, and the mission orchestrator, and waits for
+the orchestrator to finish. A failed pull is `image-unavailable`. An image
+command that is neither `ros2 launch` nor `ros2 run` is `unsupported-command`. A
+counting type that the orchestrator cannot load is `unloadable-type`. Each of
+these causes also makes the composition not evaluated.
+
+A service participates when its container still runs when the orchestrator
+exits, and at least one message arrived on one of its counting outputs. A
+service whose devices Gazebo stands in for only has to keep running, and its
+evidence records `participated_loosened`. The composition succeeds when every
+service participated and every mission step passed or was scripted. Otherwise
+it fails. The summary names the first service that did not participate, or else
+the first mission step that failed or timed out.
+
+| Outcome code | Execution | Domain outcome | Category | Published |
+| --- | --- | --- | --- | --- |
+| `sdi.cv.succeeded` | succeeded | succeeded | no reason | Validation evidence |
+| `sdi.cv.failed` | succeeded | failed | domain | Validation evidence |
+| `sdi.cv.not-evaluated` | succeeded | not evaluated | dependency | Validation evidence |
+| `sdi.cv.engine-unreachable` | failed | not evaluated | dependency | diagnostic |
+| `sdi.cv.pull-failed` | failed | not evaluated | dependency | diagnostic |
+| `sdi.cv.input-mismatch` | failed | not evaluated | input | diagnostic |
+| `sdi.cv.unsupported-robot` | failed | not evaluated | input | diagnostic |
+| `sdi.cv.sim-build-failed` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.no-time-to-start` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.start-failed` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.orchestrator-timeout` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.sim-not-running` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.no-result` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.result-too-large` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.invalid-result` | failed | not evaluated | tool | diagnostic |
+| `sdi.cv.evidence-too-large` | failed | not evaluated | tool | diagnostic |
+
+A pass reports no reason. The diagnostic's first line names
+`sdi.cv.succeeded`. A failed verdict turns the run red, and a not-evaluated
+verdict leaves it green. The input mismatch is a service repository whose digest
+differs from the blueprint's. The unsupported robot is a target other than the
+TurtleBot3 Waffle and Burger. `diagnostic.txt` records the phase times, the
+setup and each mission step with its elapsed seconds, each service's
+participation, the message counts, the topic-constant check, and the ROS graph
+grouped by publisher set. Log tails of the containers that explain the outcome
+share the space that is left.
+
+Locally, CV never runs. After a successful composition it is blocked, and the
+Fixture chain's output makes it skip with `sdi.dependency.fixture-evidence`.
 
 ## Dispatch A Local Run
 
@@ -262,7 +347,8 @@ uv run --project integration sdi-integration validate-bundle \
   --bundle-root artifacts/s-04-tc-03-c-05
 ```
 
-Image-build, CV, and CD remain Fixtures. The result explicitly records
+Locally, image build and CD are Fixtures and CV does not run. The result
+explicitly records
 `kpi_evaluation: not_evaluated` and contains no overall Domain or
 six-combination verdict.
 
@@ -289,9 +375,10 @@ constructing contracts in Groovy:
 - `attempt-allows-continuation` derives whether another Domain Stage may run.
 - `finalize-jenkins-run` creates typed downstream skips, assembles the exact
   archive, and validates it on the integration agent.
-- `bundle-conclusion` revalidates the bundle and derives Jenkins machinery
-  success without converting a valid negative Domain outcome into machinery
-  failure.
+- `bundle-conclusion` revalidates the bundle and derives the run's colour. The
+  run is red when Jenkins machinery failed or when CV failed the composition.
+  Any other valid negative Domain outcome, and a composition that CV did not
+  evaluate, keeps it green. `dispatch-local` exits with the same colour.
 
 A digest mismatch exits with status 4 and the reason
 `sdi.agent.stale-image`, naming the stale agents, before any Stage work. When
@@ -416,8 +503,10 @@ REST trigger and retrieval procedures.
 remains possible. Handled failures, crashes, deadline expiry, rejected candidate
 transactions, unavailable implementations, and blocked dependencies appear as
 typed attempts; skipped attempts never imply that a process ran. Adapter or
-deadline failures return status 1 after printing the result. A valid negative
-Domain outcome still returns status 0 because adapter execution succeeded.
+deadline failures return status 1 after printing the result. A failed CV
+outcome also returns status 1, because CV found that the composition fails. Any
+other valid negative Domain outcome still returns status 0 because adapter
+execution succeeded.
 
 Candidate acceptance is transactional. A malformed, missing, changing, unsafe,
 undeclared, oversized, identity-mismatched, or schema-invalid candidate

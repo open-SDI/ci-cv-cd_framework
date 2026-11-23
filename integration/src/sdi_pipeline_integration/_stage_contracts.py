@@ -297,8 +297,7 @@ class OutputGrant(ContractModel):
     path: RepositoryPath
     media_type: NonBlank
     schema_version: NonBlank
-    # A Domain output is required whenever the Domain outcome is not failed;
-    # Stage evidence is optional and never a Domain input.
+    # A Domain output is required whenever the Domain outcome is not failed.
     role: Literal["domain_output", "stage_evidence"]
     max_bytes: PositiveInt
 
@@ -777,9 +776,10 @@ class FixtureCase(ContractModel):
             self.behavior == "response"
             and self.execution_conclusion == "succeeded"
             and self.domain_outcome != "failed"
-            and not self.outputs
+            and [item.slot for item in self.outputs]
+            != list(_stage_registry.EXPECTED_STAGE_OUTPUTS[self.stage])
         ):
-            msg = "a successful Fixture case must declare outputs"
+            msg = "a successful Fixture case must declare its Stage's Domain outputs"
             raise ValueError(msg)
         if self.domain_outcome == "failed" and self.outputs:
             msg = "a negative Domain Fixture case cannot declare Domain output"

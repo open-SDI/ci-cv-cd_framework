@@ -33,6 +33,7 @@ COMMITTED_FILES = (
     "integration/stage-profiles/composition-v1.yaml",
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
+    "integration/stage-profiles/cd-v1.yaml",
     *STAGE_DESCRIPTORS,
     FIXTURE_COMPOSITION_CONFIG,
 )
@@ -85,7 +86,7 @@ def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
             ],
         ),
         ("image_build", ["target_profile", "service_repository"]),
-        ("cv", ["requirements_specification", "target_profile"]),
+        ("cv", ["requirements_specification", "target_profile", "service_repository"]),
         ("cd", ["target_profile"]),
     ],
 )
@@ -106,7 +107,7 @@ def test_each_stage_receives_only_its_granted_run_inputs(
         )
         if stage == "composition"
         else SuppliedInputs(service_repository=FIXTURE_SERVICE_REPOSITORY)
-        if stage == "image_build"
+        if stage in {"image_build", "cv"}
         else SuppliedInputs()
     )
 
@@ -221,11 +222,11 @@ def test_a_stage_not_granted_the_service_repository_rejects_it(
         commit_sha,
         attempt_root,
         ("--service-repository", str(FIXTURE_SERVICE_REPOSITORY)),
-        descriptor=STAGES["cv"].jenkins_descriptor,
+        descriptor=STAGES["cd"].jenkins_descriptor,
     )
 
     assert completed.returncode == 2
-    assert "the cv Stage is not granted a supplied service repository" in (
+    assert "the cd Stage is not granted a supplied service repository" in (
         completed.stderr
     )
     assert not attempt_root.exists()

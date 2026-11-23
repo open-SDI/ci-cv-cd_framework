@@ -47,6 +47,11 @@ AGENT_EXERCISE_SCRIPT_SECONDS = 90
 EXPECTED_BUILDCTL_VERSION = "v0.34.0"
 # Only the image-build agent may resolve these, on its internal builder network.
 BUILDER_SERVICES = "buildkitd registry"
+CV_ENGINE = "cv-engine"
+CV_ENGINE_PING = (
+    "import docker; "
+    f"docker.DockerClient(base_url='tcp://{CV_ENGINE}:2375', timeout=10).ping()"
+)
 # Runs once on the image-build agent. It is plain Python, so the Groovy and shell
 # layers around it carry only its base64 text and need no escaping. The scratch
 # build has no RUN step, so it needs no egress and no emulator, but it exercises
@@ -509,6 +514,12 @@ else
       exit 1
     fi
   done
+fi
+if [ "''' + agentName + '''" = cv ]; then
+  python3 -I -c "{CV_ENGINE_PING}"
+elif getent hosts {CV_ENGINE} >/dev/null 2>&1; then
+  echo "unexpected CV engine reachability outside the cv agent" >&2
+  exit 1
 fi
 if [ "$BUILD_NUMBER" = 1 ]; then
   peer_pids=

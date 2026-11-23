@@ -11,9 +11,11 @@
 > [!IMPORTANT]
 > Sections 1-4 preserve the original project description and references. The
 > currently supported implementation is described in section 5. Its composition
-> Stage generates and assesses service compositions with a configured model; the
-> image-build, CV, and CD Stages run deterministic Fixtures and do not implement
-> or prove image publication, simulation Validation, deployment, or KPI results.
+> Stage generates and assesses service compositions with a configured model. On
+> Jenkins, the image-build Stage builds and pushes each composition's images, and
+> the CV Stage runs them in one headless Gazebo scenario and records one verdict.
+> The CD Stage runs a deterministic Fixture and does not implement or prove
+> deployment or KPI results.
 
 
 ## 1. Introduction
@@ -57,11 +59,15 @@ and artifact-retrieval surface. Both execution paths use the permanent
 Stage-adapter process interface and validate the complete archive candidate.
 The composition Stage is implemented: it asks a configured model for proposals
 over the supplied `service-repository/`, checks and ranks them, and publishes the
-preferred blueprint and deployment schema with evidence. The other three Stages
-remain Fixtures, which never consume real composition output, so a successful
-composition ends the run with them skipped. Fixture output is not Validation
-evidence, Domain success, KPI evidence, or proof that a real build, simulation,
-or deployment capability exists.
+preferred blueprint and deployment schema with evidence. On Jenkins, the
+image-build Stage pushes one image per placement to the stack-local pipeline
+registry. The CV Stage then runs the composition from those images in one
+headless Gazebo scenario and publishes its verdict as Validation evidence.
+`dispatch-local` keeps the image-build Fixture, so a local run with a
+successful composition ends with image build skipped and CV and CD blocked. CD
+remains a Fixture. Fixture output is not Validation evidence, Domain success,
+KPI evidence, or proof that a real build, simulation, or deployment capability
+exists.
 
 The repository also reconstructs an on-demand, zero-executor Jenkins controller
 and five isolated one-executor inbound agents from immutable image inputs,
@@ -105,8 +111,6 @@ uv run --project integration sdi-integration --help
   self-hosted runners, one per repository, run as optional stack services.
 - `.github/workflows/`: the protected path-only Pipeline integration workflow.
 - `docs/`: role-neutral setup, operation, maintenance, and readiness guidance.
-- `CV/gazebo/`: retained Gazebo source assets. They are not connected to the
-  integration scaffold.
 - `CI/`: an unsupported workspace reserved for a possible future composition
   adapter. It is not a supported entry point.
 

@@ -6,9 +6,11 @@ existing installation's Jenkins state or credentials. Select an approved commit
 from the upstream protected `main` branch after merge and record that exact SHA
 during acceptance.
 
-The installed system runs deterministic Fixture adapters. It proves the
-GitHub-to-Jenkins pipeline interface, not real composition, image publication,
-Continuous Validation, deployment, or KPI results.
+The installed system runs real composition, image-build, and Continuous
+Validation (CV) Stages, and a deterministic CD Fixture. It proves the
+GitHub-to-Jenkins pipeline interface, model-backed composition, image
+publication to the stack-local registry, and one CV verdict per run. It does not
+prove deployment or KPI results.
 
 ## Responsibilities
 
@@ -123,6 +125,14 @@ deployment/jenkins/bin/stack verify-live
 deployment/jenkins/bin/stack exercise-live
 ```
 
+On a new `cv-engine-state` volume, `start` also builds the CV simulation image
+into the CV engine before it starts the agents. Measured builds took 675 to
+4400 s. `start` prints each `Step` line of the build and then
+`sdi-cv-warm: sdi-cv-sim:<hash> built in <seconds> s`. If the build fails, for
+example because a package mirror keeps returning errors, `start` exits with an
+error and leaves the agents stopped. Run `deployment/jenkins/bin/stack start`
+again. A later `start` finds the image and prints `present in`.
+
 Jenkins remains at `http://127.0.0.1:<configured-port>`. Do not publish it or an
 inbound-agent TCP port. The agents connect over WebSocket on isolated Docker
 networks.
@@ -224,7 +234,9 @@ deployment/jenkins/bin/stack quiesce
 deployment/jenkins/bin/stack stop
 ```
 
-Use `stack start` and `verify-live` to resume; `start` also starts the runner. Follow
+Use `stack start` and `verify-live` to resume; `start` also starts the runner.
+After `stack destroy` or a deleted `cv-engine-state` volume, the next `start`
+builds the CV simulation image again, as in section 3. Follow
 `deployment/jenkins/README.md` for snapshot, restore, reconstruction, and
 one-at-a-time credential or agent replacement.
 

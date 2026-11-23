@@ -14,6 +14,7 @@ from ._git_input import GitRepository
 from ._handoff_contracts import HANDOFF_CONTRACT_VERSION
 from ._integration_code import integration_code_digest, require_fresh_agent_images
 from ._jenkins_agent_boundary import enforce_integration_execution_boundary
+from ._result_contracts import run_is_red
 from ._run_input import identify_committed_run
 from ._service_descriptions import SERVICE_REPOSITORY_ROOT
 from ._stage_registry import (
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from ._result_contracts import PipelineIntegrationResult
     from ._stage_registry import StageName
     from ._stage_runtime import StageInputSource, SuppliedInputs
 
@@ -468,19 +468,9 @@ def finalize_jenkins_run(  # noqa: PLR0913
     )
 
 
-def bundle_has_machinery_failure(bundle_root: Path, *, execution_id: str) -> bool:
-    """Validate a bundle and derive only its machinery conclusion."""
-    result: PipelineIntegrationResult = validate_bundle(bundle_root)
+def bundle_is_red(bundle_root: Path, *, execution_id: str) -> bool:
+    result = validate_bundle(bundle_root)
     if result.execution_id != execution_id:
         msg = "Pipeline integration result execution ID does not match the build"
         raise InputError(msg)
-    for attempt in result.attempts:
-        if attempt.execution_conclusion in {"failed", "timed_out"}:
-            return True
-        if attempt.reason is not None and attempt.reason.code in {
-            "sdi.stage.not-implemented",
-            "sdi.dependency.fixture-evidence",
-            "sdi.run.deadline-exceeded",
-        }:
-            return True
-    return False
+    return run_is_red(result)

@@ -273,11 +273,10 @@ case "$operation" in
                     [ "$operation_status" -ne 0 ] || operation_status=1
                 }
             fi
-            # `stop` keeps named volumes, and the staging start creates the
-            # builder's two; they may not exist if staging failed earlier.
             if [ -n "$staging_project" ]; then
                 docker volume rm --force "${staging_project}_buildkit-state" \
-                    "${staging_project}_pipeline-registry" >/dev/null 2>&1 || {
+                    "${staging_project}_pipeline-registry" \
+                    "${staging_project}_cv-engine-state" >/dev/null 2>&1 || {
                     [ "$operation_status" -ne 0 ] || operation_status=1
                 }
             fi
@@ -359,7 +358,7 @@ case "$operation" in
             --agent-secret-directory "$generated" || \
             fail 'Jenkins did not issue fresh agent credentials'
         "$stack_command" --config "$staging_config" \
-            --project-name "$staging_project" start
+            --project-name "$staging_project" --no-cv-warm start
         "$stack_command" --config "$staging_config" \
             --project-name "$staging_project" verify-live
         "$stack_command" --config "$staging_config" \

@@ -12,13 +12,19 @@ import pytest
 from pydantic import BaseModel
 
 from sdi_pipeline_integration._adapter_kit import (
+    SUCCEEDED,
     DomainAdapter,
     Invocation,
     Outcome,
     Verdict,
+    serve,
 )
 from sdi_pipeline_integration._json_input import canonical_json
-from sdi_pipeline_integration._stage_contracts import AdapterDescriptor, StageProfile
+from sdi_pipeline_integration._stage_contracts import (
+    AdapterDescriptor,
+    AdapterResponse,
+    StageProfile,
+)
 from sdi_pipeline_integration._stage_profiles import stage_profile_bytes
 from sdi_pipeline_integration._stage_registry import STAGE_ORDER
 from sdi_pipeline_integration._yaml_input import parse_yaml
@@ -98,7 +104,9 @@ def _request(stage: StageName) -> bytes:
     )
 
 
-def _run(main: Main, stage: StageName, request: bytes, tmp_path: Path) -> Path:
+def _run(
+    main: Main, stage: StageName, request: bytes, tmp_path: Path, *, exit_code: int = 2
+) -> Path:
     request_path = tmp_path / "request.json"
     request_path.write_bytes(request)
     input_root = tmp_path / "inputs"
@@ -108,7 +116,7 @@ def _run(main: Main, stage: StageName, request: bytes, tmp_path: Path) -> Path:
     input_root.mkdir(exist_ok=True)
     output_root = tmp_path / "candidate"
     output_root.mkdir()
-    exit_code = main(
+    exited = main(
         [
             "run",
             "--request",
@@ -119,7 +127,7 @@ def _run(main: Main, stage: StageName, request: bytes, tmp_path: Path) -> Path:
             str(output_root),
         ]
     )
-    assert exit_code == 2, "the adapter did not refuse"
+    assert exited == exit_code
     return output_root
 
 
@@ -196,3 +204,20 @@ def test_a_verdict_naming_an_undeclared_output_publishes_nothing(
     )
     assert list(output_root.iterdir()) == []
     assert capsys.readouterr().err == f"{script}: InputError\n"
+
+
+def test_a_success_without_a_reason_publishes_a_response_without_one(
+    tmp_path: Path,
+) -> None:
+    main = serve("cv", lambda _invocation: Verdict(SUCCEEDED))
+
+    output_root = _run(main, "cv", _request("cv"), tmp_path, exit_code=0)
+
+    raw = (output_root / "response.json").read_bytes()
+    assert b'"reason"' not in raw
+    response = AdapterResponse.model_validate_json(raw)
+    assert (response.execution_conclusion, response.domain_outcome) == (
+        "succeeded",
+        "succeeded",
+    )
+    assert (output_root / "diagnostic.txt").read_text() == "outcome: sdi.cv.succeeded\n"

@@ -7,6 +7,7 @@ installation=$repository_root/deployment/installation.env
 config=$root/config/local/controller.env
 project_name=${COMPOSE_PROJECT_NAME:-sdi-jenkins}
 prebuilt=
+cv_warm=true
 
 fail() {
     printf 'stack: %s\n' "$1" >&2
@@ -15,7 +16,7 @@ fail() {
 
 usage() {
     printf '%s\n' \
-        'usage: stack [--config PATH] [--project-name NAME] [--prebuilt] setup|preflight|validate|build|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT|register-runner upstream|fork [--name NAME] [--replace]'
+        'usage: stack [--config PATH] [--project-name NAME] [--prebuilt] [--no-cv-warm] setup|preflight|validate|build|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT|register-runner upstream|fork [--name NAME] [--replace]'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -32,6 +33,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --prebuilt)
             prebuilt=true
+            shift
+            ;;
+        --no-cv-warm)
+            cv_warm=
             shift
             ;;
         -h|--help)
@@ -104,6 +109,7 @@ if [ -n "$prebuilt" ]; then
         *) fail "--prebuilt does not apply to $action" ;;
     esac
 fi
+[ -n "$cv_warm" ] || [ "$action" = start ] || fail '--no-cv-warm applies only to start'
 
 if [ "$action" = smoke ]; then
     exec "$root/bin/smoke"
@@ -800,6 +806,16 @@ refuse_active_runner_job() {
         fail 'a GitHub runner is executing a handoff job; retry after it finishes'
 }
 
+# The engine cancels the sim build once its client container is gone, but
+# compose run leaves that container running when Ctrl-C ends it.
+warm_cv_engine() {
+    warm_container=$project_name-cv-warm
+    docker rm --force "$warm_container" >/dev/null 2>&1 || true
+    trap 'docker rm --force "$warm_container" >/dev/null 2>&1; exit 130' HUP INT TERM
+    compose run --rm --no-deps -T --name "$warm_container" \
+        --entrypoint sdi-cv-warm cv </dev/null
+}
+
 [ -z "$prebuilt" ] || require_build_stamp
 
 case "$action" in
@@ -834,7 +850,7 @@ case "$action" in
             build_controller
             agent_services='integration ci image-build cv cd'
         fi
-        compose pull --quiet --policy missing buildkitd registry
+        compose pull --quiet --policy missing buildkitd registry cv-engine
         [ -z "$agent_services$runner_services" ] || \
             compose build $agent_services $runner_services $proxy_services
         for agent in $agent_services; do
@@ -843,6 +859,11 @@ case "$action" in
         for service in $runner_services; do
             require_runner_registration "${service#runner-}"
         done
+        if [ -n "$cv_warm" ]; then
+            compose up --no-build --detach --wait --wait-timeout 240 cv-engine
+            warm_cv_engine || \
+                fail 'the CV engine has no simulation image, so start did not start the agents and runners; rerun: deployment/jenkins/bin/stack start'
+        fi
         refuse_active_runner_job
         compose up --no-build --detach --wait --wait-timeout 240
         ;;
@@ -890,6 +911,8 @@ case "$action" in
         trap 'exit 130' HUP INT TERM
         compose build "$reconcile_agent"
         validate_agent_image "$reconcile_agent"
+        [ "$reconcile_agent" != cv ] || warm_cv_engine || \
+            fail 'the CV engine has no simulation image for the rebuilt cv agent, so the agent was not replaced; rerun: deployment/jenkins/bin/stack reconcile-agent cv'
         compose up --no-build --no-deps --detach --wait --wait-timeout 240 \
             "$reconcile_agent"
         ;;

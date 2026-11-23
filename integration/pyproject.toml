@@ -10,10 +10,12 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
+    "docker==7.2.0",
     "openai==3.26.0",
     "pydantic==2.13.5",
     "requests==2.34.2",
     "ruamel-yaml==0.19.0",
+    "urllib3==2.7.0",
 ]
 
 [project.scripts]
@@ -21,6 +23,8 @@ sdi-integration = "sdi_pipeline_integration._cli:main"
 sdi-fixture-adapter = "sdi_pipeline_integration._fixture_adapter:main"
 sdi-composition-adapter = "sdi_pipeline_integration._composition_adapter:main"
 sdi-image-build-adapter = "sdi_pipeline_integration._image_build_adapter:main"
+sdi-cv-adapter = "sdi_pipeline_integration._cv_adapter:main"
+sdi-cv-warm = "sdi_pipeline_integration._cv_adapter:warm"
 
 [tool.hatch.build.targets.wheel.force-include]
 "fixtures/cases" = "sdi_pipeline_integration/_fixture_cases"
@@ -42,6 +46,7 @@ addopts = ["--strict-config", "--strict-markers"]
 markers = [
     "live: calls a real model provider over the network",
     "slow: waits out a real work limit or deadline",
+    "cv_engine: runs real S-04 compositions in the CV engine pair that SDI_CV_ENGINE_URL and SDI_CV_REGISTRY_URL name",
 ]
 testpaths = ["tests"]
 
@@ -54,9 +59,11 @@ select = ["ALL"]
 ignore = ["COM812", "CPY001", "D203", "D213"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/sdi_pipeline_integration/_cv_sim/**" = ["INP001", "S603", "S607"]
 "tests/**" = ["D103", "PLR2004", "S101", "S603", "S607"]
 
 [tool.basedpyright]
 include = ["src", "tests"]
+exclude = ["src/sdi_pipeline_integration/_cv_sim"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"

@@ -42,8 +42,9 @@ subscribes:
   /tf_static:   {type: tf2_msgs/msg/TFMessage, reliability: reliable, durability: transient_local}
 
 publishes:
-  /map: {type: nav_msgs/msg/OccupancyGrid, reliability: reliable, durability: transient_local}
-  /tf:  {type: tf2_msgs/msg/TFMessage}
+  /map:       {type: nav_msgs/msg/OccupancyGrid, reliability: reliable, durability: transient_local}
+  /tf:        {type: tf2_msgs/msg/TFMessage}
+  /amcl_pose: {type: geometry_msgs/msg/PoseWithCovarianceStamped}
 
 frames:
   global: map
@@ -60,7 +61,8 @@ the planar lidar and odometry. Uses the map of the TurtleBot3 simulation world.
 
 - Publishes the map once on `/map` (latched for late subscribers).
 - Estimates the robot pose from `/scan` and the `odom → base_footprint` transform
-  and publishes the `map → odom` transform on `/tf`.
+  and publishes the `map → odom` transform on `/tf` and the pose estimate on
+  `/amcl_pose`.
 - Takes an initial pose estimate on `/initialpose`.
 
 ## Assumptions and preconditions
@@ -75,7 +77,7 @@ the planar lidar and odometry. Uses the map of the TurtleBot3 simulation world.
 - The map is `turtlebot3_world`, packaged with `turtlebot3_navigation2`; a real
   site needs its own map, which is another service.
 - Lists only the endpoints the target navigation run uses; AMCL also publishes
-  `/amcl_pose` and `/particle_cloud`, and the map server offers map loading.
+  `/particle_cloud`, and the map server offers map loading.
 
 ## Configuration notes
 

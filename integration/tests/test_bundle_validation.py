@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests._fixture_inputs import commit_fixture_repository, dispatch_local_cli
+from tests._fixture_inputs import (
+    RED_RUN_EXIT,
+    commit_fixture_repository,
+    dispatch_local_cli,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,7 +23,7 @@ def test_bundle_validation_rejects_tampered_artifact_bytes(tmp_path: Path) -> No
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result = json.loads(dispatched.stdout)
     artifact_path = bundle_root / result["artifacts"][0]["path"]
     artifact_path.write_bytes(b"tampered\n")
@@ -48,7 +52,7 @@ def test_bundle_validation_rejects_invalid_archive_inventory(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result = json.loads(dispatched.stdout)
     artifact_path = bundle_root / result["artifacts"][0]["path"]
     if mutation == "missing":
@@ -79,7 +83,7 @@ def test_bundle_validation_rejects_unbounded_artifact_grants(tmp_path: Path) -> 
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     result["attempts"][0]["accepted_files"][0]["byte_size"] = 32769
@@ -108,7 +112,7 @@ def test_bundle_validation_rejects_machine_specific_provenance_paths(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     original = result["input_provenance"][0]["path"]
@@ -143,7 +147,7 @@ def test_bundle_validation_rejects_reordered_or_unknown_input_provenance(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     provenance = result["input_provenance"]
@@ -174,7 +178,7 @@ def test_bundle_validation_rejects_a_private_repository_identity(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["repository"] = repository_identity
@@ -200,7 +204,7 @@ def test_bundle_validation_rejects_sensitive_domain_content(tmp_path: Path) -> N
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     artifact_path = bundle_root / "stages/composition/composition-blueprint.json"
     document = json.loads(artifact_path.read_text(encoding="utf-8"))
     document["services"][0]["capability"] = "jenkins.internal"
@@ -247,7 +251,7 @@ def test_bundle_validation_rejects_a_stage_output_under_the_wrong_schema(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     result["attempts"][1]["accepted_files"][0]["schema_version"] = (
@@ -278,11 +282,11 @@ def test_bundle_validation_rechecks_cross_stage_domain_correlation(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     artifact = next(
-        item for item in result["artifacts"] if item["slot"] == "deployment_result"
+        item for item in result["artifacts"] if item["slot"] == "image_build_result"
     )
     domain_path = bundle_root / artifact["path"]
     domain_output = json.loads(domain_path.read_text())
@@ -292,7 +296,7 @@ def test_bundle_validation_rechecks_cross_stage_domain_correlation(
     changed_sha256 = hashlib.sha256(changed_bytes).hexdigest()
     artifact["byte_size"] = len(changed_bytes)
     artifact["sha256"] = changed_sha256
-    accepted = result["attempts"][3]["accepted_files"][0]
+    accepted = result["attempts"][1]["accepted_files"][0]
     accepted["byte_size"] = len(changed_bytes)
     accepted["sha256"] = changed_sha256
     result_path.write_text(json.dumps(result), encoding="utf-8")
@@ -319,7 +323,7 @@ def test_bundle_validation_rejects_work_after_a_negative_domain_outcome(
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     first = result["attempts"][0]
@@ -362,7 +366,7 @@ def test_bundle_validation_rejects_ascii_delete_in_diagnostics(tmp_path: Path) -
     repository, commit_sha = commit_fixture_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
     result_path = bundle_root / "pipeline-integration-result.json"
     result = json.loads(result_path.read_text())
     artifact = next(

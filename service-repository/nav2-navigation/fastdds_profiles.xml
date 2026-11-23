@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+A service server drops its reply when its response writer has not yet matched
+the client's response reader, after waiting max_blocking_time (default 100 ms;
+rmw_fastrtps rmw_response.cpp). At bringup the lifecycle manager calls
+change_state before discovery completes, and Nav2 1.3.13 waits for that reply
+with no timeout, so a dropped reply hangs bringup. Wait up to 5 s instead.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <publisher profile_name="service">
+    <qos>
+      <reliability>
+        <max_blocking_time>
+          <sec>5</sec>
+        </max_blocking_time>
+      </reliability>
+    </qos>
+  </publisher>
+</profiles>

@@ -73,7 +73,6 @@ CONFORMANCE_CASES = (
 CASE_RUN_REQUESTS: dict[str, str] = {
     "composition-s-04-tc-03-c-05": C05_RUN_REQUEST,
     "image-build-s-04-tc-03-c-05": C05_RUN_REQUEST,
-    "cv-s-04-tc-03-c-05": C05_RUN_REQUEST,
     "cd-s-04-tc-03-c-05": C05_RUN_REQUEST,
     **{
         f"composition-{name}": f"runs/conformance/composition-{name}.yaml"

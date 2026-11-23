@@ -192,7 +192,7 @@ def test_verification_is_the_complete_fail_fast_acceptance_gate(tmp_path: Path) 
         "uv run --frozen ruff format --check .",
         "uv run --frozen ruff check .",
         "uv run --frozen basedpyright",
-        "uv run --frozen pytest -m not slow -n auto --dist worksteal",
+        "uv run --frozen pytest -m not slow and not cv_engine -n auto --dist worksteal",
         "uv run --frozen pytest -m slow",
         "uv tree --frozen --all-groups",
         "stack smoke",
@@ -217,7 +217,7 @@ def test_verification_is_the_complete_fail_fast_acceptance_gate(tmp_path: Path) 
     assert stage_status == (
         "composition: implemented (jenkins), implemented (local)\n"
         "image-build: implemented (jenkins), fixture (local)\n"
-        "cv: fixture (jenkins), fixture (local)\n"
+        "cv: implemented (jenkins), implemented (local)\n"
         "cd: fixture (jenkins), fixture (local)\n"
     )
     assert completed.stdout.endswith(f"Repository acceptance passed.\n{stage_status}")
@@ -313,7 +313,9 @@ def test_fast_tier_skips_the_slow_tests_and_the_stack_smoke(tmp_path: Path) -> N
 
     assert completed.returncode == 0, completed.stderr
     commands = _commands(tmp_path)
-    assert commands[-1] == "uv run --frozen pytest -m not slow -n auto --dist worksteal"
+    assert commands[-1] == (
+        "uv run --frozen pytest -m not slow and not cv_engine -n auto --dist worksteal"
+    )
     assert "uv run --frozen pytest -m slow" not in commands
     assert "stack smoke" not in commands
     assert completed.stdout.endswith(

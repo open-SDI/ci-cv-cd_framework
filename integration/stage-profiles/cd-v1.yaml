@@ -19,10 +19,6 @@ inputs:
     path: image-build-result.json
     media_type: application/json
     schema_version: sdi.image-build-result/v1
-  - slot: validation_evidence
-    path: validation-evidence.json
-    media_type: application/json
-    schema_version: sdi.validation-evidence/v1
 outputs:
   - slot: deployment_result
     path: outputs/deployment-result.json

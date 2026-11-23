@@ -239,6 +239,7 @@ def validate_bundle_documents(  # noqa: C901, PLR0912, PLR0915
             stage_inputs,
             {item.slot: item.sha256 for item in attempt.accepted_inputs},
             identity,
+            implementation_mode=attempt.implementation_mode,
             domain_outcome=attempt.domain_outcome,
             evidence=evidence_documents[stage],
         )

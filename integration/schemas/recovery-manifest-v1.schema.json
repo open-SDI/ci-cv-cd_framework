@@ -51,6 +51,11 @@
           "title": "Cv Adapter Image",
           "type": "string"
         },
+        "cv_engine_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Cv Engine Image",
+          "type": "string"
+        },
         "github_runner_sha256": {
           "pattern": "^[0-9a-f]{64}$",
           "title": "Github Runner Sha256",
@@ -126,6 +131,7 @@
         "jenkins_remoting_image",
         "buildkit_image",
         "registry_image",
+        "cv_engine_image",
         "composition_adapter_image",
         "image_build_adapter_image",
         "cv_adapter_image",

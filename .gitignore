@@ -36,7 +36,6 @@ htmlcov/
 /deployment/jenkins/workspaces/
 /deployment/jenkins/recovery-artifacts/
 /deployment/jenkins/config/local/
-/CV/gazebo/_models/
 
 # Runtime secrets and local process state
 .env

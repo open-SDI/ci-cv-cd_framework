@@ -184,9 +184,11 @@ placement `not_evaluated`. When Image-build was skipped, blocked, failed
 preflight, or timed out, it has no result, and the section gives its conclusion
 and reason in one line instead.
 
-A valid negative Domain outcome can remain green because the integration
-machinery completed correctly. Jenkins machinery failure, retrieval failure,
-contract rejection, identity mismatch, or artifact-publication failure is red.
+A CV `failed` verdict is red, because CV found the composition does not work.
+Any other valid negative Domain outcome, and a composition CV did not evaluate,
+can remain green because the integration machinery completed correctly. Jenkins
+machinery failure, retrieval failure, contract rejection, identity mismatch, or
+artifact-publication failure is red.
 A Jenkins `FAILURE` may still return and publish a valid diagnostic bundle; its
 typed receipt remains authoritative for the red handoff status.
 
@@ -205,9 +207,10 @@ steps to complete.
 
 The composition Stage is implemented and calls the default generator of the
 committed composition config over the checked-out service repository, which
-image build is also given for its recipes. Image build, CV, and CD use
-deterministic Fixtures, which never consume real composition output, so a
-successful composition leaves them skipped. Fixture files prove only the
+image build is also given for its recipes. Image build and CV are implemented:
+a successful composition is followed by a real image build and a CV verdict. CD
+uses a deterministic Fixture, which never consumes real output, so it is
+skipped. Fixture files prove only the
 pipeline interface and evidence handling. They are not proof of a real Domain
 capability, CV verdict, deployment outcome, supported-combination KPI, or any
 aggregate Domain result. The summary therefore always states `KPI evaluation:

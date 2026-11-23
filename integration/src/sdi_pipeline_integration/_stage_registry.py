@@ -78,13 +78,6 @@ SLOTS = (
         "image_build",
     ),
     Slot(
-        "validation_evidence",
-        "validation-evidence.json",
-        "application/json",
-        "sdi.validation-evidence/v1",
-        "cv",
-    ),
-    Slot(
         "deployment_result",
         "deployment-result.json",
         "application/json",
@@ -102,13 +95,18 @@ SUPPLIED_INPUT_SLOTS = frozenset(
 
 @dataclass(frozen=True)
 class EvidenceGrant:
-    """Optional evidence of how a Stage reached its outcome."""
+    """Evidence of how a Stage reached its outcome, which no later Stage reads.
+
+    Required evidence comes from every implemented attempt whose execution
+    succeeded.
+    """
 
     name: str
     file_name: str
     media_type: str
     schema_version: str
     max_bytes: int
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,16 +212,27 @@ STAGES: dict[StageName, Stage] = {
             (
                 "requirements_specification",
                 "target_profile",
+                "service_repository",
                 "composition_blueprint",
                 "deployment_schema",
                 "image_build_result",
             ),
             work_limit_seconds=45 * 60,
             domain_output_max_bytes=32768,
-            diagnostic_max_bytes=4096,
+            diagnostic_max_bytes=16384,
+            evidence=(
+                EvidenceGrant(
+                    "validation_evidence",
+                    "validation-evidence.json",
+                    "application/json",
+                    "sdi.validation-evidence/v1",
+                    max_bytes=32768,
+                    required=True,
+                ),
+            ),
         ),
         agent=Agent("cv", "cv"),
-        jenkins_descriptor="deployment/jenkins/adapters/cv-fixture-v1.yaml",
+        jenkins_descriptor="deployment/jenkins/adapters/cv-v1.yaml",
     ),
     "cd": Stage(
         "cd",
@@ -235,7 +244,6 @@ STAGES: dict[StageName, Stage] = {
                 "composition_blueprint",
                 "deployment_schema",
                 "image_build_result",
-                "validation_evidence",
             ),
             work_limit_seconds=15 * 60,
             domain_output_max_bytes=32768,

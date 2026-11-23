@@ -22,6 +22,7 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 JENKINS_ROOT = REPOSITORY_ROOT / "deployment" / "jenkins"
 AGENT_NAMES = {agent.node for agent in AGENTS}
 BUILDER_SERVICES = {"buildkitd", "registry"}
+CV_ENGINE = "cv-engine"
 RUNNER_STACK_SERVICES = {
     "runner-upstream",
     "runner-fork",
@@ -31,7 +32,8 @@ RUNNER_STACK_SERVICES = {
 AGENT_LABELS = {agent.node: agent.label for agent in AGENTS}
 AGENT_TARGETS = dict.fromkeys(AGENT_NAMES, "agent") | {"image-build": "image-build"}
 AGENT_NETWORKS = {name: [f"controller-{name}"] for name in AGENT_NAMES} | {
-    "image-build": ["controller-image-build", "image-build-builder"]
+    "image-build": ["controller-image-build", "image-build-builder"],
+    "cv": ["controller-cv", "cv-engine-agent"],
 }
 FIXTURE_IMAGE = (
     "docker.io/library/python@"
@@ -105,6 +107,7 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
         "controller",
         *AGENT_NAMES,
         *BUILDER_SERVICES,
+        CV_ENGINE,
         *RUNNER_STACK_SERVICES,
     }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
@@ -151,7 +154,15 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
         == "${JENKINS_AGENT_NETWORK_INTERNAL:-false}"
         for name in agent_networks
     )
-    assert all("docker.sock" not in json.dumps(services[name]) for name in services)
+
+
+def test_no_service_mounts_the_host_docker_socket() -> None:
+    services = _load_yaml(JENKINS_ROOT / "compose.yaml")["services"]
+
+    assert all(
+        "docker.sock" not in json.dumps(service.get("volumes", []))
+        for service in services.values()
+    )
 
 
 def test_domain_agents_use_their_descriptor_selected_runtime_image() -> None:
@@ -206,7 +217,7 @@ def test_builder_and_registry_are_reachable_only_from_the_image_build_agent() ->
         "/etc/buildkit/buildkitd.toml",
     ]
     assert buildkitd["networks"] == ["image-build-builder", "builder-egress"]
-    assert registry["networks"] == ["image-build-builder"]
+    assert registry["networks"] == ["image-build-builder", "cv-engine-registry"]
     assert registry["read_only"] is True
     assert registry["cap_drop"] == ["ALL"]
     assert registry["security_opt"] == ["no-new-privileges:true"]
@@ -233,6 +244,57 @@ def test_builder_and_registry_are_reachable_only_from_the_image_build_agent() ->
     }
     assert {name for name, nets in members.items() if "builder-egress" in nets} == {
         "buildkitd"
+    }
+
+
+def test_cv_engine_is_reachable_only_from_the_cv_agent() -> None:
+    compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
+    services = compose["services"]
+    networks = compose["networks"]
+    engine = services[CV_ENGINE]
+
+    assert engine["image"] == _installation_pins()["SDI_CV_ENGINE_IMAGE"]
+    assert engine["platform"] == "linux/amd64"
+    assert engine["restart"] == "no"
+    assert "ports" not in engine
+    assert "build" not in engine
+    assert engine["privileged"] is True
+    assert engine["environment"] == {"DOCKER_TLS_CERTDIR": ""}
+    assert engine["command"] == [
+        "dockerd",
+        "-H",
+        "unix:///var/run/docker.sock",
+        "-H",
+        "tcp://0.0.0.0:2375",
+        "--tls=false",
+        "--insecure-registry",
+        "registry:5000",
+    ]
+    # The image declares /var/lib/docker as VOLUME.
+    assert engine["volumes"] == ["cv-engine-state:/var/lib/docker"]
+    assert engine["healthcheck"]["test"][0] == "CMD"
+    assert engine["networks"] == [
+        "cv-engine-agent",
+        "cv-engine-registry",
+        "cv-engine-egress",
+    ]
+
+    assert networks["cv-engine-agent"]["internal"] is True
+    assert networks["cv-engine-registry"]["internal"] is True
+    assert networks["cv-engine-egress"] is None
+    members = {
+        name: set(service.get("networks", [])) for name, service in services.items()
+    }
+    assert {name for name, nets in members.items() if "cv-engine-agent" in nets} == {
+        "cv",
+        CV_ENGINE,
+    }
+    assert {name for name, nets in members.items() if "cv-engine-egress" in nets} == {
+        CV_ENGINE
+    }
+    assert {name for name, nets in members.items() if "cv-engine-registry" in nets} == {
+        CV_ENGINE,
+        "registry",
     }
 
 

@@ -30,7 +30,7 @@ from ._jenkins_handoff import HandoffError, handoff_jenkins
 from ._jenkins_pipeline import (
     RunDeadlineExpiredError,
     attempt_allows_continuation,
-    bundle_has_machinery_failure,
+    bundle_is_red,
     check_stage_wiring,
     execute_jenkins_stage,
     finalize_jenkins_run,
@@ -42,6 +42,7 @@ from ._recovery_contracts import (
     load_installation_authority,
     validate_repository_authority,
 )
+from ._result_contracts import PipelineIntegrationResult, run_is_red
 from ._run_input import identify_committed_run
 from ._schemas import check_schemas, write_schemas
 from ._service_descriptions import read_service_repository
@@ -244,7 +245,7 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     finalize.add_argument("--bundle-root", type=Path, required=True)
     conclusion = commands.add_parser(
         "bundle-conclusion",
-        help="validate a bundle and derive its Jenkins machinery conclusion",
+        help="validate a bundle and derive its Jenkins run colour",
     )
     conclusion.add_argument("--bundle-root", type=Path, required=True)
     conclusion.add_argument("--execution-id", required=True)
@@ -360,28 +361,6 @@ def _add_generator_argument(parser: argparse.ArgumentParser) -> None:
 
 def _write_handoff_progress(phase: str) -> None:
     sys.stderr.write(f"sdi-integration: handoff phase={phase}\n")
-
-
-def _has_machinery_failure(result: dict[str, object]) -> bool:
-    attempts = result.get("attempts")
-    if not isinstance(attempts, list):
-        return True
-    for raw_attempt in cast("list[object]", attempts):
-        if not isinstance(raw_attempt, dict):
-            return True
-        attempt = cast("dict[str, object]", raw_attempt)
-        if attempt.get("execution_conclusion") in {"failed", "timed_out"}:
-            return True
-        raw_reason = attempt.get("reason")
-        if isinstance(raw_reason, dict):
-            reason = cast("dict[str, object]", raw_reason)
-            if reason.get("code") in {
-                "sdi.stage.not-implemented",
-                "sdi.dependency.fixture-evidence",
-                "sdi.run.deadline-exceeded",
-            }:
-                return True
-    return False
 
 
 def _stage_status(repository: Path) -> str:
@@ -771,14 +750,14 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
         return 0
     if arguments.command == "bundle-conclusion":
         try:
-            machinery_failure = bundle_has_machinery_failure(
+            red = bundle_is_red(
                 arguments.bundle_root,
                 execution_id=arguments.execution_id,
             )
         except (InputError, OSError, ValidationError) as error:
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
-        return 1 if machinery_failure else 0
+        return 1 if red else 0
     if arguments.command == "dispatch-local":
         bundle_existed = arguments.bundle_root.exists() or (
             arguments.bundle_root.is_symlink()
@@ -806,9 +785,7 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
         sys.stdout.write(
             f"{json.dumps(result, sort_keys=True, separators=(',', ':'))}\n"
         )
-        if _has_machinery_failure(result):
-            return 1
-        return 0
+        return 1 if run_is_red(PipelineIntegrationResult.model_validate(result)) else 0
     if arguments.command == "validate-bundle":
         try:
             validate_bundle(arguments.bundle_root)

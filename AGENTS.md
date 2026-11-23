@@ -6,7 +6,6 @@
 - `CI/` is an explicitly unsupported workspace. The implemented composition adapter lives in `integration/` as `sdi-composition-adapter`; the architecture in `CI/APSEC_2025_Tools.pdf` is design context, not implemented code.
 - `service-repository/` is the SDI service repository: one `<service_id>/` service folder per mobility service, holding its `SDI.md` description and the recipes that build its artifacts. CI reads it as a supplied read-only path and never writes it.
 - The Year-1 plugin and prototype were retired. Git history is their archive; do not restore their interfaces or artifact formats.
-- Most tracked files are Gazebo assets under `CV/gazebo/models/`; avoid repository-wide formatting or generated-file rewrites there.
 
 ## Engineering Choices
 
@@ -17,12 +16,13 @@
 ## Pipeline Integration Scaffold
 
 - `integration/` requires Python `>=3.12,<3.13`, pins CPython 3.12.13 for development, and uses its own exact `uv.lock`.
-- Run the deterministic repository checks from any directory with `integration/scripts/verify`. It performs frozen environment setup, generated-schema, Stage-profile, `Jenkinsfile`, and Fixture-case freshness, Ruff formatting and linting, Basedpyright, pytest, and the ephemeral Jenkins stack smoke check (controller, five agents, builder, pipeline registry, and the handoff-runner image) on the supported Docker host.
+- Run the deterministic repository checks from any directory with `integration/scripts/verify`. It performs frozen environment setup, generated-schema, Stage-profile, `Jenkinsfile`, and Fixture-case freshness, Ruff formatting and linting, Basedpyright, pytest, and the ephemeral Jenkins stack smoke check (controller, five agents, builder, pipeline registry, CV engine, and the handoff-runner image) on the supported Docker host.
 - Full verify always runs the smoke check on `main` and on a branch with no commits beyond `origin/main`. On a branch with its own commits, it skips the smoke check when no changed, staged, or untracked file since the merge base is a smoke input. The `smoke_inputs` pattern in `integration/scripts/verify` owns that list, and verify prints which case applied.
 - Run `integration/scripts/verify --fast` while you work. It skips the slow tests and the smoke check. Run the full `integration/scripts/verify` once before you open a pull request.
+- Neither form of verify runs the `cv_engine` tests, which fly real S-04 compositions in a Docker-in-Docker engine pair. `integration/README.md` says how to run them.
 - Full verify takes the host lock `/tmp/sdi-host.lock` itself before the slow tests and the smoke check, so concurrent sessions on one host wait in turn. A `flock /tmp/sdi-host.lock` wrapper around verify is safe, because verify reuses the locked descriptor that `flock` passes down. A wrapper that closes inherited descriptors deadlocks. Examples are `flock -o` and a Python process that holds the lock and starts verify through `subprocess`, which closes inherited descriptors by default.
 - The public entry point is `uv run --project integration sdi-integration`. The CLI, committed file contracts, and language-neutral Stage-adapter process interface are the supported boundaries; internal Python modules are not compatibility contracts.
-- The current scaffold validates committed inputs and executes four Stages locally or through the protected GitHub workflow and thin root Jenkins pipeline on five isolated inbound agents. Composition is implemented: it calls the default generator, or the one `--generator` names, of the committed composition config (`integration/composition-config.yaml`) over the supplied service repository. The config's `qwen` generator is self-hosted for cheap live tests only. Image-build, CV, and CD remain Fixtures; their real adapters are deferred to dedicated implementation work.
+- The current scaffold validates committed inputs and executes four Stages locally or through the protected GitHub workflow and thin root Jenkins pipeline on five isolated inbound agents. Composition is implemented: it calls the default generator, or the one `--generator` names, of the committed composition config (`integration/composition-config.yaml`) over the supplied service repository. The config's `qwen` generator is self-hosted for cheap live tests only. Image-build is implemented on Jenkins, where `sdi-image-build-adapter` builds one image per placement and pushes it to the stack-local pipeline registry. `dispatch-local` still runs the image-build Fixture. CV is implemented: `sdi-cv-adapter` runs each composition from its images in one headless Gazebo scenario in the stack's CV engine and publishes `validation-evidence.json`. Locally, CV never runs, because its inputs come from the image-build Fixture. CD remains a Fixture; its real adapter is deferred to dedicated implementation work.
 - The composition live tests call a real model. Keep keys in the environment or the ignored root `.env`; never print, write, or commit them.
 - `integration/src/sdi_pipeline_integration/_stage_registry.py` owns Stage wiring. One `Stage` row per Stage holds its grant, display name, agent, Jenkins and local descriptors, and credentials, and `AGENTS` and `RUN_LIMITS` sit beside the rows. Change a Stage fact there first, then regenerate with `uv run --project integration sdi-integration jenkinsfile --write --jenkinsfile Jenkinsfile` and `uv run --project integration sdi-integration stage-profiles --write --directory integration/stage-profiles` from the repository root. JCasC, Compose, `deployment/jenkins/bin/smoke-check`, and `deployment/jenkins/bin/stack` keep hand-kept copies of some of those facts; update each to match. `integration/tests/test_stage_wiring.py` fails until they match.
 
@@ -33,6 +33,7 @@ Each rule has a check that fails when a change breaks it. When the operator corr
 | Rule | Check |
 | --- | --- |
 | Importing `_cli` loads no `openai`; import it only inside the function that builds a client. | `integration/tests/test_import_cost.py` |
+| Importing `_cli` loads no `docker`; import it only inside the function that builds a client. | `integration/tests/test_import_cost.py` |
 | Workflows under `.github/workflows/` pass actionlint. | `integration/tests/test_workflow_lint.py` |
 | `Jenkinsfile` never uses `scm`; select the repository by `env.JOB_NAME` as `checkoutSubmittedCommit` does. | `test_committed_jenkinsfile_does_not_use_scm` in `integration/tests/test_jenkinsfile_lint.py` |
 | `Jenkinsfile` calls only `sdi-integration` operations the CLI defines. | `test_committed_jenkinsfile_calls_only_defined_operations` in `integration/tests/test_jenkinsfile_lint.py` |
@@ -48,6 +49,7 @@ Each rule has a check that fails when a change breaks it. When the operator corr
 | Full verify serializes host Docker work on `/tmp/sdi-host.lock` and does not deadlock under a `flock` wrapper. | `test_verification_waits_while_another_process_holds_the_host_lock` and `test_a_caller_holding_the_host_lock_does_not_deadlock_verification` in `integration/tests/test_repository_acceptance.py` |
 | Each Domain adapter defines `main = serve(stage, body)` from `_adapter_kit` and refuses wrong-Stage, oversized, and malformed requests. | `integration/tests/test_adapter_entry_points.py` and `integration/tests/test_adapter_conformance.py` |
 | Per-Stage document checks live in `CHECKS` in `_stage_documents.py`, one `match` case per Stage. | Basedpyright, through `assert_never` in `_stage_check` |
+| CV's topic constant lives only in `TOPIC_CONSTANT` in `_cv_verdict.py`, and it equals the topics the sim's machinery nodes publish. | `integration/tests/test_cv_topic_constant.py` |
 | Verify prints Stage status from `sdi-integration stage-status`, never from hand-written text. | `integration/tests/test_repository_acceptance.py` |
 | Markdown names only repository paths that exist or that the repository's `.gitignore` files ignore. It checks every relative or `/`-rooted link target, and each code span holding a `/` whose first segment exists in the document's directory or a directory above it, or that ends in `.md`, after dropping a trailing `:N` or `:N-M`. It reads only link targets and code spans, so paths in fenced blocks go unchecked. | `integration/tests/test_doc_paths.py` |
 
@@ -58,14 +60,8 @@ Each rule has a check that fails when a change breaks it. When the operator corr
 - Keep issue, commit, branch, and pull-request references consistent with the repository's configured tracker and review policy.
 - Begin blocked work only after its blocker is merged.
 
-## CV Assets
-
-- Gazebo files are source assets for an external TurtleBot3 workspace. Copy the world, model directories, and launch file into `turtlebot3_gazebo`, then run `colcon build --symlink-install` from `turtlebot3_ws` before `ros2 launch turtlebot3_gazebo office.launch.py`.
-- The Gazebo assets are not wired into the pipeline integration scaffold and provide no automated scenario, oracle, or Validation evidence.
-- `CV/gazebo/world_parser.py` executes on import. Run it only from `CV/gazebo`; it copies model trees into the ignored `_models/` directory.
-
 ## Generated And Local Files
 
-- `.gitignore` excludes Python caches and environments, generated artifacts, workspaces, recovery artifacts, local deployment configuration, runtime secrets, and Gazebo parser output without hiding committed schemas or Fixture cases.
+- `.gitignore` excludes Python caches and environments, generated artifacts, workspaces, recovery artifacts, local deployment configuration, and runtime secrets without hiding committed schemas or Fixture cases.
 - The active root `Jenkinsfile` schedules only public integration CLI operations across the five agents. `.github/workflows/pipeline-integration.yml` is the protected external trigger, progress, summary, and artifact-retrieval surface.
 - Check `git status` after commands and keep machine-specific values, secrets, generated evidence, and recovery state out of commits.

@@ -6,9 +6,11 @@ success.
 
 Each case is selected by exact declared input byte sizes and SHA-256 digests. Its
 payload bytes and diagnostic are independently checked before the adapter
-publishes them. The C-05 cases emit schema-valid composition, image-build, CV,
-and CD contract data with Domain outcome `not_evaluated`. Their exact bytes prove
-only the four-Stage pipeline interface and handoff graph. The committed
+publishes them. The C-05 cases emit schema-valid composition, image-build, and
+CD contract data with Domain outcome `not_evaluated`. Their exact bytes prove
+only the pipeline interface and handoff graph. CV has no Fixture: it skips the
+Fixture chain's output with `sdi.dependency.fixture-evidence`, which turns that
+chain's run red. The committed
 composition descriptor is implemented, so tests reach these cases by selecting a
 Fixture composition descriptor. Composition cases match the service-repository
 manifest and the composition settings resolved from the composition config

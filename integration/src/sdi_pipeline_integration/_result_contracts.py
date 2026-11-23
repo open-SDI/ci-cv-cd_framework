@@ -73,6 +73,14 @@ INITIAL_SKIP_CODES = frozenset(
         "sdi.run.deadline-exceeded",
     }
 )
+RED_DOMAIN_FAILURE_STAGES: frozenset[StageName] = frozenset({"cv"})
+RED_REASON_CODES = frozenset(
+    {
+        "sdi.stage.not-implemented",
+        "sdi.dependency.fixture-evidence",
+        "sdi.run.deadline-exceeded",
+    }
+)
 
 
 def archive_path(stage: StageName, accepted_path: str) -> str:
@@ -420,3 +428,15 @@ class PipelineIntegrationResult(ContractModel):
             [PIPELINE_RESULT_PATH, *(item.path for item in self.artifacts)]
         )
         return self
+
+
+def run_is_red(result: PipelineIntegrationResult) -> bool:
+    return any(
+        attempt.execution_conclusion in {"failed", "timed_out"}
+        or (attempt.reason is not None and attempt.reason.code in RED_REASON_CODES)
+        or (
+            attempt.correlation.stage in RED_DOMAIN_FAILURE_STAGES
+            and attempt.domain_outcome == "failed"
+        )
+        for attempt in result.attempts
+    )

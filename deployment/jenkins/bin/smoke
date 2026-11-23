@@ -92,7 +92,7 @@ prebuilt start-controller
     --admin-id smoke-administrator \
     --admin-password-file "$admin_password" \
     --agent-secret-directory "$temporary"
-prebuilt start
+prebuilt --no-cv-warm start
 check
 
 # The runner image, its controller network, and both registration guards,
@@ -116,7 +116,7 @@ printf '%s\n' 'not-a-registration-token!' > "$temporary/invalid-registration-tok
 expect_refusal 'the registration token is empty or invalid' \
     "$stack" --config "$config" --project-name "$project_name" \
     register-runner fork < "$temporary/invalid-registration-token"
-expect_refusal 'the fork runner is not registered' prebuilt start
+expect_refusal 'the fork runner is not registered' prebuilt --no-cv-warm start
 grep -v '^GITHUB_RUNNERS=' "$config" > "$config.without-runners"
 mv "$config.without-runners" "$config"
 
@@ -152,7 +152,7 @@ for name in integration ci image-build cv cd; do
         exit 2
     }
 done
-prebuilt start
+prebuilt --no-cv-warm start
 check
 exercise
 
@@ -167,7 +167,7 @@ exercise
     --casc "$root/casc/jenkins.yaml"
 
 "$stack" --config "$config" --project-name "$project_name" stop
-prebuilt start
+prebuilt --no-cv-warm start
 check
 
 printf '%s\n' 'Ephemeral Jenkins controller, five-agent, builder, and handoff-runner smoke check passed.'

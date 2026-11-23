@@ -25,10 +25,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           filter: blob:none
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !/CV/
 
       - name: Confirm runner integration code matches the revision
         shell: bash

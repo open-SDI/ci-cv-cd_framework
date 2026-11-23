@@ -517,7 +517,8 @@ def test_start_refuses_while_a_runner_executes_a_job(tmp_path: Path) -> None:
 
     assert completed.returncode == 2
     assert "executing a handoff job" in completed.stderr
-    assert not any(" up " in line for line in stack.log())
+    full_up = " up --no-build --detach --wait --wait-timeout 240"
+    assert not any(line.endswith(full_up) for line in stack.log())
 
 
 @pytest.mark.parametrize(
@@ -546,9 +547,9 @@ def test_start_builds_and_starts_only_the_configured_runners(
     assert stack.profiles("up --no-build --detach --wait --wait-timeout 240") == [
         profiles
     ]
-    assert stack.profiles("pull --quiet --policy missing buildkitd registry") == [
-        profiles
-    ]
+    assert stack.profiles(
+        "pull --quiet --policy missing buildkitd registry cv-engine"
+    ) == [profiles]
     log = stack.log()
     pull = next(i for i, line in enumerate(log) if "pull --quiet" in line)
     build = next(i for i, line in enumerate(log) if "build integration" in line)

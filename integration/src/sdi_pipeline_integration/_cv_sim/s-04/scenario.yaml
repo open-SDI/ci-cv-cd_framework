@@ -1,0 +1,13 @@
+# Poses are in the map frame of turtlebot3_world (Gazebo's tb3_sandbox world frame), metres and radians.
+origin: {x: -2.0, y: -0.5, yaw: 0.0}
+poses:
+  joe-dropoff: {x: -0.55, y: -0.55, yaw: 0.0}
+rendezvous:
+  joe: joe-dropoff
+joe:
+  photo: joe/joe.png
+  photo_face_fraction: 0.6468
+  poster: {x: 0.60, y: -0.55, face_width_m: 0.4}
+clips:
+  request: clips/request.wav
+  receipt: clips/receipt.wav

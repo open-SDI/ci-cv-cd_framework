@@ -11,6 +11,10 @@ inputs:
     path: target-profile.yaml
     media_type: application/yaml
     schema_version: sdi.target-execution-profile/v1
+  - slot: service_repository
+    path: service-repository.json
+    media_type: application/json
+    schema_version: sdi.service-repository-manifest/v1
   - slot: composition_blueprint
     path: composition-blueprint.json
     media_type: application/json
@@ -28,9 +32,9 @@ outputs:
     path: outputs/validation-evidence.json
     media_type: application/json
     schema_version: sdi.validation-evidence/v1
-    role: domain_output
+    role: stage_evidence
     max_bytes: 32768
 diagnostic:
   path: diagnostic.txt
   media_type: text/plain; charset=utf-8
-  max_bytes: 4096
+  max_bytes: 16384

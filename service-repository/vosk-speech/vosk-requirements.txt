@@ -1,0 +1,5 @@
+# amd64: vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
+# arm64: vosk-0.3.45-py3-none-manylinux2014_aarch64.whl
+vosk==0.3.45 \
+    --hash=sha256:25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f \
+    --hash=sha256:54efb47dd890e544e9e20f0316413acec7f8680d04ec095c6140ab4e70262704

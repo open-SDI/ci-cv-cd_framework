@@ -451,7 +451,7 @@ def _diagnose(
         title = f"{service_id} build log tail"
         room = diagnostic.block_room(RECORDED, title, shares=len(failed))
         if room <= 0:
-            diagnostic.omit_block()
+            diagnostic.mark_cut()
             continue
         tail = log_tail(log, max_bytes=room)
         diagnostic.block(title, tail.lines, cut=tail.cut)

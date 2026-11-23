@@ -98,7 +98,7 @@ def missing_paths(root: Path) -> list[str]:
     entries = _with_parents(tracked)
     named: list[tuple[str, set[str]]] = []
     for document in sorted(tracked):
-        if not document.endswith(".md") or document.startswith("CV/gazebo/models/"):
+        if not document.endswith(".md"):
             continue
         lines = (root / document).read_text(encoding="utf-8").splitlines()
         for number, line in enumerate(lines, start=1):

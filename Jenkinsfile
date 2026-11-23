@@ -35,11 +35,10 @@ def isTimeoutInterruption = { interruption ->
 // not bind the scm variable, so the URL is selected by job name.
 //
 // The clone keeps full protected-main commit history for the ancestry check but
-// fetches only the blobs a sparse checkout without the unused CV/ Gazebo assets
-// needs; CV/ is nearly all of the repository's bytes. The CLI reads committed
-// blobs with lazy fetching disabled, so it fails closed outside that set. The
-// git plugin's checkout step cannot filter blobs, so plain git is used. Only the
-// transfer is retried, with stalled transfers aborted; no Stage attempt is.
+// fetches only the submitted commit's blobs. The CLI reads committed blobs with
+// lazy fetching disabled, so it fails closed outside that set. The git plugin's
+// checkout step cannot filter blobs, so plain git is used. Only the transfer is
+// retried, with stalled transfers aborted; no Stage attempt is.
 def checkoutSubmittedCommit = {
     def repositoryUrl = [
         'pipeline-integration': env.SDI_REPOSITORY_URL,
@@ -76,7 +75,6 @@ reset_checkout() {
 git_transfer_with_retries 'protected-main clone' reset_clone clone --filter=blob:none --no-checkout --no-tags --single-branch --branch main "$SDI_CHECKOUT_REPOSITORY_URL" .
 git update-ref refs/remotes/origin/sdi-protected-main refs/remotes/origin/main
 git merge-base --is-ancestor "$RESOLVED_COMMIT_SHA" refs/remotes/origin/sdi-protected-main
-git sparse-checkout set --no-cone '/*' '!/CV/'
 git_transfer_with_retries 'submitted-commit checkout' reset_checkout checkout --quiet --detach "$RESOLVED_COMMIT_SHA"
 test "$(git rev-parse HEAD)" = "$RESOLVED_COMMIT_SHA"
 git update-ref refs/heads/main "$RESOLVED_COMMIT_SHA"
@@ -322,7 +320,7 @@ sdi-integration bundle-conclusion \
                             )
                         }
                         if (conclusion == 1) {
-                            error('Pipeline integration machinery failed; structured result archived')
+                            error('Pipeline integration machinery or validation verdict failed; structured result archived')
                         }
                     }
                 }

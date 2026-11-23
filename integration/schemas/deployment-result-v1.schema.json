@@ -128,8 +128,8 @@
       "items": {
         "$ref": "#/$defs/SourceInputDigest"
       },
-      "maxItems": 5,
-      "minItems": 5,
+      "maxItems": 4,
+      "minItems": 4,
       "prefixItems": [
         {
           "allOf": [
@@ -178,18 +178,6 @@
               "const": "image_build_result"
             }
           }
-        },
-        {
-          "allOf": [
-            {
-              "$ref": "#/$defs/SourceInputDigest"
-            }
-          ],
-          "properties": {
-            "slot": {
-              "const": "validation_evidence"
-            }
-          }
         }
       ],
       "title": "Source Inputs",
@@ -198,12 +186,6 @@
     "testcase_id": {
       "pattern": "^TC-[0-9]{2}$",
       "title": "Testcase Id",
-      "type": "string"
-    },
-    "validation_evidence_id": {
-      "maxLength": 63,
-      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-      "title": "Validation Evidence Id",
       "type": "string"
     }
   },
@@ -214,7 +196,6 @@
     "blueprint_id",
     "deployment_schema_id",
     "image_build_result_id",
-    "validation_evidence_id",
     "scenario_id",
     "testcase_id",
     "combination_id",

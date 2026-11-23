@@ -21,6 +21,7 @@ from sdi_pipeline_integration._github_actions import render_image_build_section
 from sdi_pipeline_integration._stage_registry import RUN_LIMITS
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
+    RED_RUN_EXIT,
     STAGE_DESCRIPTORS,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
@@ -80,7 +81,9 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
 
 
 def _bundle(
-    tmp_path: Path, run_request_path: str = RUN_REQUEST_PATH
+    tmp_path: Path,
+    run_request_path: str = RUN_REQUEST_PATH,
+    exit_code: int = RED_RUN_EXIT,
 ) -> tuple[Path, dict[str, object]]:
     repository, commit_sha = _repository(tmp_path)
     bundle_root = tmp_path / "bundle"
@@ -104,7 +107,7 @@ def _bundle(
         capture_output=True,
         text=True,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == exit_code, completed.stderr
     return bundle_root, json.loads(completed.stdout)
 
 
@@ -414,7 +417,7 @@ def test_negative_domain_result_remains_a_successful_pipeline_integration(
     tmp_path: Path,
 ) -> None:
     bundle_root, result = _bundle(
-        tmp_path, "runs/conformance/composition-negative-domain.yaml"
+        tmp_path, "runs/conformance/composition-negative-domain.yaml", exit_code=0
     )
     execution_id = str(result["execution_id"])
     receipt_path = tmp_path / "handoff-receipt.json"
@@ -589,8 +592,6 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
         "fetch-depth": 1,
         "persist-credentials": False,
         "filter": "blob:none",
-        "sparse-checkout-cone-mode": False,
-        "sparse-checkout": "/*\n!/CV/\n",
     }
     identify_run = steps[2]["run"]
     handoff_run = steps[3]["run"]

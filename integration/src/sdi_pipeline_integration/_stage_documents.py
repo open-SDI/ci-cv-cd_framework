@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, assert_never
 
 from ._contracts import TargetExecutionProfile
@@ -24,11 +25,19 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._contracts import Host
-    from ._stage_contracts import DomainOutcome
+    from ._stage_contracts import DomainOutcome, ImplementationMode
 
-type StageCheck = Callable[
-    [StageName, Mapping[str, BaseModel], Mapping[str, BaseModel]], None
-]
+
+@dataclass(frozen=True)
+class StageDocuments:
+    stage: StageName
+    domain_outcome: DomainOutcome
+    outputs: Mapping[str, BaseModel]
+    inputs: Mapping[str, BaseModel]
+    evidence: Sequence[BaseModel]
+
+
+type StageCheck = Callable[[StageDocuments], None]
 
 
 def _check_image_records(
@@ -61,10 +70,9 @@ def _check_image_records(
 
 
 def _composition_documents(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
+    documents: StageDocuments,
 ) -> tuple[CompositionBlueprint, DeploymentSchema, dict[str, Host]]:
+    stage, outputs, inputs = documents.stage, documents.outputs, documents.inputs
     blueprint = outputs.get("composition_blueprint") or inputs.get(
         "composition_blueprint"
     )
@@ -101,14 +109,14 @@ def _composition_documents(
 
 
 def _image_build_documents(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
+    documents: StageDocuments,
 ) -> tuple[CompositionBlueprint, DeploymentSchema, ImageBuildResult]:
-    blueprint, deployment, hosts = _composition_documents(stage, outputs, inputs)
-    image_build = outputs.get("image_build_result") or inputs.get("image_build_result")
+    blueprint, deployment, hosts = _composition_documents(documents)
+    image_build = documents.outputs.get("image_build_result") or documents.inputs.get(
+        "image_build_result"
+    )
     if not isinstance(image_build, ImageBuildResult):
-        msg = f"{stage} candidate is missing the image-build result"
+        msg = f"{documents.stage} candidate is missing the image-build result"
         raise InputError(msg)
     if (
         image_build.blueprint_id != blueprint.blueprint_id
@@ -129,17 +137,34 @@ def _image_build_documents(
     return blueprint, deployment, image_build
 
 
-def _validation_documents(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-) -> tuple[
-    CompositionBlueprint, DeploymentSchema, ImageBuildResult, ValidationEvidence
-]:
-    blueprint, deployment, image_build = _image_build_documents(stage, outputs, inputs)
-    validation = outputs.get("validation_evidence") or inputs.get("validation_evidence")
-    if not isinstance(validation, ValidationEvidence):
-        msg = f"{stage} candidate is missing Validation evidence"
+def _check_composition(documents: StageDocuments) -> None:
+    if documents.domain_outcome == "failed":
+        return
+    _composition_documents(documents)
+    if set(documents.outputs) != {"composition_blueprint", "deployment_schema"}:
+        msg = "composition candidate must contain both Domain outputs"
+        raise InputError(msg)
+
+
+def _check_image_build(documents: StageDocuments) -> None:
+    if documents.domain_outcome == "failed":
+        return
+    _image_build_documents(documents)
+    if set(documents.outputs) != {"image_build_result"}:
+        msg = "image-build candidate must contain its result"
+        raise InputError(msg)
+
+
+def _check_cv(documents: StageDocuments) -> None:
+    validation = next(
+        (item for item in documents.evidence if isinstance(item, ValidationEvidence)),
+        None,
+    )
+    if validation is None:
+        return
+    blueprint, deployment, image_build = _image_build_documents(documents)
+    if validation.domain_outcome != documents.domain_outcome:
+        msg = "Validation evidence outcome does not match the attempt outcome"
         raise InputError(msg)
     if (
         validation.blueprint_id != blueprint.blueprint_id
@@ -148,51 +173,39 @@ def _validation_documents(
     ):
         msg = "Validation evidence does not reference accepted prior outputs"
         raise InputError(msg)
-    return blueprint, deployment, image_build, validation
-
-
-def _check_composition(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-) -> None:
-    _composition_documents(stage, outputs, inputs)
-    if set(outputs) != {"composition_blueprint", "deployment_schema"}:
-        msg = "composition candidate must contain both Domain outputs"
+    if {item.service_id for item in validation.services} != {
+        item.service_id for item in blueprint.services
+    }:
+        msg = "Validation evidence does not cover the accepted services"
+        raise InputError(msg)
+    if (
+        validation.mission is not None
+        and [item.requirement_id for item in validation.mission.steps]
+        != blueprint.requirement_ids
+    ):
+        msg = "Validation evidence mission does not follow the accepted requirements"
+        raise InputError(msg)
+    amd64_digests = {
+        record.service_id: platform.digest
+        for record in image_build.images
+        if isinstance(record, BuiltImageRecord)
+        for platform in record.platforms
+        if platform.architecture == "amd64"
+    }
+    if any(
+        item.image_digest is not None
+        and item.image_digest != amd64_digests.get(item.service_id)
+        for item in validation.services
+    ):
+        msg = "Validation evidence names an image other than the built amd64 image"
         raise InputError(msg)
 
 
-def _check_image_build(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-) -> None:
-    _image_build_documents(stage, outputs, inputs)
-    if set(outputs) != {"image_build_result"}:
-        msg = "image-build candidate must contain its result"
-        raise InputError(msg)
-
-
-def _check_cv(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-) -> None:
-    _validation_documents(stage, outputs, inputs)
-    if set(outputs) != {"validation_evidence"}:
-        msg = "CV candidate must contain Validation evidence"
-        raise InputError(msg)
-
-
-def _check_cd(
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-) -> None:
-    blueprint, deployment, image_build, validation = _validation_documents(
-        stage, outputs, inputs
-    )
-    deployment_result = outputs.get("deployment_result")
+def _check_cd(documents: StageDocuments) -> None:
+    if documents.domain_outcome == "failed":
+        return
+    blueprint, deployment, image_build = _image_build_documents(documents)
+    deployment_result = documents.outputs.get("deployment_result")
     if not isinstance(deployment_result, DeploymentResult):
         msg = "CD candidate must contain its deployment result"
         raise InputError(msg)
@@ -200,7 +213,6 @@ def _check_cd(
         deployment_result.blueprint_id != blueprint.blueprint_id
         or deployment_result.deployment_schema_id != deployment.deployment_schema_id
         or deployment_result.image_build_result_id != image_build.image_build_result_id
-        or deployment_result.validation_evidence_id != validation.validation_evidence_id
     ):
         msg = "deployment result does not reference accepted prior outputs"
         raise InputError(msg)
@@ -235,6 +247,7 @@ def validate_stage_documents(  # noqa: PLR0913
     expected_input_digests: Mapping[str, str],
     expected_identity: tuple[str, str, str, str],
     *,
+    implementation_mode: ImplementationMode,
     domain_outcome: DomainOutcome,
     evidence: Sequence[BaseModel] = (),
 ) -> None:
@@ -270,9 +283,14 @@ def validate_stage_documents(  # noqa: PLR0913
         } != expected_input_digests:
             msg = "candidate Domain output input digests do not match the request"
             raise InputError(msg)
-    if domain_outcome == "failed":
-        if outputs:
-            msg = f"{stage} negative Domain outcome cannot carry Domain output"
-            raise InputError(msg)
-        return
-    CHECKS[stage](stage, outputs, inputs)
+    published = {getattr(item, "schema_version", None) for item in evidence}
+    if implementation_mode == "implemented" and any(
+        grant.required and grant.schema_version not in published
+        for grant in STAGES[stage].grant.evidence
+    ):
+        msg = f"implemented {stage} candidate did not produce its required output"
+        raise InputError(msg)
+    if domain_outcome == "failed" and outputs:
+        msg = f"{stage} negative Domain outcome cannot carry Domain output"
+        raise InputError(msg)
+    CHECKS[stage](StageDocuments(stage, domain_outcome, outputs, inputs, evidence))

@@ -23,6 +23,7 @@ from ._stage_contracts import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 MAX_DETAIL_CHARACTERS = 256
@@ -95,9 +96,14 @@ def log_tail(path: Path, *, max_bytes: int) -> LogTail:
     if start > 0:
         # The first line read may have been cut mid-line.
         lines = lines[1:]
+    tail = tail_lines(lines, max_bytes=max_bytes)
+    return LogTail(tail.lines, cut=tail.cut or start > 0)
+
+
+def tail_lines(lines: Sequence[str], *, max_bytes: int) -> LogTail:
     kept: list[str] = []
     used = 0
-    cut = start > 0
+    cut = False
     for line in reversed(lines):
         redacted = redact_line(line)
         if not redacted:
@@ -112,6 +118,14 @@ def log_tail(path: Path, *, max_bytes: int) -> LogTail:
     return LogTail(kept, cut=cut)
 
 
+def failure_text(text: str, *, fallback: str) -> str:
+    redacted = redact_line(text)
+    detail = "" if redacted is None else _reduce(redacted)
+    if not detail or contains_sensitive_material(detail):
+        return fallback
+    return detail
+
+
 def _reduce(line: str) -> str:
     text = DETAIL_EXCLUDED_PATTERN.sub("", line).strip()
     if len(text) > MAX_DETAIL_CHARACTERS:
@@ -123,7 +137,6 @@ def _reduce(line: str) -> str:
 def failure_detail(path: Path, *, fallback: str) -> str:
     """Return the redacted last log line as a result detail, or the fallback."""
     for line in reversed(log_tail(path, max_bytes=RAW_TAIL_MINIMUM_BYTES).lines):
-        detail = _reduce(line)
-        if detail:
-            return fallback if contains_sensitive_material(detail) else detail
+        if _reduce(line):
+            return failure_text(line, fallback=fallback)
     return fallback

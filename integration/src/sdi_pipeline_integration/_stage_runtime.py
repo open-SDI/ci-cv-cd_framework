@@ -156,7 +156,6 @@ SLOT_MODELS: dict[str, type[BaseModel]] = {
         CompositionBlueprint,
         DeploymentSchema,
         ImageBuildResult,
-        ValidationEvidence,
         DeploymentResult,
     )
 }
@@ -170,6 +169,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
         if SLOT_BY_NAME[name].origin not in {"committed", "supplied"}
     },
     _schema_version(CompositionEvidence): CompositionEvidence,
+    _schema_version(ValidationEvidence): ValidationEvidence,
 }
 
 
@@ -352,7 +352,7 @@ def _capture_candidate(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     output_root: Path,
     output_root_identity: tuple[int, int],
     request: AdapterRequest,
-    implementation_mode: str,
+    implementation_mode: ImplementationMode,
     identified: Mapping[str, Any],
     input_models: Mapping[str, BaseModel],
     secrets: tuple[bytes, ...] = (),
@@ -499,6 +499,7 @@ def _capture_candidate(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                 identified["combination_id"],
                 identified["profile_id"],
             ),
+            implementation_mode=implementation_mode,
             domain_outcome=response.domain_outcome,
             evidence=[
                 output

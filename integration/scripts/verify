@@ -64,7 +64,7 @@ uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen basedpyright
 # Slow tests wait out real limits, so parallel load must not stretch them.
-uv run --frozen pytest -m 'not slow' -n auto --dist worksteal
+uv run --frozen pytest -m 'not slow and not cv_engine' -n auto --dist worksteal
 
 if [ -n "$fast" ]; then
     printf '%s\n' 'fast tier passed; run integration/scripts/verify before opening a PR'
