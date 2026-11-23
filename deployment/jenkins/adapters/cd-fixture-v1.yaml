@@ -6,5 +6,4 @@ entrypoint: sdi-fixture-adapter
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/cd-v1.yaml
 stage_profile_version: sdi.cd-stage-profile/v1
-agent_label: cd
 secret_bindings: []

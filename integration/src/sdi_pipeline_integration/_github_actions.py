@@ -9,21 +9,26 @@ from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from ._bundle import validate_bundle_documents
+from ._domain_contracts import DeploymentSchema, ImageBuildResult
 from ._handoff_contracts import HandoffReceipt
 from ._json_input import parse_json
-from ._local_dispatch import validate_bundle
 from ._result_contracts import PIPELINE_RESULT_PATH, PipelineIntegrationResult
 from ._stage_contracts import ExecutionId
 from ._yaml_input import InputError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
+
+    from pydantic import BaseModel
 
 MAX_RECEIPT_BYTES = 64 * 1024
 GITHUB_ARTIFACT_PATH = re.compile(
     r"^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/"
     r"(?P<run_id>[1-9][0-9]*)/artifacts/[1-9][0-9]*$"
 )
+SHORT_DIGEST_HEX = 12
 type StepOutcome = Literal["success", "failure", "cancelled", "skipped"]
 
 
@@ -60,6 +65,63 @@ def _evidence_paths(result: PipelineIntegrationResult, stage: str) -> str:
     if not paths:
         return "none"
     return "<br>".join(_code(path) for path in paths)
+
+
+def _cell(value: str) -> str:
+    escaped = html.escape(value, quote=True).replace("`", "&#96;")
+    return escaped.replace("|", "\\|")
+
+
+def render_image_build_section(
+    result: PipelineIntegrationResult, documents: Mapping[str, BaseModel]
+) -> list[str]:
+    """Render one row per placement with its image, or Image-build's outcome line."""
+    lines = ["", "## Image build", ""]
+    image_build = documents.get("image_build_result")
+    deployment = documents.get("deployment_schema")
+    if not (
+        isinstance(image_build, ImageBuildResult)
+        and isinstance(deployment, DeploymentSchema)
+    ):
+        lines.extend(
+            f"Image build {_code(attempt.execution_conclusion)}: {_reason(attempt)}"
+            for attempt in result.attempts
+            if attempt.correlation.stage == "image_build"
+        )
+        return lines
+    lines.extend(
+        [
+            (
+                f"Digests refer to the stack-local pipeline registry "
+                f"{_code(image_build.registry)}; nothing outside the Jenkins stack "
+                "pulls from it."
+            ),
+            "",
+            (
+                "| Service | Artifact | Host | Architectures | Status | Short digest "
+                "| Reason |"
+            ),
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    images = {image.service_id: image for image in image_build.images}
+    for placement in deployment.placements:
+        image = images[placement.service_id]
+        artifact = host = architectures = digest = reason = "-"
+        if placement.status == "resolved":
+            artifact, host = _code(placement.artifact_id), _code(placement.host)
+        if image.status == "built":
+            architectures = ", ".join(
+                sorted(platform.architecture for platform in image.platforms)
+            )
+            digest = _code(image.digest[: len("sha256:") + SHORT_DIGEST_HEX])
+        elif image.status == "failed":
+            reason = f"{_code(image.reason)}: {_cell(image.detail)}"
+        lines.append(
+            f"| {_code(placement.service_id)} | {artifact} | {host} "
+            f"| {architectures} | {_code(image.status)} | {digest} | {reason} |"
+        )
+    return lines
 
 
 def _validate_artifact_url(artifact_url: str, github_run_id: int) -> None:
@@ -173,15 +235,16 @@ def render_github_summary(  # noqa: C901, PLR0912, PLR0913, PLR0915
         return "\n".join(lines), True
 
     result: PipelineIntegrationResult | None = None
+    documents: Mapping[str, BaseModel] = {}
     result_state = "not returned"
     if bundle_root.exists() or bundle_root.is_symlink():
         try:
-            candidate = validate_bundle(bundle_root)
+            candidate, candidate_documents = validate_bundle_documents(bundle_root)
         except (InputError, OSError, ValidationError):
             result_state = "rejected"
         else:
             if candidate.execution_id == execution_id:
-                result = candidate
+                result, documents = candidate, candidate_documents
                 result_state = "validated"
             else:
                 result_state = "identity mismatch"
@@ -272,6 +335,7 @@ def render_github_summary(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 f"| {_reason(attempt)} "
                 f"| {_evidence_paths(result, stage)} |"
             )
+        lines.extend(render_image_build_section(result, documents))
     lines.extend(
         [
             "",

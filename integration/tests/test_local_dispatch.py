@@ -15,11 +15,12 @@ from typing import Any, cast
 import pytest
 
 from sdi_pipeline_integration._local_dispatch import dispatch_local
-from sdi_pipeline_integration._stage_contracts import (
-    EXPECTED_STAGE_INPUT_SLOTS,
-    STAGE_GRANTS,
-)
 from sdi_pipeline_integration._stage_profiles import stage_profile_bytes
+from sdi_pipeline_integration._stage_registry import (
+    EXPECTED_STAGE_INPUT_SLOTS,
+    STAGE_ORDER,
+    STAGES,
+)
 from sdi_pipeline_integration._stage_runtime import (
     ADAPTER_SHUTDOWN_GRACE_SECONDS,
     SuppliedInputs,
@@ -27,55 +28,17 @@ from sdi_pipeline_integration._stage_runtime import (
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
     FIXTURE_SERVICE_REPOSITORY,
+    RUN_REQUEST_PATH,
+    S04_COMBINATION_EXPECTATIONS,
     SUPPLIED_INPUT_ARGUMENTS,
+    commit_fixture_repository,
+    dispatch_local_cli,
+    run_git,
     write_fixture_composition_descriptor,
     write_scripted_adapter,
 )
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
-S04_COMBINATION_EXPECTATIONS: dict[str, dict[str, str]] = {
-    "C-05": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
-        "profile_id": "waffle-jetson-arm64",
-        "architecture": "arm64",
-        "host": "orin",
-    },
-}
-S04_RUN_REQUEST_PATHS = tuple(
-    expected["run_request_path"] for expected in S04_COMBINATION_EXPECTATIONS.values()
-)
-RUN_REQUEST_PATH = S04_RUN_REQUEST_PATHS[0]
-STAGES = ["composition", "image_build", "cv", "cd"]
-COMMITTED_FILES = (
-    *S04_RUN_REQUEST_PATHS,
-    "requirements/s-04/deliver-book-to-joe.md",
-    "profiles/s-04/waffle-native-arm64.yaml",
-    "profiles/s-04/waffle-xycar-amd64.yaml",
-    "profiles/s-04/burger-native-arm64.yaml",
-    "profiles/s-04/burger-xycar-amd64.yaml",
-    "profiles/s-04/waffle-jetson-arm64.yaml",
-    "profiles/s-04/burger-jetson-arm64.yaml",
-    "integration/stage-profiles/composition-v1.yaml",
-    "integration/stage-profiles/image-build-v1.yaml",
-    "integration/stage-profiles/cv-v1.yaml",
-    "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
-    "runs/conformance/composition-negative-domain.yaml",
-    "runs/conformance/composition-absent-response.yaml",
-    "runs/conformance/composition-handled-failure.yaml",
-    "runs/conformance/composition-crash.yaml",
-    "runs/conformance/composition-timeout.yaml",
-    "runs/conformance/composition-malformed-response.yaml",
-    "runs/conformance/composition-missing-output.yaml",
-    "runs/conformance/composition-undeclared-output.yaml",
-    "runs/conformance/composition-unsafe-output.yaml",
-    "runs/conformance/composition-oversize-output.yaml",
-    "runs/conformance/composition-response-mismatch.yaml",
-    "runs/conformance/composition-schema-mismatch.yaml",
-    FIXTURE_COMPOSITION_CONFIG,
-)
 VOLATILE_RESULT_FIELDS = {"execution_id", "started_at", "finished_at", "duration_ms"}
 
 
@@ -93,72 +56,11 @@ def _contract_semantics(value: object) -> object:
     return value
 
 
-def _git(repository: Path, *arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout.strip()
-
-
-def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    _git(repository, "init", "--initial-branch=main")
-    _git(repository, "config", "user.name", "Test Operator")
-    _git(repository, "config", "user.email", "operator@example.test")
-    _git(
-        repository,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/example/sdi-fixture.git",
-    )
-    for relative_path in COMMITTED_FILES:
-        destination = repository / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
-    write_fixture_composition_descriptor(repository)
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Add four-Stage Fixture inputs")
-    return repository, _git(repository, "rev-parse", "HEAD")
-
-
-def _dispatch(
-    repository: Path,
-    commit_sha: str,
-    bundle_root: Path,
-    run_request_path: str = RUN_REQUEST_PATH,
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            "sdi-integration",
-            "dispatch-local",
-            "--repository",
-            str(repository),
-            "--requested-ref",
-            "refs/heads/main",
-            "--resolved-commit",
-            commit_sha,
-            "--run-request-path",
-            run_request_path,
-            "--bundle-root",
-            str(bundle_root),
-            *SUPPLIED_INPUT_ARGUMENTS,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
 def _select_adapter(repository: Path, adapter: Path, *, mode: str = "fixture") -> str:
     write_fixture_composition_descriptor(repository, entrypoint=adapter, mode=mode)
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select conformance adapter")
-    return _git(repository, "rev-parse", "HEAD")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Select conformance adapter")
+    return run_git(repository, "rev-parse", "HEAD")
 
 
 def _configure_composition(repository: Path, *, mode: str) -> str:
@@ -169,9 +71,9 @@ def _configure_composition(repository: Path, *, mode: str) -> str:
         ),
         encoding="utf-8",
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Configure composition conformance case")
-    return _git(repository, "rev-parse", "HEAD")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Configure composition conformance case")
+    return run_git(repository, "rev-parse", "HEAD")
 
 
 def _dispatch_with_composition_limit(
@@ -181,20 +83,24 @@ def _dispatch_with_composition_limit(
     run_request_path: str = RUN_REQUEST_PATH,
 ) -> dict[str, Any]:
     """Run in process so the registry's one-second limit reaches the run."""
+    composition = STAGES["composition"]
     monkeypatch.setitem(
-        STAGE_GRANTS,
+        STAGES,
         "composition",
-        dataclasses.replace(STAGE_GRANTS["composition"], work_limit_seconds=1),
+        dataclasses.replace(
+            composition,
+            grant=dataclasses.replace(composition.grant, work_limit_seconds=1),
+        ),
     )
     (repository / "integration/stage-profiles/composition-v1.yaml").write_bytes(
         stage_profile_bytes("composition")
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Shorten the composition work limit")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Shorten the composition work limit")
     return dispatch_local(
         repository_path=repository,
         requested_ref="refs/heads/main",
-        resolved_commit=_git(repository, "rev-parse", "HEAD"),
+        resolved_commit=run_git(repository, "rev-parse", "HEAD"),
         run_request_path=run_request_path,
         bundle_root=bundle_root,
         supplied=SuppliedInputs(
@@ -209,12 +115,14 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     tmp_path: Path, combination_id: str
 ) -> None:
     expected = S04_COMBINATION_EXPECTATIONS[combination_id]
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
+    repository, commit_sha = commit_fixture_repository(tmp_path)
     first_root = tmp_path / "first-bundle"
     second_root = tmp_path / "second-bundle"
 
-    first = _dispatch(repository, commit_sha, first_root, expected["run_request_path"])
-    second = _dispatch(
+    first = dispatch_local_cli(
+        repository, commit_sha, first_root, expected["run_request_path"]
+    )
+    second = dispatch_local_cli(
         repository, commit_sha, second_root, expected["run_request_path"]
     )
 
@@ -233,7 +141,7 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     assert "overall_verdict" not in first_result
     assert [
         attempt["correlation"]["stage"] for attempt in first_result["attempts"]
-    ] == (STAGES)
+    ] == list(STAGE_ORDER)
     assert all(
         attempt["correlation"]["execution_id"] == first_result["execution_id"]
         and attempt["correlation"]["attempt_number"] == 1
@@ -276,9 +184,7 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     image_build = json.loads(
         (first_root / image_artifact["path"]).read_text(encoding="utf-8")
     )
-    assert {image["architecture"] for image in image_build["images"]} == {
-        expected["architecture"]
-    }
+    assert {image["status"] for image in image_build["images"]} == {"not_evaluated"}
     for artifact in first_result["artifacts"]:
         first_bytes = (first_root / artifact["path"]).read_bytes()
         second_bytes = (second_root / artifact["path"]).read_bytes()
@@ -305,7 +211,7 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
 def test_handled_execution_failure_publishes_a_complete_result_with_typed_skips(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "handled-failure-adapter"
     write_scripted_adapter(
         adapter,
@@ -330,7 +236,7 @@ response = {
     commit_sha = _select_adapter(repository, adapter)
     bundle_root = tmp_path / "failed-bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    completed = dispatch_local_cli(repository, commit_sha, bundle_root)
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -357,7 +263,7 @@ response = {
 def test_negative_domain_outcome_blocks_dependents_without_machinery_failure(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "negative-domain-adapter"
     write_scripted_adapter(
         adapter,
@@ -382,7 +288,7 @@ response = {
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
     bundle_root = tmp_path / "negative-domain-bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    completed = dispatch_local_cli(repository, commit_sha, bundle_root)
 
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
@@ -400,7 +306,7 @@ response = {
 def test_negative_domain_outcome_cannot_publish_domain_output(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "negative-domain-output-adapter"
     case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
     implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
@@ -431,7 +337,7 @@ response = {{
     )
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -468,9 +374,9 @@ def test_exact_digest_fixture_cases_settle_as_complete_failed_results(
     reason_code: str,
     response_status: str,
 ) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
+    repository, commit_sha = commit_fixture_repository(tmp_path)
 
-    completed = _dispatch(
+    completed = dispatch_local_cli(
         repository,
         commit_sha,
         tmp_path / "bundle",
@@ -498,7 +404,7 @@ def test_exact_digest_fixture_cases_settle_as_complete_failed_results(
 def test_stage_timeout_terminates_attached_descendants_and_cleans_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "timeout-tree-adapter"
     child_pid_path = tmp_path / "timeout-child.pid"
     write_scripted_adapter(
@@ -540,7 +446,7 @@ time.sleep(60)
 def test_external_cancellation_terminates_the_process_tree_without_a_result(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "cancellable-adapter"
     child_pid_path = tmp_path / "child.pid"
     ready_path = tmp_path / "ready"
@@ -606,10 +512,10 @@ time.sleep(60)
 def test_not_implemented_stage_and_dependents_are_explicitly_skipped(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     commit_sha = _configure_composition(repository, mode="not_implemented")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -623,7 +529,7 @@ def test_not_implemented_stage_and_dependents_are_explicitly_skipped(
 def test_rejects_a_key_the_composition_descriptor_does_not_bind(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     write_fixture_composition_descriptor(repository, mode="implemented")
     descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     descriptor.write_text(
@@ -631,11 +537,11 @@ def test_rejects_a_key_the_composition_descriptor_does_not_bind(
             "secret_bindings: []", "secret_bindings: [OTHER_KEY]"
         )
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Bind a key the config does not name")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Bind a key the config does not name")
 
-    completed = _dispatch(
-        repository, _git(repository, "rev-parse", "HEAD"), tmp_path / "bundle"
+    completed = dispatch_local_cli(
+        repository, run_git(repository, "rev-parse", "HEAD"), tmp_path / "bundle"
     )
 
     assert completed.returncode == 2
@@ -646,7 +552,7 @@ def test_rejects_a_key_the_composition_descriptor_does_not_bind(
 def test_implemented_adapter_cannot_consume_unevaluated_fixture_output(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     descriptor = repository / "deployment/jenkins/adapters/image-build-fixture-v1.yaml"
     descriptor.write_text(
         descriptor.read_text().replace(
@@ -654,11 +560,11 @@ def test_implemented_adapter_cannot_consume_unevaluated_fixture_output(
         ),
         encoding="utf-8",
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select implemented image-build adapter")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Select implemented image-build adapter")
+    commit_sha = run_git(repository, "rev-parse", "HEAD")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -672,7 +578,7 @@ def test_implemented_adapter_cannot_consume_unevaluated_fixture_output(
 def test_fixture_stage_skips_implemented_composition_output(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "implemented-composition-adapter"
     case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
     implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
@@ -698,7 +604,7 @@ response = {{
     )
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
@@ -716,7 +622,7 @@ response = {{
 
 
 def test_process_loss_records_runtime_failure_and_skips(tmp_path: Path) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     descriptor.write_text(
         descriptor.read_text().replace(
@@ -725,11 +631,11 @@ def test_process_loss_records_runtime_failure_and_skips(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select missing adapter process")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Select missing adapter process")
+    commit_sha = run_git(repository, "rev-parse", "HEAD")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     attempt = json.loads(completed.stdout)["attempts"][0]
@@ -739,7 +645,7 @@ def test_process_loss_records_runtime_failure_and_skips(tmp_path: Path) -> None:
 
 
 def test_process_signal_records_runtime_failure_and_skips(tmp_path: Path) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "signaled-adapter"
     write_scripted_adapter(
         adapter,
@@ -751,7 +657,7 @@ os.kill(os.getpid(), signal.SIGKILL)
     )
     commit_sha = _select_adapter(repository, adapter)
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     attempt = json.loads(completed.stdout)["attempts"][0]
@@ -774,7 +680,7 @@ os.kill(os.getpid(), signal.SIGKILL)
 def test_sensitive_diagnostic_is_not_accepted_or_archived(
     tmp_path: Path, sentinel: str
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "sensitive-diagnostic-adapter"
     write_scripted_adapter(
         adapter,
@@ -800,7 +706,7 @@ response = {{
     commit_sha = _select_adapter(repository, adapter)
     bundle_root = tmp_path / "bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    completed = dispatch_local_cli(repository, commit_sha, bundle_root)
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -818,7 +724,7 @@ response = {{
 def test_sensitive_domain_output_is_not_accepted_or_archived(
     tmp_path: Path, sentinel: str
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "sensitive-domain-output-adapter"
     blueprint = (
         (
@@ -860,7 +766,7 @@ response = {{
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
     bundle_root = tmp_path / "bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    completed = dispatch_local_cli(repository, commit_sha, bundle_root)
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
@@ -874,7 +780,7 @@ response = {{
 def test_composition_placing_a_service_outside_the_profile_hosts_is_not_accepted(
     tmp_path: Path,
 ) -> None:
-    repository, _ = _commit_fixture_repository(tmp_path)
+    repository, _ = commit_fixture_repository(tmp_path)
     adapter = tmp_path / "unknown-host-adapter"
     case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
     implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
@@ -905,391 +811,9 @@ response = {{
     )
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
 
-    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+    completed = dispatch_local_cli(repository, commit_sha, tmp_path / "bundle")
 
     assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
     assert result["attempts"][0]["adapter_response_accepted"] is False
     assert result["artifacts"] == []
-
-
-def test_bundle_validation_rejects_tampered_artifact_bytes(tmp_path: Path) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result = json.loads(dispatched.stdout)
-    artifact_path = bundle_root / result["artifacts"][0]["path"]
-    artifact_path.write_bytes(b"tampered\n")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert validated.stdout == ""
-    assert "artifact" in validated.stderr.lower()
-
-
-@pytest.mark.parametrize("mutation", ["missing", "extra", "unsafe"])
-def test_bundle_validation_rejects_invalid_archive_inventory(
-    tmp_path: Path, mutation: str
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result = json.loads(dispatched.stdout)
-    artifact_path = bundle_root / result["artifacts"][0]["path"]
-    if mutation == "missing":
-        artifact_path.unlink()
-    elif mutation == "extra":
-        (bundle_root / "extra.txt").write_text("undeclared archive file")
-    else:
-        artifact_path.unlink()
-        artifact_path.symlink_to("/dev/null")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert validated.stdout == ""
-
-
-def test_bundle_validation_rejects_unbounded_artifact_grants(tmp_path: Path) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    result["attempts"][0]["accepted_files"][0]["byte_size"] = 32769
-    result["artifacts"][0]["byte_size"] = 32769
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "less than or equal to 32768" in validated.stderr
-
-
-def test_bundle_validation_rejects_machine_specific_provenance_paths(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    original = result["input_provenance"][0]["path"]
-    machine_path = "/home/acceptance-user/request.yaml"
-    result["input_provenance"][0]["path"] = machine_path
-    for attempt in result["attempts"]:
-        for accepted_input in attempt["accepted_inputs"]:
-            if accepted_input["source_path"] == original:
-                accepted_input["source_path"] = machine_path
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert validated.stdout == ""
-    assert "repository-relative" in validated.stderr
-
-
-def test_bundle_validation_rejects_reordered_or_unknown_input_provenance(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    provenance = result["input_provenance"]
-    unknown = [{**provenance[0], "schema_version": "sdi.unknown-input/v1"}]
-
-    for variant in ([*provenance[1:], provenance[0]], [*unknown, *provenance[1:]]):
-        result_path.write_text(
-            json.dumps(result | {"input_provenance": variant}), encoding="utf-8"
-        )
-        validated = subprocess.run(
-            ["sdi-integration", "validate-bundle", "--bundle-root", str(bundle_root)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        assert validated.returncode == 2
-        assert "not the identified input set" in validated.stderr
-
-
-@pytest.mark.parametrize(
-    "repository_identity",
-    ["jenkins.internal/repository", "buildhost/repository"],
-)
-def test_bundle_validation_rejects_a_private_repository_identity(
-    tmp_path: Path, repository_identity: str
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    result["repository"] = repository_identity
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "repository" in validated.stderr
-
-
-def test_bundle_validation_rejects_sensitive_domain_content(tmp_path: Path) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    artifact_path = bundle_root / "stages/composition/composition-blueprint.json"
-    document = json.loads(artifact_path.read_text(encoding="utf-8"))
-    document["services"][0]["capability"] = "jenkins.internal"
-    content = (
-        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
-    ).encode()
-    artifact_path.write_bytes(content)
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    for artifact in result["artifacts"]:
-        if artifact["path"] == "stages/composition/composition-blueprint.json":
-            artifact["byte_size"] = len(content)
-            artifact["sha256"] = hashlib.sha256(content).hexdigest()
-    for attempt in result["attempts"]:
-        for accepted in attempt["accepted_files"]:
-            if accepted.get("slot") == "composition_blueprint":
-                accepted["byte_size"] = len(content)
-                accepted["sha256"] = hashlib.sha256(content).hexdigest()
-        for accepted in attempt["accepted_inputs"]:
-            if accepted["slot"] == "composition_blueprint":
-                accepted["byte_size"] = len(content)
-                accepted["sha256"] = hashlib.sha256(content).hexdigest()
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "sensitive material" in validated.stderr
-
-
-def test_bundle_validation_rejects_a_stage_output_under_the_wrong_schema(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    result["attempts"][1]["accepted_files"][0]["schema_version"] = (
-        "sdi.deployment-result/v1"
-    )
-    result["artifacts"][3]["schema_version"] = "sdi.deployment-result/v1"
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "reviewed profile" in validated.stderr
-
-
-def test_bundle_validation_rechecks_cross_stage_domain_correlation(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    artifact = next(
-        item for item in result["artifacts"] if item["slot"] == "deployment_result"
-    )
-    domain_path = bundle_root / artifact["path"]
-    domain_output = json.loads(domain_path.read_text())
-    domain_output["profile_id"] = "another-profile"
-    changed_bytes = json.dumps(domain_output).encode()
-    domain_path.write_bytes(changed_bytes)
-    changed_sha256 = hashlib.sha256(changed_bytes).hexdigest()
-    artifact["byte_size"] = len(changed_bytes)
-    artifact["sha256"] = changed_sha256
-    accepted = result["attempts"][3]["accepted_files"][0]
-    accepted["byte_size"] = len(changed_bytes)
-    accepted["sha256"] = changed_sha256
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "correlation" in validated.stderr.lower()
-
-
-def test_bundle_validation_rejects_work_after_a_negative_domain_outcome(
-    tmp_path: Path,
-) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    first = result["attempts"][0]
-    first["domain_outcome"] = "failed"
-    first["reason"] = {
-        "category": "domain",
-        "code": "sdi.domain.requirement-unsatisfied",
-        "summary": "The represented Domain requirement was not satisfied.",
-    }
-    first["accepted_files"] = [
-        item for item in first["accepted_files"] if item["role"] != "domain_output"
-    ]
-    for artifact in result["artifacts"]:
-        if artifact["stage"] == "composition" and artifact["role"] == "domain_output":
-            (bundle_root / artifact["path"]).unlink()
-    result["artifacts"] = [
-        item
-        for item in result["artifacts"]
-        if not (item["stage"] == "composition" and item["role"] == "domain_output")
-    ]
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "must be skipped" in validated.stderr
-
-
-def test_bundle_validation_rejects_ascii_delete_in_diagnostics(tmp_path: Path) -> None:
-    repository, commit_sha = _commit_fixture_repository(tmp_path)
-    bundle_root = tmp_path / "bundle"
-    dispatched = _dispatch(repository, commit_sha, bundle_root)
-    assert dispatched.returncode == 0, dispatched.stderr
-    result_path = bundle_root / "pipeline-integration-result.json"
-    result = json.loads(result_path.read_text())
-    artifact = next(
-        item
-        for item in result["artifacts"]
-        if item["stage"] == "composition" and item["role"] == "diagnostic"
-    )
-    diagnostic_path = bundle_root / artifact["path"]
-    changed_bytes = diagnostic_path.read_bytes() + b"\x7f"
-    diagnostic_path.write_bytes(changed_bytes)
-    changed_sha256 = hashlib.sha256(changed_bytes).hexdigest()
-    artifact["byte_size"] = len(changed_bytes)
-    artifact["sha256"] = changed_sha256
-    accepted = result["attempts"][0]["accepted_files"][2]
-    accepted["byte_size"] = len(changed_bytes)
-    accepted["sha256"] = changed_sha256
-    result_path.write_text(json.dumps(result), encoding="utf-8")
-
-    validated = subprocess.run(
-        [
-            "sdi-integration",
-            "validate-bundle",
-            "--bundle-root",
-            str(bundle_root),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert validated.returncode == 2
-    assert "sanitized" in validated.stderr.lower()

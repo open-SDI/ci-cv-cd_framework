@@ -30,7 +30,6 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
-import openai
 from pydantic import Field
 
 from ._assessment import ROLE_PAIRS
@@ -158,6 +157,8 @@ def _embed(
     api_key = os.environ.get(config.api_key_env)
     if not api_key:
         return None, record | {"status": "key-unset"}
+    import openai  # noqa: PLC0415
+
     try:
         client = openai.OpenAI(
             api_key=api_key,

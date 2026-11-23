@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import (
@@ -35,11 +36,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 SERVICE_DESCRIPTION_SCHEMA_VERSION = "sdi.service-description/v1"
-# The directory under a Stage's input root that holds the copied descriptions.
+# The directory under a Stage's input root that holds the copied service folders.
 SERVICE_REPOSITORY_ROOT = "service-repository"
 DESCRIPTION_FILENAME = "SDI.md"
-MAX_DESCRIPTION_FILES = 256
-MAX_DESCRIPTION_BYTES = 1024 * 1024
+MAX_REPOSITORY_FILES = 256
+MAX_REPOSITORY_BYTES = 1024 * 1024
+# One file or folder name inside a service folder; it excludes dotfiles.
+NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]*"
 
 type Architecture = Literal["amd64", "arm64", "noarch"]
 
@@ -86,6 +89,10 @@ class SourceRoute(ContractModel):
 
 
 Route = Annotated[AptRoute | ImageRoute | SourceRoute, Field(discriminator="kind")]
+RecipePath = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=rf"^{NAME_PATTERN}(?:/{NAME_PATTERN})*$"),
+]
 
 
 class Artifact(ContractModel):
@@ -94,13 +101,14 @@ class Artifact(ContractModel):
     architectures: Annotated[list[Architecture], Field(min_length=1)]
     host_requirement: Baseline | SkipJsonSchema[None] = None
     route: Route
-    invocation: NonBlank | SkipJsonSchema[None] = None
+    # The recipe, relative to the service folder that is also its build context.
+    dockerfile: RecipePath | SkipJsonSchema[None] = None
 
     @model_validator(mode="before")
     @classmethod
     def reject_explicit_unknowns(cls, data: object) -> object:
         """Require absent optional facts to be omitted rather than null."""
-        return reject_explicit_nulls(data, ("host_requirement", "invocation"))
+        return reject_explicit_nulls(data, ("host_requirement", "dockerfile"))
 
 
 class Frames(ContractModel):
@@ -161,6 +169,13 @@ class DescriptionFile:
 def _parse(path: str, raw: bytes) -> DescriptionFile:
     front_matter, body = parse_front_matter(raw, path)
     description = validate_contract(ServiceDescription, front_matter, path)
+    folder = PurePosixPath(path).parts[0]
+    if description.service_id != folder:
+        msg = (
+            f"{path}: service_id {description.service_id} "
+            f"does not match its folder {folder}"
+        )
+        raise InputError(msg)
     return DescriptionFile(
         path=path,
         sha256=hashlib.sha256(raw).hexdigest(),
@@ -170,16 +185,8 @@ def _parse(path: str, raw: bytes) -> DescriptionFile:
 
 
 def _check_cross_file(files: list[DescriptionFile]) -> None:
-    by_id: dict[str, DescriptionFile] = {}
-    for file in files:
-        service_id = file.description.service_id
-        if service_id in by_id:
-            msg = (
-                f"{file.path}: duplicate service_id {service_id} "
-                f"(also {by_id[service_id].path})"
-            )
-            raise InputError(msg)
-        by_id[service_id] = file
+    # Each service_id equals its folder name, so the ids are already unique.
+    by_id = {file.description.service_id: file for file in files}
     graph: TopologicalSorter[str] = TopologicalSorter()
     for file in files:
         dependencies = file.description.depends_on or []
@@ -196,21 +203,22 @@ def _check_cross_file(files: list[DescriptionFile]) -> None:
 
 
 class ManifestFile(ContractModel):
-    """One description file copied into a Stage's inputs."""
+    """One service-folder file copied into a Stage's inputs."""
 
     path: Annotated[
-        str, Field(strict=True, pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*SDI\.md$")
+        str,
+        Field(strict=True, pattern=rf"^{NAME_PATTERN}(?:/{NAME_PATTERN})+$"),
     ]
     byte_size: NonNegativeInt
     sha256: Sha256
 
 
 class ServiceRepositoryManifest(ContractModel):
-    """The exact description files a Stage receives from the service repository."""
+    """The exact service-folder files a Stage receives from the service repository."""
 
     schema_version: Literal["sdi.service-repository-manifest/v1"]
     files: Annotated[
-        list[ManifestFile], Field(min_length=1, max_length=MAX_DESCRIPTION_FILES)
+        list[ManifestFile], Field(min_length=1, max_length=MAX_REPOSITORY_FILES)
     ]
 
     @model_validator(mode="after")
@@ -219,7 +227,7 @@ class ServiceRepositoryManifest(ContractModel):
         if paths != sorted(set(paths)):
             msg = "manifest paths must be unique and sorted"
             raise ValueError(msg)
-        if sum(item.byte_size for item in self.files) > MAX_DESCRIPTION_BYTES:
+        if sum(item.byte_size for item in self.files) > MAX_REPOSITORY_BYTES:
             msg = "manifest files exceed the service repository byte limit"
             raise ValueError(msg)
         return self
@@ -227,39 +235,76 @@ class ServiceRepositoryManifest(ContractModel):
 
 @dataclass(frozen=True)
 class ServiceRepositorySnapshot:
-    """The exact description bytes under a service repository and their manifest."""
+    """The exact service-folder bytes under a service repository and their manifest."""
 
     manifest: ServiceRepositoryManifest
     files: dict[str, bytes]
 
 
+def _unreadable(error: OSError) -> None:
+    msg = f"{error.filename}: service repository is unreadable"
+    raise InputError(msg) from error
+
+
+def _check_entry(path: Path) -> None:
+    if path.is_symlink():
+        msg = f"{path}: service repository contains a symbolic link"
+        raise InputError(msg)
+    if path.name.startswith("."):
+        msg = f"{path}: service repository may not contain dotfiles"
+        raise InputError(msg)
+    if not re.fullmatch(NAME_PATTERN, path.name):
+        msg = (
+            f"{path}: names may hold only letters, digits, '.', '_' and '-' "
+            "and must start with a letter or digit"
+        )
+        raise InputError(msg)
+    if not path.is_dir() and not stat.S_ISREG(path.lstat().st_mode):
+        msg = f"{path}: service repository holds a file that is not regular"
+        raise InputError(msg)
+
+
+def _read_within_limits(root: Path, path: Path, files: Mapping[str, bytes]) -> bytes:
+    if len(files) >= MAX_REPOSITORY_FILES:
+        msg = f"{root}: service repository exceeds {MAX_REPOSITORY_FILES} files"
+        raise InputError(msg)
+    captured = sum(map(len, files.values()))
+    # The size is checked before reading so a stray large file is never loaded.
+    if captured + path.lstat().st_size <= MAX_REPOSITORY_BYTES:
+        content = path.read_bytes()
+        if captured + len(content) <= MAX_REPOSITORY_BYTES:
+            return content
+    msg = f"{root}: service repository exceeds {MAX_REPOSITORY_BYTES} bytes"
+    raise InputError(msg)
+
+
 def capture_service_repository(root: Path) -> ServiceRepositorySnapshot:
-    """Capture every SDI.md under a directory as regular files within the limits."""
+    """Capture every regular file in the service folders under a directory."""
     if not root.is_dir() or root.is_symlink():
         msg = f"{root}: service repository is not a directory"
         raise InputError(msg)
     files: dict[str, bytes] = {}
-    for directory, subdirectories, filenames in os.walk(root):
+    for directory, subdirectories, filenames in os.walk(root, onerror=_unreadable):
         current = Path(directory)
-        if any((current / name).is_symlink() for name in subdirectories):
-            msg = f"{current}: service repository contains a symbolic link"
-            raise InputError(msg)
-        if DESCRIPTION_FILENAME not in filenames:
+        # Sorted, so the first reported error never depends on the filesystem.
+        subdirectories.sort()
+        filenames.sort()
+        # Files at the repository root, such as its README, belong to no service.
+        names = subdirectories if current == root else subdirectories + filenames
+        for name in names:
+            _check_entry(current / name)
+        if current == root:
             continue
-        path = current / DESCRIPTION_FILENAME
-        if not stat.S_ISREG(path.lstat().st_mode):
-            msg = f"{path}: description is not a regular file"
+        if current.parent == root and DESCRIPTION_FILENAME not in filenames:
+            msg = f"{current}: service folder has no {DESCRIPTION_FILENAME}"
             raise InputError(msg)
-        if len(files) >= MAX_DESCRIPTION_FILES:
-            msg = f"{root}: service repository exceeds {MAX_DESCRIPTION_FILES} files"
-            raise InputError(msg)
-        content = path.read_bytes()
-        if sum(map(len, files.values())) + len(content) > MAX_DESCRIPTION_BYTES:
-            msg = f"{root}: service repository exceeds {MAX_DESCRIPTION_BYTES} bytes"
-            raise InputError(msg)
-        files[path.relative_to(root).as_posix()] = content
+        for name in filenames:
+            path = current / name
+            files[path.relative_to(root).as_posix()] = _read_within_limits(
+                root, path, files
+            )
     if not files:
-        msg = f"{root}: no {DESCRIPTION_FILENAME} found"
+        msg = f"{root}: no service folders found"
         raise InputError(msg)
     files = dict(sorted(files.items()))
     try:
@@ -283,12 +328,16 @@ def capture_service_repository(root: Path) -> ServiceRepositorySnapshot:
 
 
 def parse_service_repository(files: Mapping[str, bytes]) -> list[DescriptionFile]:
-    """Validate captured descriptions on their own and against each other."""
-    parsed = [_parse(path, content) for path, content in sorted(files.items())]
+    """Validate the captured descriptions on their own and against each other."""
+    parsed = [
+        _parse(path, content)
+        for path, content in sorted(files.items())
+        if PurePosixPath(path).parts[1:] == (DESCRIPTION_FILENAME,)
+    ]
     _check_cross_file(parsed)
     return parsed
 
 
 def read_service_repository(root: Path) -> list[DescriptionFile]:
-    """Capture and validate every SDI.md under a supplied directory."""
+    """Capture a supplied directory and validate each service folder's SDI.md."""
     return parse_service_repository(capture_service_repository(root).files)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -11,6 +12,7 @@ import pytest
 from ruamel.yaml import YAML
 
 from sdi_pipeline_integration._integration_code import BAKED_ROOTS
+from sdi_pipeline_integration._stage_registry import AGENTS, STAGES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -18,19 +20,18 @@ if TYPE_CHECKING:
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 JENKINS_ROOT = REPOSITORY_ROOT / "deployment" / "jenkins"
-AGENT_NAMES = {"integration", "ci", "image-build", "cv", "cd"}
+AGENT_NAMES = {agent.node for agent in AGENTS}
+BUILDER_SERVICES = {"buildkitd", "registry"}
 RUNNER_STACK_SERVICES = {
     "runner-upstream",
     "runner-fork",
     "runner-upstream-proxy",
     "runner-fork-proxy",
 }
-AGENT_LABELS = {
-    "integration": "integration",
-    "ci": "composition",
-    "image-build": "image-build",
-    "cv": "cv",
-    "cd": "cd",
+AGENT_LABELS = {agent.node: agent.label for agent in AGENTS}
+AGENT_TARGETS = dict.fromkeys(AGENT_NAMES, "agent") | {"image-build": "image-build"}
+AGENT_NETWORKS = {name: [f"controller-{name}"] for name in AGENT_NAMES} | {
+    "image-build": ["controller-image-build", "image-build-builder"]
 }
 FIXTURE_IMAGE = (
     "docker.io/library/python@"
@@ -42,6 +43,15 @@ def _load_yaml(path: Path) -> Mapping[str, Any]:
     loaded = YAML(typ="safe").load(path)  # pyright: ignore[reportUnknownMemberType]
     assert isinstance(loaded, dict)
     return cast("Mapping[str, Any]", loaded)
+
+
+def _installation_pins() -> dict[str, str]:
+    lines = (REPOSITORY_ROOT / "deployment" / "installation.env").read_text()
+    return dict(
+        line.split("=", maxsplit=1)
+        for line in lines.splitlines()
+        if line and not line.startswith("#")
+    )
 
 
 def _inventory(
@@ -91,7 +101,12 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
     compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
     services = compose["services"]
 
-    assert set(services) == {"controller", *AGENT_NAMES, *RUNNER_STACK_SERVICES}
+    assert set(services) == {
+        "controller",
+        *AGENT_NAMES,
+        *BUILDER_SERVICES,
+        *RUNNER_STACK_SERVICES,
+    }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
 
     controller_networks = set(services["controller"]["networks"])
@@ -115,7 +130,8 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
             "/home/jenkins/agent",
             "/tmp",  # noqa: S108 - container mount point, not a host temp file.
         }
-        assert agent["networks"] == [f"controller-{name}"]
+        assert agent["networks"] == AGENT_NETWORKS[name]
+        assert agent["build"]["target"] == AGENT_TARGETS[name]
         assert (
             services[name]["depends_on"]["controller"]["condition"] == "service_healthy"
         )
@@ -141,32 +157,100 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
 def test_domain_agents_use_their_descriptor_selected_runtime_image() -> None:
     compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
     services = compose["services"]
-    descriptor_for_agent = {
-        "ci": (
-            "composition-v1.yaml",
-            "${JENKINS_COMPOSITION_AGENT_IMAGE}",
-        ),
-        "image-build": (
-            "image-build-fixture-v1.yaml",
-            "${JENKINS_IMAGE_BUILD_AGENT_IMAGE}",
-        ),
-        "cv": ("cv-fixture-v1.yaml", "${JENKINS_CV_AGENT_IMAGE}"),
-        "cd": ("cd-fixture-v1.yaml", "${JENKINS_CD_AGENT_IMAGE}"),
-    }
-
-    for name, (descriptor_name, image_variable) in descriptor_for_agent.items():
-        descriptor = _load_yaml(JENKINS_ROOT / "adapters" / descriptor_name)
+    for name, stage in STAGES.items():
+        descriptor = _load_yaml(REPOSITORY_ROOT / stage.jenkins_descriptor)
         assert descriptor["image"] == FIXTURE_IMAGE
-        assert services[name]["build"]["args"]["RUNTIME_IMAGE"] == image_variable
+        assert services[stage.agent.node]["build"]["args"]["RUNTIME_IMAGE"] == (
+            f"${{JENKINS_{name.upper()}_AGENT_IMAGE}}"
+        )
 
     dockerfile = (JENKINS_ROOT / "agents" / "Dockerfile").read_text()
     assert "FROM ${RUNTIME_IMAGE} AS runtime" in dockerfile
     assert "FROM ${REMOTING_IMAGE} AS remoting" in dockerfile
-    assert "FROM runtime\nLABEL org.sdi.project=ci-cv-cd_framework\n" in dockerfile
+    assert (
+        "FROM runtime AS agent\nLABEL org.sdi.project=ci-cv-cd_framework\n"
+        in dockerfile
+    )
+    assert "FROM ${BUILDKIT_IMAGE} AS buildkit" in dockerfile
+    assert dockerfile.endswith(
+        "FROM agent AS image-build\n"
+        "COPY --from=buildkit /usr/bin/buildctl /usr/bin/buildctl\n"
+    )
     assert "FROM ${UV_IMAGE} AS uv" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert "/etc/sdi/jenkins-agent-role" in dockerfile
     assert "/etc/sdi/jenkins-agent-label" in dockerfile
+
+
+def test_builder_and_registry_are_reachable_only_from_the_image_build_agent() -> None:
+    compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
+    services = compose["services"]
+    networks = compose["networks"]
+    pins = _installation_pins()
+    buildkitd = services["buildkitd"]
+    registry = services["registry"]
+
+    assert buildkitd["image"] == pins["SDI_BUILDKIT_IMAGE"]
+    assert registry["image"] == pins["SDI_REGISTRY_IMAGE"]
+    for service in (buildkitd, registry):
+        assert service["platform"] == "linux/amd64"
+        assert service["restart"] == "no"
+        assert "ports" not in service
+        assert "build" not in service
+        assert service["healthcheck"]["test"][0] == "CMD"
+    assert buildkitd["privileged"] is True
+    assert buildkitd["command"] == [
+        "--addr",
+        "tcp://0.0.0.0:1234",
+        "--config",
+        "/etc/buildkit/buildkitd.toml",
+    ]
+    assert buildkitd["networks"] == ["image-build-builder", "builder-egress"]
+    assert registry["networks"] == ["image-build-builder"]
+    assert registry["read_only"] is True
+    assert registry["cap_drop"] == ["ALL"]
+    assert registry["security_opt"] == ["no-new-privileges:true"]
+
+    # Each named volume covers the path its upstream image declares as VOLUME, so
+    # Docker creates no anonymous volume that survives `stop`.
+    assert buildkitd["volumes"] == [
+        "buildkit-state:/var/lib/buildkit",
+        "./buildkit/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro",
+    ]
+    assert registry["volumes"] == ["pipeline-registry:/var/lib/registry"]
+    assert {"buildkit-state", "pipeline-registry"} <= set(compose["volumes"])
+
+    assert networks["image-build-builder"]["internal"] is True
+    assert networks["builder-egress"] is None
+    members = {
+        name: set(service.get("networks", [])) for name, service in services.items()
+    }
+    assert {
+        name for name, nets in members.items() if "image-build-builder" in nets
+    } == {
+        "image-build",
+        *BUILDER_SERVICES,
+    }
+    assert {name for name, nets in members.items() if "builder-egress" in nets} == {
+        "buildkitd"
+    }
+
+
+def test_buildkitd_config_trusts_only_the_pipeline_registry_without_entitlements() -> (
+    None
+):
+    config_text = (JENKINS_ROOT / "buildkit" / "buildkitd.toml").read_text()
+    config = tomllib.loads(config_text)
+
+    assert config["registry"] == {"registry:5000": {"http": True}}
+    assert "entitlements" not in config
+    assert "insecure" not in config_text
+    policies = config["worker"]["oci"]["gcpolicy"]
+    assert config["worker"]["oci"]["gc"] is True
+    assert len(policies) == 1
+    assert policies[0]["all"] is True
+    assert "keepDuration" not in policies[0]
+    assert {"maxUsedSpace", "reservedSpace", "minFreeSpace"} <= set(policies[0])
 
 
 @pytest.mark.parametrize("image", ["agents", "runner"])

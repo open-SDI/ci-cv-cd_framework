@@ -9,7 +9,7 @@ from typing import cast, get_args
 import pytest
 from pydantic import ValidationError
 
-from sdi_pipeline_integration._stage_contracts import (
+from sdi_pipeline_integration._stage_registry import (
     EXPECTED_STAGE_INPUT_SLOTS,
     SLOT_BY_NAME,
     SLOT_BY_SCHEMA,

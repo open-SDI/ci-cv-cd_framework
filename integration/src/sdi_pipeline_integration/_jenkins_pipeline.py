@@ -5,16 +5,24 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from ._bundle import assemble_bundle, validate_bundle
 from ._git_input import GitRepository
 from ._handoff_contracts import HANDOFF_CONTRACT_VERSION
 from ._integration_code import integration_code_digest, require_fresh_agent_images
 from ._jenkins_agent_boundary import enforce_integration_execution_boundary
-from ._local_dispatch import DESCRIPTORS, assemble_bundle, validate_bundle
 from ._run_input import identify_committed_run
-from ._stage_contracts import SUPPLIED_INPUT_SLOTS
+from ._service_descriptions import SERVICE_REPOSITORY_ROOT
+from ._stage_registry import (
+    INTEGRATION_AGENT,
+    RUN_LIMITS,
+    STAGE_ORDER,
+    STAGES,
+    SUPPLIED_INPUT_SLOTS,
+)
 from ._stage_runtime import (
     StageExecution,
     check_key_bindings,
@@ -34,29 +42,93 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._result_contracts import PipelineIntegrationResult
-    from ._stage_contracts import StageName
+    from ._stage_registry import StageName
     from ._stage_runtime import StageInputSource, SuppliedInputs
 
-EXPECTED_AGENT_LABELS = {
-    "composition": "composition",
-    "image_build": "image-build",
-    "cv": "cv",
-    "cd": "cd",
-}
-EXPECTED_RESOURCE_NODES = {
-    "integration": "integration",
-    "composition": "ci",
-    "image_build": "image-build",
-    "cv": "cv",
-    "cd": "cd",
-}
 POSITIVE_DECIMAL = re.compile(r"^[1-9][0-9]{0,19}$")
-MAX_WORK_LIMIT_SECONDS = 24 * 60 * 60
-DESCRIPTOR_STAGES: dict[str, StageName] = {path: stage for stage, path in DESCRIPTORS}
+STAGE_WIRING_BEGIN = "// BEGIN GENERATED STAGE WIRING"
+STAGE_WIRING_END = "// END GENERATED STAGE WIRING"
+WRITE_STAGE_WIRING_COMMAND = (
+    "uv run --project integration sdi-integration jenkinsfile --write"
+    " --jenkinsfile Jenkinsfile"
+)
 
 
 class RunDeadlineExpiredError(Exception):
     """Signal that Jenkins must finalize without launching another Stage."""
+
+
+def _groovy_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+def render_stage_wiring() -> str:
+    lines = [
+        STAGE_WIRING_BEGIN,
+        "// Rendered from _stage_registry.py. After editing the registry, run this",
+        f"// from the repository root: {WRITE_STAGE_WIRING_COMMAND}",
+        f"def integrationLabel = {_groovy_string(INTEGRATION_AGENT.label)}",
+        f"def runLimitSeconds = {RUN_LIMITS.run_seconds}",
+        "def stages = [",
+    ]
+    for stage in STAGES.values():
+        credentials = ", ".join(
+            f"[id: {_groovy_string(credential.jenkins_id)},"
+            f" variable: {_groovy_string(credential.variable)}]"
+            for credential in stage.credentials
+        )
+        safety_timeout_seconds = (
+            stage.grant.work_limit_seconds + RUN_LIMITS.stage_safety_margin_seconds
+        )
+        lines += [
+            (
+                f"    [name: {_groovy_string(stage.display_name)},"
+                f" stage: {_groovy_string(stage.name)},"
+                f" label: {_groovy_string(stage.agent.label)},"
+            ),
+            f"     safetyTimeoutSeconds: {safety_timeout_seconds},",
+            f"     credentials: [{credentials}]],",
+        ]
+    lines += ["]", STAGE_WIRING_END]
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _split_stage_wiring(jenkinsfile: str) -> tuple[str, str, str]:
+    begin = jenkinsfile.find(f"{STAGE_WIRING_BEGIN}\n")
+    end = jenkinsfile.find(f"{STAGE_WIRING_END}\n")
+    if not 0 <= begin < end or any(
+        jenkinsfile.count(marker) != 1
+        for marker in (STAGE_WIRING_BEGIN, STAGE_WIRING_END)
+    ):
+        msg = (
+            f"Jenkinsfile needs exactly one {STAGE_WIRING_BEGIN!r} line followed by"
+            f" one {STAGE_WIRING_END!r} line"
+        )
+        raise InputError(msg)
+    end += len(STAGE_WIRING_END) + 1
+    return jenkinsfile[:begin], jenkinsfile[begin:end], jenkinsfile[end:]
+
+
+def write_stage_wiring(jenkinsfile_path: Path) -> None:
+    before, _block, after = _split_stage_wiring(
+        jenkinsfile_path.read_text(encoding="utf-8")
+    )
+    jenkinsfile_path.write_text(
+        before + render_stage_wiring() + after, encoding="utf-8"
+    )
+
+
+def check_stage_wiring(jenkinsfile_path: Path) -> None:
+    _before, block, _after = _split_stage_wiring(
+        jenkinsfile_path.read_text(encoding="utf-8")
+    )
+    if block != render_stage_wiring():
+        msg = (
+            "Jenkinsfile Stage wiring is stale; run from the repository root:"
+            f" {WRITE_STAGE_WIRING_COMMAND}"
+        )
+        raise InputError(msg)
 
 
 def _validate_handoff_scalars(
@@ -136,7 +208,9 @@ def preflight_jenkins_run(  # noqa: PLR0913
     is checked before anything else the agents' code judges.
     """
     enforce_integration_execution_boundary()
-    if dict(resource_nodes) != EXPECTED_RESOURCE_NODES:
+    if dict(resource_nodes) != {"integration": INTEGRATION_AGENT.node} | {
+        name: stage.agent.node for name, stage in STAGES.items()
+    }:
         msg = "Jenkins resource mapping does not match the reviewed topology"
         raise InputError(msg)
     require_fresh_agent_images(
@@ -161,26 +235,13 @@ def preflight_jenkins_run(  # noqa: PLR0913
         execution_id=execution_id,
     )
     key_names = composition_key_names(repository, supplied)
-    for expected_stage, descriptor_path in DESCRIPTORS:
-        descriptor, _ = load_stage_adapter(repository, descriptor_path)
-        if (
-            descriptor.stage != expected_stage
-            or descriptor.agent_label != EXPECTED_AGENT_LABELS[expected_stage]
-        ):
+    for expected_stage, stage in STAGES.items():
+        descriptor, _ = load_stage_adapter(repository, stage.jenkins_descriptor)
+        if descriptor.stage != expected_stage:
             msg = f"{expected_stage} does not match its reviewed Jenkins Stage"
             raise InputError(msg)
         check_key_bindings(descriptor, key_names)
     return identified
-
-
-def _blocks_downstream(execution: StageExecution) -> bool:
-    envelope = execution.envelope
-    return (
-        envelope.lifecycle_state == "skipped"
-        or envelope.execution_conclusion != "succeeded"
-        or envelope.domain_outcome == "failed"
-        or envelope.implementation_mode == "not_implemented"
-    )
 
 
 def _load_execution_prefix(
@@ -193,15 +254,15 @@ def _load_execution_prefix(
     A supplied input this process was not granted is history: the Stage that
     accepted it compared it, and it is not captured again here.
     """
-    if len(roots) > len(DESCRIPTORS):
+    if len(roots) > len(STAGE_ORDER):
         msg = "accepted attempt transfer contains too many Stages"
         raise InputError(msg)
     executions: list[StageExecution] = []
     available_inputs = dict(initial_inputs)
     outputs: dict[str, StageInputSource] = {}
     for index, root in enumerate(roots):
-        expected_stage = DESCRIPTORS[index][0]
-        if executions and _blocks_downstream(executions[-1]):
+        expected_stage = STAGE_ORDER[index]
+        if executions and executions[-1].blocks_downstream:
             msg = "accepted attempt transfer contains work after a blocker"
             raise InputError(msg)
         execution = load_stage_execution(
@@ -230,7 +291,7 @@ def _load_execution_prefix(
                 msg = "accepted attempt input provenance does not match its source"
                 raise InputError(msg)
         executions.append(execution)
-        if not _blocks_downstream(execution):
+        if not execution.blocks_downstream:
             available_inputs.update(execution.outputs)
             outputs.update(execution.outputs)
     return executions, outputs
@@ -243,10 +304,10 @@ def execute_jenkins_stage(  # noqa: PLR0913
     resolved_commit: str,
     run_request_path: str,
     execution_id: str,
-    descriptor_path: str,
+    stage: StageName,
     attempt_root: Path,
     prior_attempt_roots: Sequence[Path],
-    work_limit_seconds: int,
+    work_limit_seconds: int | None,
     run_deadline_epoch_millis: str,
     baked_code_digest: str,
     supplied: SuppliedInputs,
@@ -256,11 +317,10 @@ def execute_jenkins_stage(  # noqa: PLR0913
     The executing agent's image must bake the submitted commit's integration
     code; that is checked first, so stale code judges nothing else.
     """
-    stage = DESCRIPTOR_STAGES.get(descriptor_path)
-    node = EXPECTED_RESOURCE_NODES[stage] if stage is not None else "executing"
+    definition = STAGES[stage]
     require_fresh_agent_images(
         integration_code_digest(repository_path / "integration"),
-        {node: baked_code_digest},
+        {definition.agent.node: baked_code_digest},
     )
     identified, repository, committed = _identify_submitted_run(
         repository_path=repository_path,
@@ -269,28 +329,36 @@ def execute_jenkins_stage(  # noqa: PLR0913
         run_request_path=run_request_path,
         execution_id=execution_id,
     )
-    granted: dict[str, StageInputSource] = {}
-    if stage is not None:
-        reject_ungranted_supplied_inputs(supplied, stage=stage)
-        granted = stage_inputs(repository, identified, supplied, stage=stage)
+    reject_ungranted_supplied_inputs(supplied, stage=stage)
+    if "service_repository" in definition.grant.inputs:
+        supplied = replace(
+            supplied, service_repository=repository_path / SERVICE_REPOSITORY_ROOT
+        )
+    granted = stage_inputs(repository, identified, supplied, stage=stage)
     executions, outputs = _load_execution_prefix(
         prior_attempt_roots,
         execution_id,
         committed | granted,
     )
-    if executions and _blocks_downstream(executions[-1]):
+    if executions and executions[-1].blocks_downstream:
         msg = "a blocking accepted attempt prevents further Stage execution"
         raise InputError(msg)
     next_stage_index = len(executions)
-    if next_stage_index >= len(DESCRIPTORS):
+    if next_stage_index >= len(STAGE_ORDER):
         msg = "all reviewed Stages already have accepted attempts"
         raise InputError(msg)
-    expected_stage, expected_descriptor = DESCRIPTORS[next_stage_index]
-    if descriptor_path != expected_descriptor:
-        msg = f"next accepted attempt must execute the {expected_stage} descriptor"
+    expected = STAGE_ORDER[next_stage_index]
+    if stage != expected:
+        msg = f"next accepted attempt must execute the {expected} Stage"
         raise InputError(msg)
-    if work_limit_seconds <= 0 or work_limit_seconds > MAX_WORK_LIMIT_SECONDS:
-        msg = "Stage work limit must be between 1 and 86400 seconds"
+    granted_seconds = definition.grant.work_limit_seconds
+    if work_limit_seconds is None:
+        work_limit_seconds = granted_seconds
+    elif not 1 <= work_limit_seconds <= granted_seconds:
+        msg = (
+            f"--work-limit-seconds must be between 1 and the {stage} Stage's"
+            f" granted {granted_seconds} seconds"
+        )
         raise InputError(msg)
 
     if POSITIVE_DECIMAL.fullmatch(run_deadline_epoch_millis) is None:
@@ -305,7 +373,7 @@ def execute_jenkins_stage(  # noqa: PLR0913
     execution = execute_identified_stage(
         repository=repository,
         identified=identified,
-        descriptor_path=descriptor_path,
+        descriptor_path=definition.jenkins_descriptor,
         attempt_root=attempt_root,
         available_inputs=granted | outputs,
         work_limit_seconds=work_limit_seconds,
@@ -326,7 +394,7 @@ def attempt_allows_continuation(
         expected_execution_id=execution_id,
         expected_stage=stage,
     )
-    return not _blocks_downstream(execution)
+    return not execution.blocks_downstream
 
 
 def finalize_jenkins_run(  # noqa: PLR0913
@@ -355,28 +423,31 @@ def finalize_jenkins_run(  # noqa: PLR0913
         execution_id,
         committed,
     )
-    blocker = next((item for item in executions if _blocks_downstream(item)), None)
-    if len(executions) < len(DESCRIPTORS) and blocker is None:
+    blocker = next((item for item in executions if item.blocks_downstream), None)
+    if len(executions) < len(STAGE_ORDER) and blocker is None:
+        pending = STAGES[STAGE_ORDER[len(executions)]]
         if not run_deadline_expired:
-            stage = DESCRIPTORS[len(executions)][0]
-            msg = f"Jenkins finalization is missing the {stage} accepted attempt"
+            msg = f"Jenkins finalization is missing the {pending.name} accepted attempt"
             raise InputError(msg)
-        stage, descriptor_path = DESCRIPTORS[len(executions)]
-        descriptor, _profile = load_stage_adapter(repository, descriptor_path)
+        descriptor, _profile = load_stage_adapter(
+            repository, pending.jenkins_descriptor
+        )
         blocker = skipped_stage_execution(
             execution_id=execution_id,
-            stage=stage,
+            stage=pending.name,
             implementation_mode=descriptor.implementation_mode,
             code="sdi.run.deadline-exceeded",
             summary="The Pipeline integration run deadline expired before Stage work.",
         )
         executions.append(blocker)
 
-    for stage, descriptor_path in DESCRIPTORS[len(executions) :]:
+    for stage in STAGE_ORDER[len(executions) :]:
         if blocker is None:
             msg = "Jenkins finalization has no blocking attempt"
             raise InputError(msg)
-        descriptor, _profile = load_stage_adapter(repository, descriptor_path)
+        descriptor, _profile = load_stage_adapter(
+            repository, STAGES[stage].jenkins_descriptor
+        )
         blocked_stage = blocker.envelope.correlation.stage
         executions.append(
             skipped_stage_execution(

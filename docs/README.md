@@ -11,6 +11,6 @@ This area contains role-neutral project context and operational guidance:
   acceptance.
 
 Jenkins host setup, lifecycle, recovery, rotation, troubleshooting, and safe
-shutdown are documented in `deployment/jenkins/README.md`. The isolated runner
-account and runner lifecycle are documented in
-`deployment/github-runner/README.md`.
+shutdown are documented in `deployment/jenkins/README.md`. The GitHub handoff
+runners run as containers in the Jenkins stack and are documented in the same
+file.

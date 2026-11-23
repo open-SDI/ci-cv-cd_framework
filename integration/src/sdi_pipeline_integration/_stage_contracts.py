@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Self, cast
 
@@ -19,6 +18,7 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema  # noqa: TC002
 
+from . import _stage_registry
 from ._contracts import (
     ContractModel,
     NonBlank,
@@ -26,6 +26,7 @@ from ._contracts import (
     Slug,
 )
 from ._git_input import validate_repository_path
+from ._stage_registry import STAGES, StageName
 
 ADAPTER_DESCRIPTOR_SCHEMA_VERSION = "sdi.adapter-descriptor/v1"
 STAGE_PROFILE_SCHEMA_VERSION = "sdi.stage-profile/v1"
@@ -34,17 +35,13 @@ ADAPTER_RESPONSE_SCHEMA_VERSION = "sdi.stage-adapter-response/v1"
 ACCEPTED_ATTEMPT_SCHEMA_VERSION = "sdi.accepted-attempt-envelope/v1"
 FIXTURE_CASE_SCHEMA_VERSION = "sdi.fixture-case/v1"
 PROCESS_CONTRACT_VERSION = "sdi.stage-adapter-process/v1"
-COMPOSITION_PROFILE_VERSION = "sdi.composition-stage-profile/v1"
-IMAGE_BUILD_PROFILE_VERSION = "sdi.image-build-stage-profile/v1"
-CV_PROFILE_VERSION = "sdi.cv-stage-profile/v1"
-CD_PROFILE_VERSION = "sdi.cd-stage-profile/v1"
 
-type StageName = Literal["composition", "image_build", "cv", "cd"]
-type SlotOrigin = Literal["committed", "supplied"] | StageName
 type ImplementationMode = Literal["fixture", "implemented", "not_implemented"]
 type ExecutionConclusion = Literal["succeeded", "failed", "timed_out", "skipped"]
 type AdapterExecutionConclusion = Literal["succeeded", "failed"]
 type DomainOutcome = Literal["succeeded", "failed", "not_evaluated"]
+# A plain alias, so contract schemas inline the enum instead of naming it.
+ReasonCategory = Literal["fixture", "input", "dependency", "tool", "adapter", "domain"]
 Sha256 = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
 SlotName = Annotated[
     str,
@@ -94,215 +91,6 @@ RESERVED_ACCEPTED_ENVELOPE_PATH = "accepted-attempt.json"
 DIAGNOSTIC_PATH = "diagnostic.txt"
 
 
-@dataclass(frozen=True)
-class Slot:
-    """One Domain artifact a Stage may be granted, in canonical order.
-
-    A committed slot comes from the run's committed inputs, a supplied slot from
-    the operator's flags, and any other slot is the Domain output of its Stage.
-    """
-
-    name: str
-    file_name: str
-    media_type: str
-    schema_version: str
-    origin: SlotOrigin
-
-
-SLOTS = (
-    Slot(
-        "run_request",
-        "run-request.yaml",
-        "application/yaml",
-        "sdi.pipeline-integration-run-request/v1",
-        "committed",
-    ),
-    Slot(
-        "requirements_specification",
-        "requirements-specification.md",
-        "text/markdown",
-        "sdi.mobility-requirements-specification/v1",
-        "committed",
-    ),
-    Slot(
-        "target_profile",
-        "target-profile.yaml",
-        "application/yaml",
-        "sdi.target-execution-profile/v1",
-        "committed",
-    ),
-    Slot(
-        "service_repository",
-        "service-repository.json",
-        "application/json",
-        "sdi.service-repository-manifest/v1",
-        "supplied",
-    ),
-    Slot(
-        "composition_settings",
-        "composition-settings.json",
-        "application/json",
-        "sdi.composition-settings/v1",
-        "supplied",
-    ),
-    Slot(
-        "composition_blueprint",
-        "composition-blueprint.json",
-        "application/json",
-        "sdi.composition-blueprint/v1",
-        "composition",
-    ),
-    Slot(
-        "deployment_schema",
-        "deployment-schema.json",
-        "application/json",
-        "sdi.deployment-schema/v1",
-        "composition",
-    ),
-    Slot(
-        "image_build_result",
-        "image-build-result.json",
-        "application/json",
-        "sdi.image-build-result/v1",
-        "image_build",
-    ),
-    Slot(
-        "validation_evidence",
-        "validation-evidence.json",
-        "application/json",
-        "sdi.validation-evidence/v1",
-        "cv",
-    ),
-    Slot(
-        "deployment_result",
-        "deployment-result.json",
-        "application/json",
-        "sdi.deployment-result/v1",
-        "cd",
-    ),
-)
-SLOT_BY_NAME = {slot.name: slot for slot in SLOTS}
-SLOT_BY_SCHEMA = {slot.schema_version: slot for slot in SLOTS}
-COMMITTED_SLOTS = tuple(slot for slot in SLOTS if slot.origin == "committed")
-# Run-supplied inputs come from the operator's flags, not from committed run
-# inputs or an earlier Stage, so no result provenance names their source.
-SUPPLIED_INPUT_SLOTS = frozenset(
-    slot.name for slot in SLOTS if slot.origin == "supplied"
-)
-
-
-@dataclass(frozen=True)
-class EvidenceGrant:
-    """Optional evidence of how a Stage reached its outcome.
-
-    Evidence is never a Domain input to a later Stage, so it is not a slot.
-    """
-
-    name: str
-    file_name: str
-    media_type: str
-    schema_version: str
-    max_bytes: int
-
-
-@dataclass(frozen=True)
-class StageGrant:
-    """Everything one Stage is granted; its profile is rendered from this.
-
-    A Stage's Domain outputs are the slots it originates, each bounded by
-    `domain_output_max_bytes`.
-    """
-
-    profile_version: str
-    inputs: tuple[str, ...]
-    work_limit_seconds: int
-    domain_output_max_bytes: int
-    diagnostic_max_bytes: int
-    evidence: tuple[EvidenceGrant, ...] = ()
-
-
-STAGE_GRANTS: dict[StageName, StageGrant] = {
-    "composition": StageGrant(
-        COMPOSITION_PROFILE_VERSION,
-        (
-            "run_request",
-            "requirements_specification",
-            "target_profile",
-            "service_repository",
-            "composition_settings",
-        ),
-        work_limit_seconds=10 * 60,
-        domain_output_max_bytes=32768,
-        diagnostic_max_bytes=16384,
-        evidence=(
-            EvidenceGrant(
-                "composition_evidence",
-                "composition-evidence.json",
-                "application/json",
-                "sdi.composition-evidence/v1",
-                max_bytes=262144,
-            ),
-        ),
-    ),
-    "image_build": StageGrant(
-        IMAGE_BUILD_PROFILE_VERSION,
-        ("target_profile", "composition_blueprint", "deployment_schema"),
-        work_limit_seconds=30 * 60,
-        domain_output_max_bytes=32768,
-        diagnostic_max_bytes=4096,
-    ),
-    "cv": StageGrant(
-        CV_PROFILE_VERSION,
-        (
-            "requirements_specification",
-            "target_profile",
-            "composition_blueprint",
-            "deployment_schema",
-            "image_build_result",
-        ),
-        work_limit_seconds=45 * 60,
-        domain_output_max_bytes=32768,
-        diagnostic_max_bytes=4096,
-    ),
-    "cd": StageGrant(
-        CD_PROFILE_VERSION,
-        (
-            "target_profile",
-            "composition_blueprint",
-            "deployment_schema",
-            "image_build_result",
-            "validation_evidence",
-        ),
-        work_limit_seconds=15 * 60,
-        domain_output_max_bytes=32768,
-        diagnostic_max_bytes=4096,
-    ),
-}
-PROFILE_VERSIONS: dict[StageName, str] = {
-    stage: grant.profile_version for stage, grant in STAGE_GRANTS.items()
-}
-EXPECTED_STAGE_INPUT_SLOTS: dict[StageName, tuple[str, ...]] = {
-    stage: grant.inputs for stage, grant in STAGE_GRANTS.items()
-}
-EXPECTED_STAGE_OUTPUTS: dict[StageName, dict[str, tuple[str, str, str]]] = {
-    stage: {
-        slot.name: (f"outputs/{slot.file_name}", slot.media_type, slot.schema_version)
-        for slot in SLOTS
-        if slot.origin == stage
-    }
-    for stage in STAGE_GRANTS
-}
-EXPECTED_STAGE_EVIDENCE: dict[StageName, dict[str, tuple[str, str, str]]] = {
-    stage: {
-        evidence.name: (
-            f"outputs/{evidence.file_name}",
-            evidence.media_type,
-            evidence.schema_version,
-        )
-        for evidence in grant.evidence
-    }
-    for stage, grant in STAGE_GRANTS.items()
-}
 MAX_ARTIFACT_PATH_BYTES = 512
 MAX_ARTIFACT_COMPONENT_BYTES = 255
 ASCII_CONTROL_LIMIT = 32
@@ -439,7 +227,7 @@ class Correlation(ContractModel):
 class Reason(ContractModel):
     """Bounded, sanitized process or Domain reason."""
 
-    category: Literal["fixture", "input", "dependency", "tool", "adapter", "domain"]
+    category: ReasonCategory
     code: ReasonCode
     summary: BoundedText
 
@@ -469,7 +257,6 @@ class AdapterDescriptor(ContractModel):
     process_contract_version: Literal["sdi.stage-adapter-process/v1"]
     stage_profile: RepositoryPath
     stage_profile_version: NonBlank
-    agent_label: Slug
     secret_bindings: list[EnvironmentName]
 
     @field_validator("stage_profile")
@@ -483,7 +270,7 @@ class AdapterDescriptor(ContractModel):
         if self.implementation_mode == "fixture" and self.secret_bindings:
             msg = "Fixture adapters cannot receive secret bindings"
             raise ValueError(msg)
-        if self.stage_profile_version != PROFILE_VERSIONS[self.stage]:
+        if self.stage_profile_version != STAGES[self.stage].grant.profile_version:
             msg = f"{self.stage} descriptor must select its reviewed profile version"
             raise ValueError(msg)
         return self
@@ -560,7 +347,7 @@ class StageProfile(ContractModel):
                 RESERVED_ACCEPTED_ENVELOPE_PATH,
             ]
         )
-        if self.profile_version != PROFILE_VERSIONS[self.stage]:
+        if self.profile_version != STAGES[self.stage].grant.profile_version:
             msg = f"{self.stage} profile has an unsupported profile version"
             raise ValueError(msg)
         return self
@@ -568,9 +355,8 @@ class StageProfile(ContractModel):
 
 def render_stage_profile(stage: StageName) -> StageProfile:
     """Render one Stage's profile from the registry as it stands now."""
-    grant = STAGE_GRANTS[stage]
-    # Read SLOTS now rather than the import-time SLOT_BY_NAME view.
-    slots = {slot.name: slot for slot in SLOTS}
+    grant = STAGES[stage].grant
+    slots = {slot.name: slot for slot in _stage_registry.SLOTS}
     return StageProfile.model_validate(
         {
             "schema_version": STAGE_PROFILE_SCHEMA_VERSION,
@@ -596,7 +382,7 @@ def render_stage_profile(stage: StageName) -> StageProfile:
                         "role": "domain_output",
                         "max_bytes": grant.domain_output_max_bytes,
                     }
-                    for slot in SLOTS
+                    for slot in _stage_registry.SLOTS
                     if slot.origin == stage
                 ),
                 *(

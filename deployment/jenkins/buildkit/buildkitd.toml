@@ -1,0 +1,18 @@
+# Mounted read-only into buildkitd. Network membership is the access boundary, so
+# the daemon grants no extra entitlements and uses no client TLS.
+
+[worker.oci]
+  gc = true
+
+  # One space-only rule over every record type, with no time-based expiry.
+  # Recalibrate with `buildctl du` after the warm-up run.
+  [[worker.oci.gcpolicy]]
+    all = true
+    reservedSpace = "10GB"
+    maxUsedSpace = "60GB"
+    minFreeSpace = "20GB"
+
+# The pipeline registry is reachable only on the internal builder network and
+# serves plain HTTP.
+[registry."registry:5000"]
+  http = true

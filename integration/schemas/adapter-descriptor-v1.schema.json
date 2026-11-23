@@ -21,12 +21,6 @@
   "additionalProperties": false,
   "description": "Reviewed authority selecting one trusted Stage adapter.",
   "properties": {
-    "agent_label": {
-      "maxLength": 63,
-      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-      "title": "Agent Label",
-      "type": "string"
-    },
     "entrypoint": {
       "minLength": 1,
       "title": "Entrypoint",
@@ -84,7 +78,6 @@
     "process_contract_version",
     "stage_profile",
     "stage_profile_version",
-    "agent_label",
     "secret_bindings"
   ],
   "title": "AdapterDescriptor",

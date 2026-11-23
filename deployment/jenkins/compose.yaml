@@ -13,11 +13,6 @@ services:
       JENKINS_HANDOFF_ID: ${JENKINS_HANDOFF_ID}
       JENKINS_REPOSITORY_URL: ${JENKINS_REPOSITORY_URL}
       JENKINS_FORK_REPOSITORY_URL: ${JENKINS_FORK_REPOSITORY_URL}
-      JENKINS_PIPELINE_RUN_LIMIT_SECONDS: ${JENKINS_PIPELINE_RUN_LIMIT_SECONDS}
-      JENKINS_COMPOSITION_WORK_LIMIT_SECONDS: ${JENKINS_COMPOSITION_WORK_LIMIT_SECONDS}
-      JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS: ${JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS}
-      JENKINS_CV_WORK_LIMIT_SECONDS: ${JENKINS_CV_WORK_LIMIT_SECONDS}
-      JENKINS_CD_WORK_LIMIT_SECONDS: ${JENKINS_CD_WORK_LIMIT_SECONDS}
     ports:
       - "127.0.0.1:${JENKINS_HTTP_PORT}:8080"
     volumes:
@@ -49,6 +44,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
+      target: agent
       args:
         RUNTIME_IMAGE: docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
         SDI_JENKINS_AGENT_LABEL: ""
@@ -85,6 +81,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
+      target: agent
       args:
         RUNTIME_IMAGE: ${JENKINS_COMPOSITION_AGENT_IMAGE}
         SDI_JENKINS_AGENT_LABEL: composition
@@ -121,6 +118,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
+      target: image-build
       args:
         RUNTIME_IMAGE: ${JENKINS_IMAGE_BUILD_AGENT_IMAGE}
         SDI_JENKINS_AGENT_LABEL: image-build
@@ -139,7 +137,7 @@ services:
     tmpfs:
       - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
       - /tmp:rw,nosuid,nodev,mode=1777
-    networks: [controller-image-build]
+    networks: [controller-image-build, image-build-builder]
     depends_on:
       controller:
         condition: service_healthy
@@ -157,6 +155,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
+      target: agent
       args:
         RUNTIME_IMAGE: ${JENKINS_CV_AGENT_IMAGE}
         SDI_JENKINS_AGENT_LABEL: cv
@@ -193,6 +192,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
+      target: agent
       args:
         RUNTIME_IMAGE: ${JENKINS_CD_AGENT_IMAGE}
         SDI_JENKINS_AGENT_LABEL: cd
@@ -221,6 +221,46 @@ services:
       timeout: 5s
       retries: 24
       start_period: 60s
+      start_interval: 1s
+
+  buildkitd:
+    image: docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    command: [--addr, "tcp://0.0.0.0:1234", --config, /etc/buildkit/buildkitd.toml]
+    volumes:
+      - buildkit-state:/var/lib/buildkit
+      - ./buildkit/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
+    networks: [image-build-builder, builder-egress]
+    healthcheck:
+      test: [CMD, buildctl, --addr, "tcp://127.0.0.1:1234", debug, workers]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+      start_interval: 1s
+
+  registry:
+    image: docker.io/library/registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+    platform: linux/amd64
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      OTEL_TRACES_EXPORTER: none
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777
+    volumes:
+      - pipeline-registry:/var/lib/registry
+    networks: [image-build-builder]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:5000/v2/"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
       start_interval: 1s
 
   runner-upstream:
@@ -357,6 +397,8 @@ volumes:
   jenkins-home:
   runner-upstream-state:
   runner-fork-state:
+  buildkit-state:
+  pipeline-registry:
 
 networks:
   controller-integration:
@@ -376,6 +418,9 @@ networks:
   runner-fork-controller:
     internal: true
   runner-fork-egress:
+  image-build-builder:
+    internal: true
+  builder-egress:
 
 secrets:
   jenkins-admin-password:

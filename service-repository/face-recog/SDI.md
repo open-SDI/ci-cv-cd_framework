@@ -28,7 +28,6 @@ artifacts:
       kind: source
       repository: https://github.com/elpidiovaldez/face_recog
       revision: 49604f569e1ef0c6283c2a8369f580167087b874
-    invocation: ros2 run face_recog live_face_recog
 
 subscribes:
   /image: {type: sensor_msgs/msg/Image, reliability: reliable, durability: volatile}

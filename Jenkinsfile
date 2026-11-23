@@ -2,47 +2,26 @@ import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException
 import org.jenkinsci.plugins.workflow.steps.TimeoutStepExecution
 
 
-def readPositiveSeconds = { name, raw ->
-    if (raw == null || !(raw ==~ /[1-9][0-9]*/)) {
-        error("${name} must be a positive integer")
-    }
-    def value = raw.toInteger()
-    if (value > 86400) {
-        error("${name} must not exceed 86400 seconds")
-    }
-    value
-}
-
-def runLimitSeconds = readPositiveSeconds(
-    'JENKINS_PIPELINE_RUN_LIMIT_SECONDS',
-    env.JENKINS_PIPELINE_RUN_LIMIT_SECONDS,
-)
-if (runLimitSeconds < 180) {
-    error('JENKINS_PIPELINE_RUN_LIMIT_SECONDS must reserve finalization time')
-}
-
+// BEGIN GENERATED STAGE WIRING
+// Rendered from _stage_registry.py. After editing the registry, run this
+// from the repository root: uv run --project integration sdi-integration jenkinsfile --write --jenkinsfile Jenkinsfile
+def integrationLabel = 'integration'
+def runLimitSeconds = 5400
 def stages = [
     [name: 'Composition', stage: 'composition', label: 'composition',
-     descriptor: 'deployment/jenkins/adapters/composition-v1.yaml',
-     suppliedArguments: '--service-repository service-repository',
-     workLimitSeconds: readPositiveSeconds(
-         'JENKINS_COMPOSITION_WORK_LIMIT_SECONDS', env.JENKINS_COMPOSITION_WORK_LIMIT_SECONDS)],
+     safetyTimeoutSeconds: 660,
+     credentials: [[id: 'sdi-openai-api-key', variable: 'OPENAI_API_KEY']]],
     [name: 'Image build', stage: 'image_build', label: 'image-build',
-     descriptor: 'deployment/jenkins/adapters/image-build-fixture-v1.yaml',
-     suppliedArguments: '',
-     workLimitSeconds: readPositiveSeconds(
-         'JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS', env.JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS)],
+     safetyTimeoutSeconds: 1860,
+     credentials: []],
     [name: 'Continuous Validation', stage: 'cv', label: 'cv',
-     descriptor: 'deployment/jenkins/adapters/cv-fixture-v1.yaml',
-     suppliedArguments: '',
-     workLimitSeconds: readPositiveSeconds(
-         'JENKINS_CV_WORK_LIMIT_SECONDS', env.JENKINS_CV_WORK_LIMIT_SECONDS)],
+     safetyTimeoutSeconds: 2760,
+     credentials: []],
     [name: 'Continuous Deployment', stage: 'cd', label: 'cd',
-     descriptor: 'deployment/jenkins/adapters/cd-fixture-v1.yaml',
-     suppliedArguments: '',
-     workLimitSeconds: readPositiveSeconds(
-         'JENKINS_CD_WORK_LIMIT_SECONDS', env.JENKINS_CD_WORK_LIMIT_SECONDS)],
+     safetyTimeoutSeconds: 960,
+     credentials: []],
 ]
+// END GENERATED STAGE WIRING
 
 def isTimeoutInterruption = { interruption ->
     interruption.causes.any { cause ->
@@ -105,10 +84,6 @@ git update-ref refs/heads/main "$RESOLVED_COMMIT_SHA"
     }
 }
 
-// Only composition is given the checked-out service repository. The Domain
-// agents reach only the OpenAI endpoint, so Jenkins composes with the committed
-// composition config's default luna generator and names neither; its key comes
-// from the sdi-openai-api-key credential bound around the composition Stage only.
 def commonArguments = '''\
   --repository . \
   --requested-ref "$REQUESTED_GIT_REF" \
@@ -117,10 +92,16 @@ def commonArguments = '''\
   --execution-id "$EXECUTION_ID"'''
 
 // Each agent image records a digest of the integration code it bakes in. An
-// image built before that record existed reports `missing`. Exit status 4 means
+// image whose record is absent or empty reports `missing`. Exit status 4 means
 // an agent image bakes integration code other than the submitted commit's; the
-// build description lets the handoff report that as a typed failure.
-def bakedCodeDigestCommand = 'cat /etc/sdi/integration-code-digest 2>/dev/null || printf missing'
+// build description lets the handoff report that as a typed failure. The check
+// runs through integration-code-digest, which every image runs at build time,
+// so a stale image fails typed even when it cannot parse this file's flags.
+def bakedCodeDigestCommand = 'digest=$(cat /etc/sdi/integration-code-digest 2>/dev/null || true); printf %s "${digest:-missing}"'
+def requireFreshAgentImage = """test "\$(${bakedCodeDigestCommand})" = "\$(sdi-integration integration-code-digest --root integration)" || {
+  printf '%s\\n' 'sdi.agent.stale-image: this agent image bakes integration code other than the submitted commit' >&2
+  exit 4
+}"""
 def failStaleAgentImages = { stageName ->
     currentBuild.description = 'sdi.agent.stale-image'
     error("${stageName} found stale agent images; rebuild them from a clean checkout")
@@ -158,23 +139,24 @@ timeout(time: runLimitSeconds, unit: 'SECONDS') {
     }
 
     stage('Run preflight') {
-        node('integration') {
+        node(integrationLabel) {
             try {
                 deleteDir()
                 checkoutSubmittedCommit()
-                withEnv([
+                def preflightEnvironment = [
                     "SDI_BUILD_STARTED_AT_MILLIS=${buildStartedAtMillis}",
                     "SDI_INTEGRATION_NODE=${env.NODE_NAME}",
-                    "SDI_COMPOSITION_NODE=${resourceNodes.composition}",
-                    "SDI_IMAGE_BUILD_NODE=${resourceNodes.image_build}",
-                    "SDI_CV_NODE=${resourceNodes.cv}",
-                    "SDI_CD_NODE=${resourceNodes.cd}",
-                    "SDI_COMPOSITION_BAKED_CODE_DIGEST=${bakedCodeDigests.composition}",
-                    "SDI_IMAGE_BUILD_BAKED_CODE_DIGEST=${bakedCodeDigests.image_build}",
-                    "SDI_CV_BAKED_CODE_DIGEST=${bakedCodeDigests.cv}",
-                    "SDI_CD_BAKED_CODE_DIGEST=${bakedCodeDigests.cd}",
-                ]) {
+                ]
+                def stageArguments = []
+                stages.each { definition ->
+                    preflightEnvironment.add("SDI_NODE_${definition.stage}=${resourceNodes[definition.stage]}")
+                    preflightEnvironment.add("SDI_DIGEST_${definition.stage}=${bakedCodeDigests[definition.stage]}")
+                    stageArguments.add("--stage-node \"${definition.stage}=\$SDI_NODE_${definition.stage}\"")
+                    stageArguments.add("--stage-baked-code-digest \"${definition.stage}=\$SDI_DIGEST_${definition.stage}\"")
+                }
+                withEnv(preflightEnvironment) {
                     def preflightStatus = sh(returnStatus: true, script: """set -eu
+${requireFreshAgentImage}
 sdi-integration preflight-jenkins-run \\
 ${commonArguments} \\
   --handoff-contract-version \"\$HANDOFF_CONTRACT_VERSION\" \\
@@ -182,15 +164,8 @@ ${commonArguments} \\
   --github-run-attempt \"\$GITHUB_RUN_ATTEMPT\" \\
   --build-started-at-millis \"\$SDI_BUILD_STARTED_AT_MILLIS\" \\
   --integration-node \"\$SDI_INTEGRATION_NODE\" \\
-  --composition-node \"\$SDI_COMPOSITION_NODE\" \\
-  --image-build-node \"\$SDI_IMAGE_BUILD_NODE\" \\
-  --cv-node \"\$SDI_CV_NODE\" \\
-  --cd-node \"\$SDI_CD_NODE\" \\
   --integration-baked-code-digest \"\$(${bakedCodeDigestCommand})\" \\
-  --composition-baked-code-digest \"\$SDI_COMPOSITION_BAKED_CODE_DIGEST\" \\
-  --image-build-baked-code-digest \"\$SDI_IMAGE_BUILD_BAKED_CODE_DIGEST\" \\
-  --cv-baked-code-digest \"\$SDI_CV_BAKED_CODE_DIGEST\" \\
-  --cd-baked-code-digest \"\$SDI_CD_BAKED_CODE_DIGEST\" >/dev/null
+  ${stageArguments.join(' ')} >/dev/null
 """)
                     if (preflightStatus == 4) {
                         failStaleAgentImages('Run preflight')
@@ -223,14 +198,16 @@ ${commonArguments} \\
                     def priorArguments = acceptedStages.collect { acceptedStage ->
                         "--prior-attempt-root 'transfers/${acceptedStage}'"
                     }.join(' ')
-                    priorArguments = "${priorArguments} --work-limit-seconds '${definition.workLimitSeconds}'"
                     def stageExecutionStatus = 0
+                    // Jenkins selects no generator. The Domain agents reach only
+                    // the OpenAI endpoint, so every Stage runs with the committed
+                    // composition config's default generator.
                     def executeStage = {
                         sh(returnStatus: true, script: """set -eu
+${requireFreshAgentImage}
 sdi-integration execute-jenkins-stage \\
 ${commonArguments} \\
-  ${definition.suppliedArguments} \\
-  --descriptor-path '${definition.descriptor}' \\
+  --stage '${definition.stage}' \\
   --attempt-root 'transfers/${definition.stage}' \\
   ${priorArguments} \\
   --baked-code-digest \"\$(${bakedCodeDigestCommand})\" \\
@@ -241,12 +218,11 @@ ${commonArguments} \\
                         "SDI_RUN_DEADLINE_EPOCH_MILLIS=${runDeadlineEpochMillis}",
                     ]) {
                         try {
-                            timeout(time: definition.workLimitSeconds + 60, unit: 'SECONDS') {
-                                if (definition.stage == 'composition') {
-                                    withCredentials([string(
-                                        credentialsId: 'sdi-openai-api-key',
-                                        variable: 'OPENAI_API_KEY',
-                                    )]) {
+                            timeout(time: definition.safetyTimeoutSeconds, unit: 'SECONDS') {
+                                if (definition.credentials) {
+                                    withCredentials(definition.credentials.collect { credential ->
+                                        string(credentialsId: credential.id, variable: credential.variable)
+                                    }) {
                                         stageExecutionStatus = executeStage()
                                     }
                                 } else {
@@ -306,7 +282,7 @@ sdi-integration attempt-allows-continuation \\
     }
 
     stage('Finalize and archive') {
-        node('integration') {
+        node(integrationLabel) {
             try {
                 deleteDir()
                 checkoutSubmittedCommit()

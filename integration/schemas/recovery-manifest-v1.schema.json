@@ -26,6 +26,11 @@
       "additionalProperties": false,
       "description": "Exact reconstructable software and workflow inputs.",
       "properties": {
+        "buildkit_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Buildkit Image",
+          "type": "string"
+        },
         "cd_adapter_image": {
           "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
           "title": "Cd Adapter Image",
@@ -91,6 +96,11 @@
           "title": "Python Version",
           "type": "string"
         },
+        "registry_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Registry Image",
+          "type": "string"
+        },
         "upload_artifact_action_commit": {
           "pattern": "^[0-9a-f]{40}$",
           "title": "Upload Artifact Action Commit",
@@ -114,6 +124,8 @@
         "python_runtime_image",
         "uv_image",
         "jenkins_remoting_image",
+        "buildkit_image",
+        "registry_image",
         "composition_adapter_image",
         "image_build_adapter_image",
         "cv_adapter_image",

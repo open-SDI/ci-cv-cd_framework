@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from tests._fixture_inputs import STAGE_DESCRIPTORS
 from tests._live_model import (
     COMPOSITION_CONFIG,
     REPOSITORY_ROOT,
@@ -46,10 +47,7 @@ COMMITTED_FILES = (
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/composition-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    *STAGE_DESCRIPTORS,
     "integration/composition-config.yaml",
 )
 CONFIG_PATH = "integration/composition-config.yaml"
@@ -136,6 +134,7 @@ def _dispatch(
 def _dispatch_stub(
     tmp_path: Path,
     body: dict[str, object],
+    service_repository: Path = SERVICE_REPOSITORY,
     **config: Any,  # noqa: ANN401
 ) -> subprocess.CompletedProcess[str]:
     """Dispatch with the stub committed as the default composition config."""
@@ -143,7 +142,12 @@ def _dispatch_stub(
         commit_sha = _repository(
             tmp_path, {CONFIG_PATH: stub_config(base_url, **config)}
         )
-        return _dispatch(tmp_path, commit_sha, keys={"VLLM_KEY": STUB_KEY})
+        return _dispatch(
+            tmp_path,
+            commit_sha,
+            service_repository=service_repository,
+            keys={"VLLM_KEY": STUB_KEY},
+        )
 
 
 def _composition_files(result: dict[str, object]) -> set[str]:
@@ -376,6 +380,25 @@ def test_publishes_the_preferred_stubbed_proposal(tmp_path: Path) -> None:
     } == {"placeholder"}
     _validate_bundle(tmp_path)
     assert STUB_KEY not in _bundle_text(tmp_path) + completed.stdout
+
+
+def test_composes_service_folders_that_hold_recipes(tmp_path: Path) -> None:
+    service_repository = tmp_path / "service-repository"
+    shutil.copytree(SERVICE_REPOSITORY, service_repository)
+    folder = service_repository / "nav2-navigation"
+    (folder / "Dockerfile.jazzy-debs").write_text("FROM scratch\n")
+    (folder / "archive").mkdir()
+    (folder / "archive/SDI.md").write_text("A retired note, not a description.\n")
+
+    completed = _dispatch_stub(tmp_path, proposals_body([COMPLETE]), service_repository)
+
+    assert completed.returncode == 0, completed.stderr
+    composition = json.loads(completed.stdout)["attempts"][0]
+    assert composition["reason"]["code"] == "sdi.composition.preferred-proposal"
+    assert {item["path"] for item in _evidence(tmp_path)["descriptions"]} == {
+        f"{path.name}/SDI.md" for path in SERVICE_REPOSITORY.iterdir() if path.is_dir()
+    }
+    _validate_bundle(tmp_path)
 
 
 def test_publishes_only_evidence_without_an_eligible_proposal(

@@ -21,6 +21,15 @@ from ._stage_contracts import ExecutionId, parse_wire_datetime
 
 HANDOFF_RECEIPT_SCHEMA_VERSION = "sdi.github-jenkins-handoff-receipt/v1"
 HANDOFF_CONTRACT_VERSION = "sdi.github-jenkins-handoff/v1"
+HANDOFF_PARAMETERS = (
+    "HANDOFF_CONTRACT_VERSION",
+    "EXECUTION_ID",
+    "REQUESTED_GIT_REF",
+    "RESOLVED_COMMIT_SHA",
+    "RUN_REQUEST_PATH",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+)
 HANDOFF_RECEIPT_PATH = "handoff-receipt.json"
 
 type HandoffPhase = Literal[

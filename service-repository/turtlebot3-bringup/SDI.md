@@ -7,8 +7,9 @@ provenance:
   basis: declared
   source: >-
     From TurtleBot3 2.3.6 (da785b7201d317e6e2a662e41bb3d3fd50ebd503)
-    turtlebot3_bringup/launch/robot.launch.py, turtlebot3_bringup/param/waffle_pi.yaml
-    and turtlebot3_node, with the hls_lfcd_lds_driver and ld08_driver Jazzy releases.
+    turtlebot3_bringup/launch/robot.launch.py, turtlebot3_state_publisher.launch.py,
+    turtlebot3_bringup/param/waffle_pi.yaml and turtlebot3_node, with the
+    hls_lfcd_lds_driver and ld08_driver Jazzy releases.
 
 implementation:
   name: turtlebot3
@@ -25,6 +26,7 @@ artifacts:
     host_requirement:
       os: ubuntu-24.04
       ros_distro: jazzy
+    dockerfile: Dockerfile.jazzy-debs
     route:
       kind: apt
       packages:
@@ -33,9 +35,6 @@ artifacts:
         - ros-jazzy-turtlebot3-description=2.3.6-1*
         - ros-jazzy-hls-lfcd-lds-driver=2.1.1-1*
         - ros-jazzy-ld08-driver=1.1.4-1*
-    invocation: >-
-      TURTLEBOT3_MODEL=waffle_pi LDS_MODEL=LDS-01
-      ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/ttyACM0
 
 subscribes:
   /cmd_vel: {type: geometry_msgs/msg/TwistStamped, reliability: reliable, durability: volatile}
@@ -68,8 +67,9 @@ the robot's fixed transforms from its URDF.
 ## Assumptions and preconditions
 
 - Runs on the robot itself: OpenCR on `/dev/ttyACM0` and the lidar on `/dev/ttyUSB0`.
-- `TURTLEBOT3_MODEL` and `LDS_MODEL` must be set; the launch file fails without them.
-  `LDS-01` selects the `hls_lfcd_lds_driver`; a robot with the newer LDS-02 needs `LDS_MODEL=LDS-02`.
+- The launch file reads `TURTLEBOT3_MODEL` and `LDS_MODEL`; the image sets them to
+  `waffle_pi` and `LDS-01`. `LDS-01` selects the `hls_lfcd_lds_driver`; a robot with
+  the newer LDS-02 needs `LDS_MODEL=LDS-02`.
 - Velocity commands must be `TwistStamped`: the shipped Waffle Pi parameter file
   sets `enable_stamped_cmd_vel: true`.
 
@@ -85,6 +85,11 @@ the robot's fixed transforms from its URDF.
 
 Uses `turtlebot3_bringup/param/waffle_pi.yaml` unchanged: wheel separation 0.287 m,
 wheel radius 0.033 m, odometry frames `odom → base_footprint` with the IMU fused.
+The recipe copies it and the two launch files from TurtleBot3 2.3.6 (da785b7),
+with only `robot.launch.py`'s `turtlebot3_bringup` lookup replaced, and installs
+the packages they run instead of `ros-jazzy-turtlebot3-bringup`, which pulls in
+RViz. The image lists its installed packages in
+`/usr/share/sdi/installed-packages.txt`.
 
 ## Evaluation
 

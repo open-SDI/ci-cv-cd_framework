@@ -13,10 +13,20 @@ from pathlib import Path
 
 from sdi_pipeline_integration import _fixture_regeneration
 from sdi_pipeline_integration._integration_code import BAKED_ROOTS
+from sdi_pipeline_integration._stage_registry import STAGES
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 
 COMPOSITION_DESCRIPTOR = "deployment/jenkins/adapters/composition-v1.yaml"
+STAGE_DESCRIPTORS = tuple(
+    sorted(
+        {
+            path
+            for stage in STAGES.values()
+            for path in (stage.jenkins_descriptor, stage.local_descriptor)
+        }
+    )
+)
 # The Fixture cases are generated from these same inputs.
 FIXTURE_COMPOSITION_CONFIG = _fixture_regeneration.FIXTURE_COMPOSITION_CONFIG
 FIXTURE_SERVICE_REPOSITORY = (
@@ -30,6 +40,46 @@ SUPPLIED_INPUT_ARGUMENTS = (
     "--service-repository",
     str(FIXTURE_SERVICE_REPOSITORY),
     "--composition-config",
+    FIXTURE_COMPOSITION_CONFIG,
+)
+
+S04_COMBINATION_EXPECTATIONS: dict[str, dict[str, str]] = {
+    "C-05": {
+        "run_request_path": "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
+        "profile_id": "waffle-jetson-arm64",
+        "host": "orin",
+    },
+}
+S04_RUN_REQUEST_PATHS = tuple(
+    expected["run_request_path"] for expected in S04_COMBINATION_EXPECTATIONS.values()
+)
+RUN_REQUEST_PATH = S04_RUN_REQUEST_PATHS[0]
+COMMITTED_FILES = (
+    *S04_RUN_REQUEST_PATHS,
+    "requirements/s-04/deliver-book-to-joe.md",
+    "profiles/s-04/waffle-native-arm64.yaml",
+    "profiles/s-04/waffle-xycar-amd64.yaml",
+    "profiles/s-04/burger-native-arm64.yaml",
+    "profiles/s-04/burger-xycar-amd64.yaml",
+    "profiles/s-04/waffle-jetson-arm64.yaml",
+    "profiles/s-04/burger-jetson-arm64.yaml",
+    "integration/stage-profiles/composition-v1.yaml",
+    "integration/stage-profiles/image-build-v1.yaml",
+    "integration/stage-profiles/cv-v1.yaml",
+    "integration/stage-profiles/cd-v1.yaml",
+    *STAGE_DESCRIPTORS,
+    "runs/conformance/composition-negative-domain.yaml",
+    "runs/conformance/composition-absent-response.yaml",
+    "runs/conformance/composition-handled-failure.yaml",
+    "runs/conformance/composition-crash.yaml",
+    "runs/conformance/composition-timeout.yaml",
+    "runs/conformance/composition-malformed-response.yaml",
+    "runs/conformance/composition-missing-output.yaml",
+    "runs/conformance/composition-undeclared-output.yaml",
+    "runs/conformance/composition-unsafe-output.yaml",
+    "runs/conformance/composition-oversize-output.yaml",
+    "runs/conformance/composition-response-mismatch.yaml",
+    "runs/conformance/composition-schema-mismatch.yaml",
     FIXTURE_COMPOSITION_CONFIG,
 )
 
@@ -52,7 +102,6 @@ entrypoint: {entrypoint}
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/composition-v1.yaml
 stage_profile_version: sdi.composition-stage-profile/v1
-agent_label: composition
 secret_bindings: []
 """,
         encoding="utf-8",
@@ -101,3 +150,64 @@ def copy_baked_integration_code(repository: Path) -> None:
         destination = repository / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((REPOSITORY_ROOT / relative_path).read_bytes())
+
+
+def run_git(repository: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    run_git(repository, "init", "--initial-branch=main")
+    run_git(repository, "config", "user.name", "Test Operator")
+    run_git(repository, "config", "user.email", "operator@example.test")
+    run_git(
+        repository,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/example/sdi-fixture.git",
+    )
+    for relative_path in COMMITTED_FILES:
+        destination = repository / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((REPOSITORY_ROOT / relative_path).read_bytes())
+    write_fixture_composition_descriptor(repository)
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-m", "Add four-Stage Fixture inputs")
+    return repository, run_git(repository, "rev-parse", "HEAD")
+
+
+def dispatch_local_cli(
+    repository: Path,
+    commit_sha: str,
+    bundle_root: Path,
+    run_request_path: str = RUN_REQUEST_PATH,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "sdi-integration",
+            "dispatch-local",
+            "--repository",
+            str(repository),
+            "--requested-ref",
+            "refs/heads/main",
+            "--resolved-commit",
+            commit_sha,
+            "--run-request-path",
+            run_request_path,
+            "--bundle-root",
+            str(bundle_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )

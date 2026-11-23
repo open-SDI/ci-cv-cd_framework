@@ -23,8 +23,10 @@ import requests
 from pydantic import ValidationError
 from requests.adapters import HTTPAdapter
 
+from ._bundle import MAX_RESULT_BYTES, parse_pipeline_result, validate_bundle
 from ._handoff_contracts import (
     HANDOFF_CONTRACT_VERSION,
+    HANDOFF_PARAMETERS,
     HANDOFF_RECEIPT_SCHEMA_VERSION,
     FailureCode,
     HandoffPhase,
@@ -32,9 +34,9 @@ from ._handoff_contracts import (
 )
 from ._integration_code import STALE_IMAGE_REASON
 from ._json_input import canonical_json, parse_json
-from ._local_dispatch import MAX_RESULT_BYTES, parse_pipeline_result, validate_bundle
 from ._result_contracts import PIPELINE_RESULT_PATH, PipelineIntegrationResult
 from ._run_input import identify_committed_run
+from ._stage_registry import RUN_LIMITS
 from ._stage_runtime import ExternalCancellation
 from ._yaml_input import InputError
 
@@ -44,10 +46,8 @@ if TYPE_CHECKING:
 DEFAULT_HTTP_LIMIT_SECONDS = 30
 DEFAULT_SUBMISSION_LIMIT_SECONDS = 30
 DEFAULT_QUEUE_WAIT_LIMIT_SECONDS = 15 * 60
-DEFAULT_JENKINS_EXECUTION_LIMIT_SECONDS = 90 * 60
 DEFAULT_RETRIEVAL_LIMIT_SECONDS = 5 * 60
 DEFAULT_RUNNER_OUTER_LIMIT_SECONDS = 100 * 60
-DEFAULT_GITHUB_JOB_LIMIT_SECONDS = 110 * 60
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 MAX_LIMIT_SECONDS = 24 * 60 * 60
 CANCELLATION_SIGNALS = frozenset({signal.SIGINT, signal.SIGTERM})
@@ -383,7 +383,7 @@ def load_handoff_settings(environment: Mapping[str, str]) -> HandoffSettings:
     execution_limit = _limit(
         environment,
         "SDI_HANDOFF_JENKINS_EXECUTION_LIMIT_SECONDS",
-        DEFAULT_JENKINS_EXECUTION_LIMIT_SECONDS,
+        RUN_LIMITS.run_seconds,
     )
     retrieval_limit = _limit(
         environment,
@@ -398,7 +398,7 @@ def load_handoff_settings(environment: Mapping[str, str]) -> HandoffSettings:
     github_limit = _limit(
         environment,
         "SDI_HANDOFF_GITHUB_JOB_LIMIT_SECONDS",
-        DEFAULT_GITHUB_JOB_LIMIT_SECONDS,
+        RUN_LIMITS.github_job_seconds,
     )
     if github_limit <= outer_limit:
         msg = "GitHub job limit must exceed the runner outer handoff limit"
@@ -725,15 +725,16 @@ def _submission_parameters(  # noqa: PLR0913
     github_run_id: int,
     github_run_attempt: int,
 ) -> dict[str, str]:
-    return {
-        "HANDOFF_CONTRACT_VERSION": HANDOFF_CONTRACT_VERSION,
-        "EXECUTION_ID": execution_id,
-        "REQUESTED_GIT_REF": requested_ref,
-        "RESOLVED_COMMIT_SHA": resolved_commit_sha,
-        "RUN_REQUEST_PATH": run_request_path,
-        "GITHUB_RUN_ID": str(github_run_id),
-        "GITHUB_RUN_ATTEMPT": str(github_run_attempt),
-    }
+    values = (
+        HANDOFF_CONTRACT_VERSION,
+        execution_id,
+        requested_ref,
+        resolved_commit_sha,
+        run_request_path,
+        str(github_run_id),
+        str(github_run_attempt),
+    )
+    return dict(zip(HANDOFF_PARAMETERS, values, strict=True))
 
 
 def _submit(

@@ -44,6 +44,104 @@ JOBS = (UPSTREAM_JOB, FORK_JOB)
 # client time for job deletion to wait out any build it interrupted.
 AGENT_EXERCISE_CLIENT_SECONDS = 120
 AGENT_EXERCISE_SCRIPT_SECONDS = 90
+EXPECTED_BUILDCTL_VERSION = "v0.34.0"
+# Only the image-build agent may resolve these, on its internal builder network.
+BUILDER_SERVICES = "buildkitd registry"
+# Runs once on the image-build agent. It is plain Python, so the Groovy and shell
+# layers around it carry only its base64 text and need no escaping. The scratch
+# build has no RUN step, so it needs no egress and no emulator, but it exercises
+# the two-platform index push and the per-platform readback.
+BUILDER_PROBE = r"""
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import requests
+
+BUILDKITD = "tcp://buildkitd:1234"
+REFERENCE = "registry:5000/sdi-smoke/scratch:smoke"
+MANIFEST_URL = "http://registry:5000/v2/sdi-smoke/scratch/manifests/"
+INDEX_TYPES = (
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+)
+MANIFEST_TYPES = (
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+)
+ACCEPT = ", ".join(INDEX_TYPES + MANIFEST_TYPES)
+
+
+def fail(message):
+    print("builder probe: " + message, file=sys.stderr)
+    sys.exit(1)
+
+
+def read_manifest(reference, digest):
+    response = requests.get(
+        MANIFEST_URL + reference, headers={"Accept": ACCEPT}, timeout=10
+    )
+    response.raise_for_status()
+    if response.headers.get("Docker-Content-Digest") != digest:
+        fail("registry digest header does not match for " + reference)
+    if "sha256:" + hashlib.sha256(response.content).hexdigest() != digest:
+        fail("registry manifest bytes do not match " + digest)
+    return response.json()
+
+
+work = Path(sys.argv[1])
+work.mkdir()
+(work / "marker").write_text("sdi builder smoke\n")
+(work / "Dockerfile").write_text("FROM scratch\nCOPY marker /marker\n")
+workers = subprocess.run(
+    ["buildctl", "--addr", BUILDKITD, "debug", "workers"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout
+if "linux/arm64" not in workers:
+    fail("buildkitd lists no linux/arm64 worker platform")
+metadata = work / "metadata.json"
+subprocess.run(
+    [
+        "buildctl",
+        "--addr",
+        BUILDKITD,
+        "build",
+        "--frontend",
+        "dockerfile.v0",
+        "--local",
+        "context=" + str(work),
+        "--local",
+        "dockerfile=" + str(work),
+        "--opt",
+        "platform=linux/amd64,linux/arm64",
+        "--output",
+        "type=image,name=" + REFERENCE + ",push=true,registry.insecure=true",
+        "--metadata-file",
+        str(metadata),
+    ],
+    check=True,
+    timeout=60,
+)
+digest = json.loads(metadata.read_text())["containerimage.digest"]
+index = read_manifest("smoke", digest)
+if index.get("mediaType") not in INDEX_TYPES:
+    fail("the pushed image is not a multi-platform index")
+platforms = sorted(
+    entry["platform"]["os"] + "/" + entry["platform"]["architecture"]
+    for entry in index["manifests"]
+)
+if platforms != ["linux/amd64", "linux/arm64"]:
+    fail("index platforms are " + ", ".join(platforms))
+for entry in index["manifests"]:
+    manifest = read_manifest(entry["digest"], entry["digest"])
+    if manifest.get("mediaType") not in MANIFEST_TYPES:
+        fail("platform entry is not an image manifest: " + entry["digest"])
+print("builder-probe-passed " + digest)
+"""
 EXPECTED_SCRIPT_APPROVAL = (
     "method org.jenkinsci.plugins.workflow.steps.FlowInterruptedException getCauses"
 )
@@ -337,6 +435,7 @@ def _exercise_agents(args: argparse.Namespace) -> None:
         f"'{name}': '{label}'" for name, label in EXPECTED_AGENTS.items()
     )
     peers = " ".join(EXPECTED_AGENTS)
+    builder_probe = base64.b64encode(BUILDER_PROBE.encode()).decode()
     script = f"""
 import hudson.model.FreeStyleProject
 import hudson.model.Result
@@ -390,6 +489,27 @@ git --version
 test ! -e /var/run/docker.sock
 test "$(find /run/secrets -maxdepth 1 -type f | wc -l)" -eq 1
 getent hosts controller >/dev/null
+if [ "''' + agentName + '''" = image-build ]; then
+  for builder in {BUILDER_SERVICES}; do
+    getent hosts "$builder" >/dev/null
+  done
+  test "$(buildctl --version | cut -d ' ' -f 3)" = "{EXPECTED_BUILDCTL_VERSION}"
+  if [ "$BUILD_NUMBER" = 1 ]; then
+    printf '%s' '{builder_probe}' | base64 -d > "$WORKSPACE/builder-probe.py"
+    python3 -I "$WORKSPACE/builder-probe.py" "$WORKSPACE/builder-probe"
+  fi
+else
+  if command -v buildctl >/dev/null 2>&1; then
+    echo "unexpected buildctl outside the image-build agent" >&2
+    exit 1
+  fi
+  for builder in {BUILDER_SERVICES}; do
+    if getent hosts "$builder" >/dev/null 2>&1; then
+      echo "unexpected builder reachability: $builder" >&2
+      exit 1
+    fi
+  done
+fi
 if [ "$BUILD_NUMBER" = 1 ]; then
   peer_pids=
   for peer in {peers}; do

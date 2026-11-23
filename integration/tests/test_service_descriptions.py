@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -45,7 +46,7 @@ def _validate(directory: Path) -> subprocess.CompletedProcess[str]:
 
 def _write(directory: Path, relative: str, content: str) -> None:
     path = directory / relative
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
 
 
@@ -53,12 +54,37 @@ def _valid(service_id: str, depends_on: str = "[]") -> str:
     return VALID.format(service_id=service_id, depends_on=depends_on)
 
 
+def _with_artifact(service_id: str, extra: str) -> str:
+    return _valid(service_id).replace(
+        "depends_on:",
+        "artifacts:\n  debs:\n    architectures: [arm64]\n"
+        "    route: {kind: apt, packages: [ros-jazzy-nav2-bringup=1.3.13-1*]}\n"
+        f"    {extra}\n"
+        "depends_on:",
+    )
+
+
+def test_an_artifact_names_its_recipe_in_the_service_folder(tmp_path: Path) -> None:
+    services = tmp_path / "services"
+    _write(services, "a/SDI.md", _with_artifact("a", "dockerfile: recipes/Dockerfile"))
+    _write(services, "a/recipes/Dockerfile", "FROM scratch\n")
+
+    completed = _validate(services)
+
+    assert completed.returncode == 0, completed.stderr
+    assert [
+        item["service_id"] for item in json.loads(completed.stdout)["services"]
+    ] == ["a"]
+
+
 def test_lists_every_real_and_fake_description_with_its_digest(
     tmp_path: Path,
 ) -> None:
     combined = tmp_path / "services"
     shutil.copytree(SERVICE_REPOSITORY, combined)
-    shutil.copytree(FAKE_DESCRIPTIONS, combined / "fakes")
+    shutil.copytree(FAKE_DESCRIPTIONS, combined, dirs_exist_ok=True)
+    _write(combined, "nav2-navigation/Dockerfile.jazzy-debs", "FROM scratch\n")
+    _write(combined, "nav2-navigation/archive/SDI.md", "Not a description.\n")
 
     completed = _validate(combined)
 
@@ -70,11 +96,11 @@ def test_lists_every_real_and_fake_description_with_its_digest(
                 "service_id": path.parent.name,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
-            for path in combined.rglob("SDI.md")
+            for path in combined.glob("*/SDI.md")
         ),
         key=lambda item: item["path"],
     )
-    assert any(item["path"].startswith("fakes/") for item in expected)
+    assert any(item["path"].startswith("fake-") for item in expected)
     assert json.loads(completed.stdout) == {"services": expected}
 
 
@@ -106,8 +132,8 @@ def test_lists_every_real_and_fake_description_with_its_digest(
             "a/SDI.md: contract validation failed",
         ),
         (
-            {"a/SDI.md": _valid("same"), "b/SDI.md": _valid("same")},
-            "b/SDI.md: duplicate service_id same (also a/SDI.md)",
+            {"a/SDI.md": _valid("b")},
+            "a/SDI.md: service_id b does not match its folder a",
         ),
         (
             {"a/SDI.md": _valid("a", "[missing]")},
@@ -117,7 +143,28 @@ def test_lists_every_real_and_fake_description_with_its_digest(
             {"a/SDI.md": _valid("a", "[b]"), "b/SDI.md": _valid("b", "[a]")},
             "depends_on cycle",
         ),
-        ({}, "no SDI.md found"),
+        *(
+            ({"a/SDI.md": _with_artifact("a", field)}, "contract validation failed")
+            for field in (
+                "dockerfile: /srv/Dockerfile",
+                "dockerfile: ../b/Dockerfile",
+                "dockerfile: recipes/../Dockerfile",
+                "dockerfile: .Dockerfile",
+                "dockerfile: recipes/",
+                "invocation: ros2 run demo talker",
+            )
+        ),
+        ({}, "no service folders found"),
+        ({"SDI.md": _valid("a")}, "no service folders found"),
+        (
+            {"a/SDI.md": _valid("a"), "b/Dockerfile": ""},
+            "b: service folder has no SDI.md",
+        ),
+        ({"a/SDI.md": _valid("a"), "a/.dockerignore": ""}, "may not contain dotfiles"),
+        ({"a/SDI.md": _valid("a"), "a/.cache/x": ""}, "may not contain dotfiles"),
+        ({"a/SDI.md": _valid("a"), ".git/x": ""}, "may not contain dotfiles"),
+        ({"a/SDI.md": _valid("a"), "a/my recipe": ""}, "names may hold only"),
+        ({"a/SDI.md": _valid("a"), "a/big": "x" * (1024 * 1024)}, "exceeds 1048576"),
     ],
 )
 def test_rejects_an_invalid_service_repository(
@@ -131,4 +178,30 @@ def test_rejects_an_invalid_service_repository(
 
     assert completed.returncode == 2
     assert completed.stdout == ""
+    assert message in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ("a/Dockerfile", "a/Dockerfile: service repository contains a symbolic link"),
+        ("a/files/linked", "a/files/linked: service repository contains a symbolic"),
+        ("a/pipe", "a/pipe: service repository holds a file that is not regular"),
+    ],
+)
+def test_rejects_links_and_special_files_in_a_service_folder(
+    tmp_path: Path, entry: str, message: str
+) -> None:
+    services = tmp_path / "services"
+    _write(services, "a/SDI.md", _valid("a"))
+    _write(services, "a/files/recipe", "")
+    path = services / entry
+    if entry.endswith("pipe"):
+        os.mkfifo(path)
+    else:
+        path.symlink_to(services / "a/files", target_is_directory=True)
+
+    completed = _validate(services)
+
+    assert completed.returncode == 2
     assert message in completed.stderr

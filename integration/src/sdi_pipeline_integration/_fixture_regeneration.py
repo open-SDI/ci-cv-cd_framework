@@ -27,11 +27,11 @@ from ._contracts import (
 )
 from ._json_input import parse_json
 from ._stage_contracts import (
-    EXPECTED_STAGE_INPUT_SLOTS,
     FixtureCase,
     FixtureInputMatch,
     FixtureOutput,
 )
+from ._stage_registry import EXPECTED_STAGE_INPUT_SLOTS
 from ._stage_runtime import (
     OUTPUT_MODELS,
     composition_settings_source,

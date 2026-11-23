@@ -6,6 +6,7 @@ repository_root=$(CDPATH= cd -- "$root/../.." && pwd)
 installation=$repository_root/deployment/installation.env
 config=$root/config/local/controller.env
 project_name=${COMPOSE_PROJECT_NAME:-sdi-jenkins}
+prebuilt=
 
 fail() {
     printf 'stack: %s\n' "$1" >&2
@@ -14,7 +15,7 @@ fail() {
 
 usage() {
     printf '%s\n' \
-        'usage: stack [--config PATH] [--project-name NAME] setup|preflight|validate|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT|register-runner upstream|fork [--name NAME] [--replace]'
+        'usage: stack [--config PATH] [--project-name NAME] [--prebuilt] setup|preflight|validate|build|start-controller|start|stop|status|logs|destroy|smoke|quiesce|resume|verify-live|exercise-live|reconcile-agent AGENT|register-runner upstream|fork [--name NAME] [--replace]'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -28,6 +29,10 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || fail '--project-name requires a value'
             project_name=$2
             shift 2
+            ;;
+        --prebuilt)
+            prebuilt=true
+            shift
             ;;
         -h|--help)
             usage
@@ -93,6 +98,13 @@ elif [ "$#" -ne 0 ]; then
     fail "$action accepts no arguments"
 fi
 
+if [ -n "$prebuilt" ]; then
+    case "$action" in
+        start-controller|start|verify-live|exercise-live) ;;
+        *) fail "--prebuilt does not apply to $action" ;;
+    esac
+fi
+
 if [ "$action" = smoke ]; then
     exec "$root/bin/smoke"
 fi
@@ -151,11 +163,6 @@ case "$action" in
         JENKINS_REPOSITORY_URL=https://github.com/unused/unused.git
         JENKINS_FORK_REPOSITORY_URL=https://github.com/unused/unused.git
         JENKINS_AGENT_CONTROLLER_URL=http://controller:8080
-        JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400
-        JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600
-        JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=1800
-        JENKINS_CV_WORK_LIMIT_SECONDS=2700
-        JENKINS_CD_WORK_LIMIT_SECONDS=900
         JENKINS_ADMIN_PASSWORD_FILE=/dev/null
         JENKINS_HANDOFF_PASSWORD_FILE=/dev/null
         JENKINS_OPENAI_API_KEY_FILE=/dev/null
@@ -172,10 +179,6 @@ case "$action" in
         export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
         export JENKINS_REPOSITORY_URL JENKINS_FORK_REPOSITORY_URL
         export JENKINS_AGENT_CONTROLLER_URL
-        export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
-        export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
-        export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
-        export JENKINS_CD_WORK_LIMIT_SECONDS
         export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
         export JENKINS_OPENAI_API_KEY_FILE
         export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
@@ -214,11 +217,6 @@ JENKINS_HANDOFF_ID=
 JENKINS_REPOSITORY_URL=
 JENKINS_FORK_REPOSITORY_URL=
 JENKINS_AGENT_CONTROLLER_URL=
-JENKINS_PIPELINE_RUN_LIMIT_SECONDS=
-JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=
-JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=
-JENKINS_CV_WORK_LIMIT_SECONDS=
-JENKINS_CD_WORK_LIMIT_SECONDS=
 JENKINS_ADMIN_PASSWORD_FILE=
 JENKINS_HANDOFF_PASSWORD_FILE=
 JENKINS_OPENAI_API_KEY_FILE=
@@ -232,17 +230,13 @@ GITHUB_RUNNERS=
 while IFS='=' read -r key value; do
     case "$key" in
         ''|'#'*) ;;
+        JENKINS_*_LIMIT_SECONDS) fail 'delete JENKINS_*_LIMIT_SECONDS from controller.env; limits come from the Stage grants in _stage_registry.py' ;;
         JENKINS_HTTP_PORT) JENKINS_HTTP_PORT=$value ;;
         JENKINS_ADMIN_ID) JENKINS_ADMIN_ID=$value ;;
         JENKINS_HANDOFF_ID) JENKINS_HANDOFF_ID=$value ;;
         JENKINS_REPOSITORY_URL) JENKINS_REPOSITORY_URL=$value ;;
         JENKINS_FORK_REPOSITORY_URL) JENKINS_FORK_REPOSITORY_URL=$value ;;
         JENKINS_AGENT_CONTROLLER_URL) JENKINS_AGENT_CONTROLLER_URL=$value ;;
-        JENKINS_PIPELINE_RUN_LIMIT_SECONDS) JENKINS_PIPELINE_RUN_LIMIT_SECONDS=$value ;;
-        JENKINS_COMPOSITION_WORK_LIMIT_SECONDS) JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=$value ;;
-        JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS) JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=$value ;;
-        JENKINS_CV_WORK_LIMIT_SECONDS) JENKINS_CV_WORK_LIMIT_SECONDS=$value ;;
-        JENKINS_CD_WORK_LIMIT_SECONDS) JENKINS_CD_WORK_LIMIT_SECONDS=$value ;;
         JENKINS_ADMIN_PASSWORD_FILE) JENKINS_ADMIN_PASSWORD_FILE=$value ;;
         JENKINS_HANDOFF_PASSWORD_FILE) JENKINS_HANDOFF_PASSWORD_FILE=$value ;;
         JENKINS_OPENAI_API_KEY_FILE) JENKINS_OPENAI_API_KEY_FILE=$value ;;
@@ -263,11 +257,6 @@ for value in \
     "$JENKINS_REPOSITORY_URL" \
     "$JENKINS_FORK_REPOSITORY_URL" \
     "$JENKINS_AGENT_CONTROLLER_URL" \
-    "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS" \
-    "$JENKINS_COMPOSITION_WORK_LIMIT_SECONDS" \
-    "$JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS" \
-    "$JENKINS_CV_WORK_LIMIT_SECONDS" \
-    "$JENKINS_CD_WORK_LIMIT_SECONDS" \
     "$JENKINS_ADMIN_PASSWORD_FILE" \
     "$JENKINS_HANDOFF_PASSWORD_FILE" \
     "$JENKINS_OPENAI_API_KEY_FILE" \
@@ -285,26 +274,6 @@ case "$JENKINS_HTTP_PORT" in
 esac
 [ "$JENKINS_HTTP_PORT" -ge 1 ] && [ "$JENKINS_HTTP_PORT" -le 65535 ] || \
     fail 'JENKINS_HTTP_PORT must be between 1 and 65535'
-
-validate_limit_seconds() {
-    setting=$1
-    value=$2
-    case "$value" in
-        *[!0-9]*|'') fail "$setting must be a positive integer" ;;
-    esac
-    [ "$value" -ge 1 ] && [ "$value" -le 86400 ] || \
-        fail "$setting must be between 1 and 86400 seconds"
-}
-validate_limit_seconds JENKINS_PIPELINE_RUN_LIMIT_SECONDS \
-    "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS"
-validate_limit_seconds JENKINS_COMPOSITION_WORK_LIMIT_SECONDS \
-    "$JENKINS_COMPOSITION_WORK_LIMIT_SECONDS"
-validate_limit_seconds JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS \
-    "$JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS"
-validate_limit_seconds JENKINS_CV_WORK_LIMIT_SECONDS "$JENKINS_CV_WORK_LIMIT_SECONDS"
-validate_limit_seconds JENKINS_CD_WORK_LIMIT_SECONDS "$JENKINS_CD_WORK_LIMIT_SECONDS"
-[ "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS" -ge 180 ] || \
-    fail 'JENKINS_PIPELINE_RUN_LIMIT_SECONDS must reserve at least two minutes for finalization'
 
 for user_id in "$JENKINS_ADMIN_ID" "$JENKINS_HANDOFF_ID"; do
     case "$user_id" in
@@ -608,7 +577,7 @@ validate_registration_target() {
 }
 
 case "$action" in
-    start-controller)
+    start-controller|build)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
         validate_secret_file "$JENKINS_OPENAI_API_KEY_FILE"
@@ -675,26 +644,22 @@ platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>/dev/null
     fail 'Docker Engine is not reachable'
 [ "$platform" = linux/amd64 ] || fail "Docker Engine must be linux/amd64, found $platform"
 
-descriptor_image() {
-    descriptor=$1
-    uv run --project "$repository_root/integration" --frozen \
-        sdi-integration adapter-image --descriptor "$root/adapters/$descriptor" \
-        2>/dev/null || \
-        fail "invalid adapter descriptor: $descriptor"
-}
-
-JENKINS_COMPOSITION_AGENT_IMAGE=$(descriptor_image composition-v1.yaml)
-JENKINS_IMAGE_BUILD_AGENT_IMAGE=$(descriptor_image image-build-fixture-v1.yaml)
-JENKINS_CV_AGENT_IMAGE=$(descriptor_image cv-fixture-v1.yaml)
-JENKINS_CD_AGENT_IMAGE=$(descriptor_image cd-fixture-v1.yaml)
+adapter_images=$(uv run --project "$repository_root/integration" --frozen \
+    --quiet sdi-integration adapter-image --repository "$repository_root" \
+    --stage composition --stage image_build --stage cv --stage cd) || \
+    fail 'invalid adapter descriptor'
+{
+    read -r JENKINS_COMPOSITION_AGENT_IMAGE
+    read -r JENKINS_IMAGE_BUILD_AGENT_IMAGE
+    read -r JENKINS_CV_AGENT_IMAGE
+    read -r JENKINS_CD_AGENT_IMAGE
+} <<EOF
+$adapter_images
+EOF
 
 export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
 export JENKINS_REPOSITORY_URL JENKINS_FORK_REPOSITORY_URL
 export JENKINS_AGENT_CONTROLLER_URL
-export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
-export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
-export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
-export JENKINS_CD_WORK_LIMIT_SECONDS
 export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
 export JENKINS_OPENAI_API_KEY_FILE
 export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
@@ -741,8 +706,9 @@ $plugin
 
     docker build --check --file "$root/controller/Dockerfile" "$root" \
         >/dev/null 2>&1 || fail 'the controller Dockerfile is not buildable'
-    docker build --check --file "$root/agents/Dockerfile" "$repository_root" \
-        >/dev/null 2>&1 || fail 'the agent Dockerfile is not buildable'
+    docker build --check --target image-build --file "$root/agents/Dockerfile" \
+        "$repository_root" >/dev/null 2>&1 || \
+        fail 'the agent Dockerfile is not buildable'
     docker build --check --file "$root/runner/Dockerfile" "$repository_root" \
         >/dev/null 2>&1 || fail 'the runner Dockerfile is not buildable'
     docker build --check --file "$root/runner-proxy/Dockerfile" \
@@ -750,6 +716,7 @@ $plugin
         fail 'the runner proxy Dockerfile is not buildable'
     compose config --quiet >/dev/null 2>&1 || \
         fail 'the Compose configuration is invalid'
+    printf '%s\n' 'stack: tracked sources match the reviewed installation authority'
 }
 
 agent_image() {
@@ -777,6 +744,23 @@ build_controller() {
         --tag sdi-jenkins-controller:2.568.3 \
         --file "$root/controller/Dockerfile" \
         "$root"
+}
+
+build_stamp=$(dirname "$config")/build-stamp
+
+checkout_and_images_fingerprint() {
+    snapshot=$(git -C "$repository_root" stash create 2>/dev/null) || return 1
+    git -C "$repository_root" rev-parse --verify --quiet \
+        "${snapshot:-HEAD}^{tree}" || return 1
+    docker image inspect --format '{{.Id}}' sdi-jenkins-controller:2.568.3 \
+        $(for agent in integration ci image-build cv cd; do agent_image "$agent"; done) \
+        2>/dev/null
+}
+
+require_build_stamp() {
+    fingerprint=$(checkout_and_images_fingerprint) && [ -f "$build_stamp" ] && \
+        [ "$fingerprint" = "$(cat "$build_stamp")" ] || \
+        fail "the prebuilt images were not built from this checkout; run: deployment/jenkins/bin/stack --config $config build"
 }
 
 admin_check() {
@@ -816,6 +800,8 @@ refuse_active_runner_job() {
         fail 'a GitHub runner is executing a handoff job; retry after it finishes'
 }
 
+[ -z "$prebuilt" ] || require_build_stamp
+
 case "$action" in
     preflight)
         host_preflight
@@ -824,17 +810,34 @@ case "$action" in
     validate)
         validate
         ;;
-    start-controller)
+    build)
         validate
         build_controller
+        compose build integration ci image-build cv cd
+        for agent in integration ci image-build cv cd; do
+            validate_agent_image "$agent"
+        done
+        fingerprint=$(checkout_and_images_fingerprint) || fail 'cannot fingerprint the built images'
+        printf '%s\n' "$fingerprint" > "$build_stamp"
+        ;;
+    start-controller)
+        if [ -z "$prebuilt" ]; then
+            validate
+            build_controller
+        fi
         compose up --no-build --detach --wait --wait-timeout 240 controller
         ;;
     start)
-        validate
-        build_controller
-        compose build integration ci image-build cv cd $runner_services \
-            $proxy_services
-        for agent in integration ci image-build cv cd; do
+        agent_services=
+        if [ -z "$prebuilt" ]; then
+            validate
+            build_controller
+            agent_services='integration ci image-build cv cd'
+        fi
+        compose pull --quiet --policy missing buildkitd registry
+        [ -z "$agent_services$runner_services" ] || \
+            compose build $agent_services $runner_services $proxy_services
+        for agent in $agent_services; do
             validate_agent_image "$agent"
         done
         for service in $runner_services; do
@@ -913,7 +916,7 @@ case "$action" in
                 $proxy_services $runner_services
         ;;
     verify-live)
-        validate
+        [ -n "$prebuilt" ] || validate
         "$root/bin/smoke-check" check \
             --url "http://127.0.0.1:$JENKINS_HTTP_PORT" \
             --admin-id "$JENKINS_ADMIN_ID" \
@@ -938,7 +941,7 @@ case "$action" in
         done
         ;;
     exercise-live)
-        validate
+        [ -n "$prebuilt" ] || validate
         integration_code_digest=$(uv run --project "$repository_root/integration" \
             --frozen --quiet sdi-integration integration-code-digest \
             --root "$repository_root/integration")

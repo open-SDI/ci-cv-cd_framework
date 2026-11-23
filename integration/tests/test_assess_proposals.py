@@ -54,7 +54,7 @@ def _assess(
     services = tmp_path / "services"
     if not services.exists():
         shutil.copytree(SERVICE_REPOSITORY, services)
-        shutil.copytree(FAKE_DESCRIPTIONS, services / "fakes")
+        shutil.copytree(FAKE_DESCRIPTIONS, services, dirs_exist_ok=True)
     profile = tmp_path / "profile.yaml"
     profile.write_text(PROFILE.read_text().replace(*profile_edit))
     proposals_path = tmp_path / "proposals.json"

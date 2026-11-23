@@ -36,16 +36,6 @@ jenkins:
             value: "${JENKINS_REPOSITORY_URL}"
           - key: "SDI_FORK_REPOSITORY_URL"
             value: "${JENKINS_FORK_REPOSITORY_URL}"
-          - key: "JENKINS_PIPELINE_RUN_LIMIT_SECONDS"
-            value: "${JENKINS_PIPELINE_RUN_LIMIT_SECONDS}"
-          - key: "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS"
-            value: "${JENKINS_COMPOSITION_WORK_LIMIT_SECONDS}"
-          - key: "JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS"
-            value: "${JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS}"
-          - key: "JENKINS_CV_WORK_LIMIT_SECONDS"
-            value: "${JENKINS_CV_WORK_LIMIT_SECONDS}"
-          - key: "JENKINS_CD_WORK_LIMIT_SECONDS"
-            value: "${JENKINS_CD_WORK_LIMIT_SECONDS}"
   nodes:
     - permanent:
         name: "integration"

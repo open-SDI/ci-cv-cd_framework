@@ -15,7 +15,6 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
-import openai
 from pydantic import (
     Field,
     PositiveInt,
@@ -221,6 +220,8 @@ def generate_proposals(
         return GenerationResult(
             "provider_error", reason=f"{config.api_key_env} is not set"
         )
+    import openai  # noqa: PLC0415
+
     try:
         client = openai.OpenAI(
             api_key=api_key,

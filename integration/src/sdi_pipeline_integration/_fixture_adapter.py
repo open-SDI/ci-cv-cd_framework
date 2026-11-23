@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from ._adapter_output import atomic_write
+from ._adapter_kit import atomic_write, load_request
 from ._jenkins_agent_boundary import enforce_domain_execution_boundary
-from ._json_input import canonical_json, parse_json
+from ._json_input import canonical_json
 from ._stage_contracts import (
     ASCII_CONTROL_LIMIT,
     ASCII_DELETE,
@@ -24,22 +24,12 @@ from ._stage_contracts import (
     AdapterResponse,
     FixtureCase,
 )
+from ._stage_registry import STAGES
 from ._yaml_input import InputError, parse_yaml
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from importlib.resources.abc import Traversable
-
-MAX_REQUEST_BYTES = 128 * 1024
-
-
-def _load_request(path: Path) -> AdapterRequest:
-    try:
-        parsed = parse_json(path.read_bytes(), str(path), max_bytes=MAX_REQUEST_BYTES)
-        return AdapterRequest.model_validate(parsed, strict=True, extra="forbid")
-    except ValidationError as error:
-        msg = f"adapter request contract validation failed: {error}"
-        raise InputError(msg) from error
 
 
 def _load_cases() -> list[tuple[FixtureCase, Traversable]]:
@@ -162,17 +152,12 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
 ) -> None:
     """Publish one complete candidate response after all candidate files."""
     enforce_domain_execution_boundary()
-    request = _load_request(request_path)
-    enforce_domain_execution_boundary(
-        expected_label=request.correlation.stage.replace("_", "-")
+    request = load_request(
+        request_path, stage=None, input_root=input_root, output_root=output_root
     )
-    if (
-        not input_root.is_dir()
-        or not output_root.is_dir()
-        or any(output_root.iterdir())
-    ):
-        msg = "adapter roots must exist and the output root must be empty"
-        raise InputError(msg)
+    enforce_domain_execution_boundary(
+        expected_label=STAGES[request.correlation.stage].agent.label
+    )
 
     selected = _select_case(request, input_root)
     if selected is None:

@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixture_inputs import STAGE_DESCRIPTORS
+
 REPOSITORY_ROOT = Path(__file__).parents[2]
 INSTALLATION = REPOSITORY_ROOT / "deployment" / "installation.env"
 RECOVERY = REPOSITORY_ROOT / "deployment" / "jenkins" / "bin" / "recovery"
@@ -321,10 +323,7 @@ def test_archived_api_token_removal_rejects_a_user_symlink(tmp_path: Path) -> No
 
 PINNED_SOURCES = (
     ".github/workflows/pipeline-integration.yml",
-    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
-    "deployment/jenkins/adapters/composition-v1.yaml",
-    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+    *STAGE_DESCRIPTORS,
     "deployment/jenkins/agents/Dockerfile",
     "deployment/jenkins/compose.yaml",
     "deployment/jenkins/controller/Dockerfile",
@@ -580,6 +579,17 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
     assert "volume inspect recovery-test_jenkins-home" in operations[1]
     assert "find /target -mindepth 1 -print -quit" in operations[2]
     _assert_restore_credential_rotation_order(operations)
+    staging_stop = next(
+        index
+        for index, line in enumerate(operations)
+        if "sdi-recovery-credentials" in line and line.endswith(" stop")
+    )
+    staging_project = operations[staging_stop].split("--project-name ")[1].split()[0]
+    builder_cleanup = operations.index(
+        f"docker volume rm --force {staging_project}_buildkit-state "
+        f"{staging_project}_pipeline-registry"
+    )
+    assert staging_stop < builder_cleanup
     runner_configs = Path(f"{restore_log}.runners").read_text().splitlines()
     assert runner_configs.count("stack-runners start none") == 1
     assert runner_configs.count("stack-runners start GITHUB_RUNNERS=fork") == 1
@@ -681,9 +691,39 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
             "ARG SQUID_MAJOR=6\nARG SQUID_MAJOR=6",
             "runner proxy Dockerfile must declare ARG SQUID_MAJOR exactly once",
         ),
+        (
+            "deployment/jenkins/agents/Dockerfile",
+            "ARG BUILDKIT_IMAGE=docker.io/moby/buildkit:v0.34.0@sha256:b",
+            "ARG BUILDKIT_IMAGE=docker.io/moby/buildkit:v0.34.0@sha256:c",
+            "BuildKit pin does not match",
+        ),
+        (
+            "deployment/jenkins/agents/Dockerfile",
+            "FROM ${BUILDKIT_IMAGE} AS buildkit",
+            "FROM docker.io/moby/buildkit:latest AS buildkit",
+            "agent build stages do not consume the reviewed image pins",
+        ),
+        (
+            "deployment/jenkins/compose.yaml",
+            "image: docker.io/moby/buildkit:v0.34.0@sha256:b",
+            "image: docker.io/moby/buildkit:v0.34.0@sha256:c",
+            "buildkitd image pin does not match",
+        ),
+        (
+            "deployment/jenkins/compose.yaml",
+            "image: docker.io/library/registry:3.1.2@sha256:d",
+            "image: docker.io/library/registry:3.1.2@sha256:e",
+            "registry image pin does not match",
+        ),
+        (
+            "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+            "image: docker.io/library/python@sha256:2",
+            "image: docker.io/library/python@sha256:3",
+            "image-build-fixture-v1.yaml image pin does not match",
+        ),
     ],
 )
-def test_authority_rejects_a_runner_image_that_drifts_from_the_pins(
+def test_authority_rejects_a_deployment_image_that_drifts_from_the_pins(
     tmp_path: Path,
     relative: str,
     original: str,

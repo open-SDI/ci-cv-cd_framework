@@ -7,6 +7,8 @@ import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
+from sdi_pipeline_integration._stage_registry import STAGES
+
 
 def test_installed_cli_reports_distribution_version() -> None:
     completed = subprocess.run(
@@ -38,12 +40,16 @@ def test_handoff_cli_exposes_only_non_secret_run_and_output_arguments() -> None:
     assert "--timeout" not in completed.stdout
 
 
-def test_cli_reads_the_descriptor_selected_agent_image() -> None:
-    descriptor = (
-        Path(__file__).parents[2] / "deployment/jenkins/adapters/composition-v1.yaml"
-    )
+def test_cli_reads_the_stage_selected_agent_image() -> None:
     completed = subprocess.run(
-        ["sdi-integration", "adapter-image", "--descriptor", str(descriptor)],
+        [
+            "sdi-integration",
+            "adapter-image",
+            "--repository",
+            str(Path(__file__).parents[2]),
+            "--stage",
+            "composition",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -54,6 +60,40 @@ def test_cli_reads_the_descriptor_selected_agent_image() -> None:
         "docker.io/library/python@"
         "sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36\n"
     )
+
+
+def test_cli_prints_one_agent_image_per_stage_in_order(tmp_path: Path) -> None:
+    template = (Path(__file__).parents[2] / STAGES["cd"].jenkins_descriptor).read_text()
+    pinned = template.split("@sha256:")[1].split("\n")[0]
+    stages = ("cd", "cv")
+    images = [f"docker.io/library/python@sha256:{digit * 64}" for digit in "21"]
+    for stage, image in zip(stages, images, strict=True):
+        descriptor = tmp_path / STAGES[stage].jenkins_descriptor
+        descriptor.parent.mkdir(parents=True, exist_ok=True)
+        descriptor.write_text(
+            template.replace(f"docker.io/library/python@sha256:{pinned}", image)
+        )
+    arguments = ["sdi-integration", "adapter-image", "--repository", str(tmp_path)]
+    for stage in stages:
+        arguments += ["--stage", stage]
+
+    completed = subprocess.run(arguments, check=False, capture_output=True, text=True)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "".join(f"{image}\n" for image in images)
+
+    broken = tmp_path / STAGES["cv"].jenkins_descriptor
+    for content in (None, "image: [\n", "image: not-an-image\n"):
+        if content is None:
+            broken.unlink()
+        else:
+            broken.write_text(content)
+        completed = subprocess.run(
+            arguments, check=False, capture_output=True, text=True
+        )
+        assert completed.returncode == 2
+        assert completed.stdout == ""
+        assert completed.stderr.count(str(broken)) == 1, completed.stderr
 
 
 def test_fixture_adapter_exposes_only_the_one_shot_run_operation() -> None:

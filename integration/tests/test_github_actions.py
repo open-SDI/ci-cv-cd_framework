@@ -12,8 +12,16 @@ from pathlib import Path
 import pytest
 from ruamel.yaml import YAML
 
+from sdi_pipeline_integration._bundle import validate_bundle_documents
+from sdi_pipeline_integration._domain_contracts import (
+    DeploymentSchema,
+    ImageBuildResult,
+)
+from sdi_pipeline_integration._github_actions import render_image_build_section
+from sdi_pipeline_integration._stage_registry import RUN_LIMITS
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
+    STAGE_DESCRIPTORS,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
 )
@@ -33,9 +41,7 @@ COMMITTED_FILES = (
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    *STAGE_DESCRIPTORS,
     FIXTURE_COMPOSITION_CONFIG,
 )
 
@@ -100,6 +106,10 @@ def _bundle(
     )
     assert completed.returncode == 0, completed.stderr
     return bundle_root, json.loads(completed.stdout)
+
+
+def _image_build_section(summary: str) -> str:
+    return summary.split("## Image build\n", 1)[1].split("\n## ", maxsplit=1)[0]
 
 
 def _write_completed_receipt(path: Path, execution_id: str) -> None:
@@ -299,6 +309,20 @@ def test_completed_published_bundle_renders_status_first_summary(
     assert "KPI evaluation: `not evaluated`" in completed.stdout
     assert "Fixture warning" in completed.stdout
     assert "aggregate Domain verdict" not in completed.stdout
+    image_build = _image_build_section(completed.stdout)
+    assert (
+        "| Service | Artifact | Host | Architectures | Status | Short digest | Reason |"
+    ) in image_build
+    for service_id in (
+        "fixture-localization",
+        "fixture-navigation",
+        "fixture-mission-control",
+    ):
+        assert (
+            f"| `{service_id}` | - | - | - | `not_evaluated` | - | - |" in image_build
+        )
+    assert "`orin`" not in image_build
+    assert "stack-local pipeline registry" in image_build
 
 
 @pytest.mark.parametrize(
@@ -426,6 +450,14 @@ def test_negative_domain_result_remains_a_successful_pipeline_integration(
     assert completed.stdout.startswith("# Pipeline integration: succeeded\n")
     assert "`failed`" in completed.stdout
     assert "`sdi.domain.requirement-unsatisfied`" in completed.stdout
+    image_build = _image_build_section(completed.stdout)
+    assert "| Service |" not in image_build
+    assert "stack-local pipeline registry" not in image_build
+    assert re.search(
+        r"^Image build `skipped`: `sdi\.dependency\.[a-z-]+`: \S",
+        image_build,
+        re.MULTILINE,
+    ), image_build
 
 
 def test_structured_jenkins_failure_remains_red_after_bundle_publication(
@@ -533,7 +565,7 @@ def test_workflow_is_one_protected_main_only_handoff_job() -> None:
     assert job["if"] == "github.ref == 'refs/heads/main'"
     assert job["environment"] == "pipeline-integration-jenkins"
     assert job["runs-on"] == "sdi-jenkins-handoff"
-    assert job["timeout-minutes"] == 110
+    assert job["timeout-minutes"] * 60 == RUN_LIMITS.github_job_seconds
 
     steps = job["steps"]
     assert all(
@@ -832,3 +864,82 @@ raise SystemExit(2)
         for entry in entries
         if entry["operation"] == "dispatch"
     )
+
+
+def test_image_build_table_joins_built_and_failed_records_with_placements(
+    tmp_path: Path,
+) -> None:
+    bundle_root, _ = _bundle(tmp_path)
+    result, documents = validate_bundle_documents(bundle_root)
+    deployment = documents["deployment_schema"].model_dump(mode="json")
+    deployment["evidence_basis"] = "implemented"
+    deployment["placements"] = [
+        {
+            "service_id": "fixture-localization",
+            "status": "resolved",
+            "artifact_id": "localization-debs",
+            "host": "orin",
+        },
+        {
+            "service_id": "fixture-navigation",
+            "status": "resolved",
+            "artifact_id": "navigation-debs",
+            "host": "pi",
+        },
+        {"service_id": "fixture-mission-control", "status": "unresolved"},
+    ]
+    image_build = documents["image_build_result"].model_dump(mode="json")
+    image_build["evidence_basis"] = "implemented"
+    image_build["images"] = [
+        {
+            "service_id": "fixture-localization",
+            "status": "built",
+            "repository": "sdi/fixture-localization",
+            "digest": "sha256:" + "a1" * 32,
+            "platforms": [
+                {"architecture": "arm64", "digest": "sha256:" + "b2" * 32},
+                {"architecture": "amd64", "digest": "sha256:" + "c3" * 32},
+            ],
+        },
+        {
+            "service_id": "fixture-navigation",
+            "status": "failed",
+            "reason": "build-failed",
+            "detail": "E: apt `ros-jazzy-nav2` | <missing> & gone",
+        },
+        {
+            "service_id": "fixture-mission-control",
+            "status": "failed",
+            "reason": "unresolved-placement",
+            "detail": "no host satisfies the placement",
+        },
+    ]
+
+    section = "\n".join(
+        render_image_build_section(
+            result,
+            {
+                "deployment_schema": DeploymentSchema.model_validate(deployment),
+                "image_build_result": ImageBuildResult.model_validate(image_build),
+            },
+        )
+    )
+
+    assert (
+        "| `fixture-localization` | `localization-debs` | `orin` | amd64, arm64 "
+        "| `built` | `sha256:a1a1a1a1a1a1` | - |"
+    ) in section
+    assert (
+        "| `fixture-navigation` | `navigation-debs` | `pi` | - | `failed` | - "
+        "| `build-failed`: E: apt &#96;ros-jazzy-nav2&#96; \\| &lt;missing&gt; "
+        "&amp; gone |"
+    ) in section
+    assert (
+        "| `fixture-mission-control` | - | - | - | `failed` | - "
+        "| `unresolved-placement`: no host satisfies the placement |"
+    ) in section
+    navigation_row = next(
+        line for line in section.splitlines() if "fixture-navigation" in line
+    )
+    assert len(re.split(r"(?<!\\)\|", navigation_row)) == 9
+    assert "stack-local pipeline registry `registry:5000`" in section

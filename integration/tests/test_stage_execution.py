@@ -11,17 +11,19 @@ import pytest
 
 from sdi_pipeline_integration._git_input import GitRepository
 from sdi_pipeline_integration._run_input import identify_committed_run
+from sdi_pipeline_integration._stage_registry import STAGES
 from sdi_pipeline_integration._stage_runtime import SuppliedInputs, stage_inputs
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
     FIXTURE_SERVICE_REPOSITORY,
+    STAGE_DESCRIPTORS,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
     write_scripted_adapter,
 )
 
 if TYPE_CHECKING:
-    from sdi_pipeline_integration._stage_contracts import StageName
+    from sdi_pipeline_integration._stage_registry import StageName
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 COMMITTED_FILES = (
@@ -30,7 +32,8 @@ COMMITTED_FILES = (
     "profiles/s-04/waffle-jetson-arm64.yaml",
     "integration/stage-profiles/composition-v1.yaml",
     "integration/stage-profiles/image-build-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+    "integration/stage-profiles/cv-v1.yaml",
+    *STAGE_DESCRIPTORS,
     FIXTURE_COMPOSITION_CONFIG,
 )
 
@@ -81,7 +84,7 @@ def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
                 "composition_settings",
             ],
         ),
-        ("image_build", ["target_profile"]),
+        ("image_build", ["target_profile", "service_repository"]),
         ("cv", ["requirements_specification", "target_profile"]),
         ("cd", ["target_profile"]),
     ],
@@ -102,6 +105,8 @@ def test_each_stage_receives_only_its_granted_run_inputs(
             composition_config=FIXTURE_COMPOSITION_CONFIG,
         )
         if stage == "composition"
+        else SuppliedInputs(service_repository=FIXTURE_SERVICE_REPOSITORY)
+        if stage == "image_build"
         else SuppliedInputs()
     )
 
@@ -216,11 +221,11 @@ def test_a_stage_not_granted_the_service_repository_rejects_it(
         commit_sha,
         attempt_root,
         ("--service-repository", str(FIXTURE_SERVICE_REPOSITORY)),
-        descriptor="deployment/jenkins/adapters/image-build-fixture-v1.yaml",
+        descriptor=STAGES["cv"].jenkins_descriptor,
     )
 
     assert completed.returncode == 2
-    assert "the image_build Stage is not granted a supplied service repository" in (
+    assert "the cv Stage is not granted a supplied service repository" in (
         completed.stderr
     )
     assert not attempt_root.exists()

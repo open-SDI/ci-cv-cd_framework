@@ -29,7 +29,6 @@ artifacts:
       kind: source
       repository: https://github.com/ros-ai/ros2_whisper
       revision: 59b2d732161d77ffe4da9562bbc34d26b5038eee
-    invocation: ros2 launch whisper_bringup bringup.launch.py
 
 subscribes:
   /audio_listener/audio: {type: std_msgs/msg/Int16MultiArray, reliability: best_effort, durability: volatile}

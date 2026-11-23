@@ -1,10 +1,12 @@
 ARG RUNTIME_IMAGE=docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded
 ARG REMOTING_IMAGE=docker.io/jenkins/inbound-agent:3391.va_37fa_a_305d6d-2-jdk21@sha256:a2ee24c1dbd2080a9f03bb668f63a2c8d23c7b6e5bf20fe0033d4d28f4410048
+ARG BUILDKIT_IMAGE=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
 
 FROM ${RUNTIME_IMAGE} AS runtime
 FROM ${UV_IMAGE} AS uv
 FROM ${REMOTING_IMAGE} AS remoting
+FROM ${BUILDKIT_IMAGE} AS buildkit
 
 FROM runtime AS tooling
 COPY --from=uv /uv /uvx /usr/local/bin/
@@ -17,7 +19,7 @@ RUN .venv/bin/sdi-integration integration-code-digest --root . \
         > /opt/sdi/integration-code-digest \
     && chmod 0444 /opt/sdi/integration-code-digest
 
-FROM runtime
+FROM runtime AS agent
 LABEL org.sdi.project=ci-cv-cd_framework
 
 ARG SDI_JENKINS_AGENT_LABEL
@@ -58,3 +60,6 @@ ENV JAVA_HOME=/opt/java/openjdk \
 
 USER jenkins
 ENTRYPOINT ["/usr/local/bin/jenkins-agent-entrypoint"]
+
+FROM agent AS image-build
+COPY --from=buildkit /usr/bin/buildctl /usr/bin/buildctl

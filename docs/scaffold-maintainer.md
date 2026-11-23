@@ -79,7 +79,8 @@ into integration code, or mutate a running container. With Jenkins idle:
 `integration/scripts/verify` is the deterministic repository acceptance command.
 It checks generated-schema, Stage-profile, and Fixture-case freshness, formatting, linting, type
 safety, tests, and an ephemeral Jenkins smoke of the controller, five agents,
-the handoff-runner image, and the runner's egress confinement through its proxy.
+the builder and pipeline registry, the handoff-runner image, and the runner's
+egress confinement through its proxy.
 It does not prove GitHub protection, protected-environment delivery, a
 registered runner, production credentials, restoration, or a live protected-main
 run or dispatch.

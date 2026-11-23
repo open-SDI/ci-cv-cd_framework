@@ -9,7 +9,7 @@ provenance:
     From Nav2 1.3.13 (f4108e5b1c2bce804a1aa0c7be6673a8eb4a1501)
     nav2_bringup/launch/localization_launch.py, nav2_amcl and nav2_map_server, and
     TurtleBot3 2.3.6 (da785b7201d317e6e2a662e41bb3d3fd50ebd503)
-    turtlebot3_navigation2/param/waffle_pi.yaml and map/map.yaml.
+    turtlebot3_navigation2/param/waffle_pi.yaml, map/map.yaml and map/map.pgm.
 
 implementation:
   name: navigation2
@@ -26,6 +26,7 @@ artifacts:
     host_requirement:
       os: ubuntu-24.04
       ros_distro: jazzy
+    dockerfile: Dockerfile.jazzy-debs
     route:
       kind: apt
       packages:
@@ -33,10 +34,6 @@ artifacts:
         - ros-jazzy-nav2-amcl=1.3.13-1*
         - ros-jazzy-nav2-map-server=1.3.13-1*
         - ros-jazzy-turtlebot3-navigation2=2.3.6-1*
-    invocation: >-
-      ros2 launch nav2_bringup localization_launch.py use_sim_time:=false
-      map:=/opt/ros/jazzy/share/turtlebot3_navigation2/map/map.yaml
-      params_file:=/opt/ros/jazzy/share/turtlebot3_navigation2/param/waffle_pi.yaml
 
 subscribes:
   /scan:        {type: sensor_msgs/msg/LaserScan, reliability: best_effort, durability: volatile}
@@ -83,8 +80,16 @@ the planar lidar and odometry. Uses the map of the TurtleBot3 simulation world.
 ## Configuration notes
 
 Uses the TurtleBot3 Waffle Pi parameter file unchanged: AMCL frames `map`, `odom`
-and `base_footprint`, scan topic `scan`. The `map:=` argument overrides the
-parameter file's map path.
+and `base_footprint`, scan topic `scan`. The parameter file names the map as
+the relative path `map.yaml`, so the image runs from the map's folder. A `map:=`
+launch argument does not override it, because the parameter file's
+`map_server` entry outranks the launch file's override; another map needs
+another parameter file. The recipe copies the parameter file and the
+`turtlebot3_world` map (`map.yaml`, `map.pgm`) from TurtleBot3 2.3.6 (da785b7)
+and Nav2's `localization_launch.py` from Nav2 1.3.13 (f4108e5), with only the
+`nav2_bringup` lookup replaced and parameter-file substitutions turned off,
+and installs only the map server, AMCL and the lifecycle manager. The image
+lists its installed packages in `/usr/share/sdi/installed-packages.txt`.
 
 ## Evaluation
 

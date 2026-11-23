@@ -18,7 +18,8 @@ the reviewed graph requires them.
 Agent images render profiles with the integration code they bake, so a changed
 grant or limit takes effect in Jenkins only after the agent images are rebuilt.
 
-Composition also receives the run-supplied service-repository manifest, the
+Image build also receives the run-supplied service-repository manifest, so it
+can read each artifact's recipe. Composition receives that manifest, the
 composition settings resolved from the composition config, and may publish optional
 `composition-evidence.json`. Evidence records how the Stage reached its outcome
 and never feeds a later Stage. A negative Domain outcome publishes no Domain

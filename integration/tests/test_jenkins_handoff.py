@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, final, override
+from typing import TYPE_CHECKING, Any, NamedTuple, cast, final, override
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -29,12 +29,13 @@ from sdi_pipeline_integration._jenkins_handoff import (
 from sdi_pipeline_integration._yaml_input import InputError
 from tests._fixture_inputs import (
     FIXTURE_COMPOSITION_CONFIG,
+    STAGE_DESCRIPTORS,
     SUPPLIED_INPUT_ARGUMENTS,
     write_fixture_composition_descriptor,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
@@ -54,9 +55,7 @@ COMMITTED_FILES = (
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cv-fixture-v1.yaml",
-    "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    *STAGE_DESCRIPTORS,
     FIXTURE_COMPOSITION_CONFIG,
 )
 
@@ -128,20 +127,39 @@ def _valid_bundle(
     return cast("str", result["execution_id"]), files
 
 
+class ValidRun(NamedTuple):
+    """A committed repository and the bundle its valid dispatch produced."""
+
+    repository: Path
+    commit_sha: str
+    execution_id: str
+    artifacts: Mapping[str, bytes]
+
+
+@pytest.fixture(scope="module")
+def valid_run(tmp_path_factory: pytest.TempPathFactory) -> ValidRun:
+    root = tmp_path_factory.mktemp("valid-run")
+    repository, commit_sha = _repository(root)
+    execution_id, artifacts = _valid_bundle(
+        repository, commit_sha, root / "jenkins-bundle"
+    )
+    return ValidRun(repository, commit_sha, execution_id, artifacts)
+
+
 @final
 class FakeJenkins:
     """A controlled Jenkins core REST surface for handoff tests."""
 
     def __init__(
         self,
-        artifacts: dict[str, bytes],
+        artifacts: Mapping[str, bytes],
         *,
         mode: str = "success",
         jenkins_result: str = "SUCCESS",
         description: str | None = None,
     ) -> None:
         """Initialize exact artifacts and expected run identity."""
-        self.artifacts: dict[str, bytes] = artifacts
+        self.artifacts: Mapping[str, bytes] = artifacts
         self.mode: str = mode
         self.jenkins_result: str = jenkins_result
         self.description: str | None = description
@@ -363,7 +381,9 @@ class FakeJenkins:
 def _serve(fake: FakeJenkins) -> Generator[None, None, None]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), fake.handler())
     fake.base_url = f"http://127.0.0.1:{server.server_port}"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         yield
@@ -423,11 +443,9 @@ def _handoff(  # noqa: PLR0913, PLR0917
 
 def test_handoff_correlates_the_queue_and_retrieves_the_exact_build(
     tmp_path: Path,
+    valid_run: ValidRun,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts)
 
     with _serve(fake):
@@ -508,13 +526,11 @@ def test_handoff_correlates_the_queue_and_retrieves_the_exact_build(
 )
 def test_handoff_fails_once_with_typed_preflight_or_submission_fact(
     tmp_path: Path,
+    valid_run: ValidRun,
     mode: str,
     code: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts, mode=mode)
 
     with _serve(fake):
@@ -634,17 +650,15 @@ def test_handoff_fails_once_with_typed_preflight_or_submission_fact(
         ),
     ],
 )
-def test_handoff_records_each_phase_deadline(
+def test_handoff_records_each_phase_deadline(  # noqa: PLR0913, PLR0917
     tmp_path: Path,
+    valid_run: ValidRun,
     mode: str,
     environment_overrides: dict[str, str],
     code: str,
     phase: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts, mode=mode)
 
     with _serve(fake):
@@ -672,11 +686,9 @@ def test_handoff_records_each_phase_deadline(
 
 def test_github_job_safety_limit_must_exceed_the_runner_outer_limit(
     tmp_path: Path,
+    valid_run: ValidRun,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts)
 
     with _serve(fake):
@@ -708,13 +720,11 @@ def test_github_job_safety_limit_must_exceed_the_runner_outer_limit(
 )
 def test_handoff_preserves_typed_terminal_jenkins_failure(
     tmp_path: Path,
+    valid_run: ValidRun,
     jenkins_result: str,
     code: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts, jenkins_result=jenkins_result)
 
     with _serve(fake):
@@ -737,11 +747,10 @@ def test_handoff_preserves_typed_terminal_jenkins_failure(
     assert (tmp_path / "returned/bundle").exists() is (jenkins_result == "FAILURE")
 
 
-def test_handoff_names_a_build_failed_by_stale_agent_images(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, _artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+def test_handoff_names_a_build_failed_by_stale_agent_images(
+    tmp_path: Path, valid_run: ValidRun
+) -> None:
+    repository, commit_sha, execution_id, _artifacts = valid_run
     fake = FakeJenkins(
         {}, jenkins_result="FAILURE", description="sdi.agent.stale-image"
     )
@@ -784,13 +793,11 @@ def test_handoff_names_a_build_failed_by_stale_agent_images(tmp_path: Path) -> N
 )
 def test_handoff_rejects_incomplete_or_invalid_exact_build_artifacts(
     tmp_path: Path,
+    valid_run: ValidRun,
     mutation: str,
     code: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, original_artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, original_artifacts = valid_run
     artifacts = dict(original_artifacts)
     mode = "success"
     submitted_execution_id = execution_id
@@ -849,13 +856,11 @@ def test_handoff_rejects_incomplete_or_invalid_exact_build_artifacts(
 )
 def test_cancellation_targets_only_the_correlated_queue_item_or_build(
     tmp_path: Path,
+    valid_run: ValidRun,
     mode: str,
     expected_path: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
-    execution_id, artifacts = _valid_bundle(
-        repository, commit_sha, tmp_path / "jenkins-bundle"
-    )
+    repository, commit_sha, execution_id, artifacts = valid_run
     fake = FakeJenkins(artifacts, mode=mode)
     output_root = tmp_path / "returned"
     environment = (

@@ -1,0 +1,64 @@
+# Recipe for the jazzy-debs artifact, built for linux/amd64 and linux/arm64.
+# Every input is fixed so both platforms resolve from one repository state:
+#   - base image by multi-arch index digest;
+#   - ROS packages from one snapshots.ros.org sync (jazzy/2026-10-05);
+#   - Ubuntu packages from snapshot.ubuntu.com at that sync's Release time.
+# Installs only the packages robot.launch.py runs. The turtlebot3-bringup
+# package is left out: it depends on rviz2, which pulls Qt and OGRE. Its two
+# launch files and waffle_pi.yaml are copied here from the revision SDI.md pins
+# (turtlebot3 da785b7); robot.launch.py is patched only to drop its jazzy
+# turtlebot3_bringup parameter lookup. ld08-driver serves LDS_MODEL=LDS-02.
+# The ROS snapshot key (ros-snapshot-archive-keyring.asc) expires 2027-06-01.
+# There is no `# syntax=` line: the builder's built-in Dockerfile frontend is
+# pinned with BuildKit itself, while a syntax image would be pulled unpinned.
+FROM ubuntu:noble@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 ROS_DISTRO=jazzy
+
+COPY ros-snapshot-archive-keyring.asc /etc/apt/keyrings/ros-snapshot-archive-keyring.asc
+
+# Replace the base sources on both architectures (arm64 would otherwise use
+# live ports.ubuntu.com). The bare image has no CA bundle, so the first update
+# skips TLS peer checks; apt still verifies every index by signature.
+# snapshots.ros.org is slow and returns occasional 5xx errors, so apt retries,
+# and downloaded packages persist in a per-architecture cache mount so a
+# failed build does not fetch them again.
+ARG TARGETARCH
+RUN --mount=type=cache,id=apt-archives-${TARGETARCH},target=/var/cache/apt/archives,sharing=locked \
+    rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt.conf.d/docker-clean \
+ && printf '%s\n' 'Acquire::Retries "5";' 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+    > /etc/apt/apt.conf.d/90sdi \
+ && printf '%s\n' \
+    'Types: deb' \
+    'URIs: https://snapshot.ubuntu.com/ubuntu/20261012T164422Z/' \
+    'Suites: noble noble-updates noble-security' \
+    'Components: main universe' \
+    'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+    > /etc/apt/sources.list.d/ubuntu-snapshot.sources \
+ && printf '%s\n' \
+    'Types: deb' \
+    'URIs: http://snapshots.ros.org/jazzy/2026-10-05/ubuntu/' \
+    'Suites: noble' \
+    'Components: main' \
+    'Signed-By: /etc/apt/keyrings/ros-snapshot-archive-keyring.asc' \
+    > /etc/apt/sources.list.d/ros-snapshot.sources \
+ && apt-get -o Acquire::https::Verify-Peer=false update \
+ && apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+    ros-jazzy-ros2launch \
+    ros-jazzy-robot-state-publisher \
+    ros-jazzy-xacro \
+    ros-jazzy-turtlebot3-node=2.3.6-1* \
+    ros-jazzy-turtlebot3-description=2.3.6-1* \
+    ros-jazzy-hls-lfcd-lds-driver=2.1.1-1* \
+    ros-jazzy-ld08-driver=1.1.4-1* \
+ && mkdir -p /usr/share/sdi \
+ && dpkg-query -W -f='${Package}=${Version}\n' > /usr/share/sdi/installed-packages.txt \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --chmod=0755 ros_entrypoint.sh /ros_entrypoint.sh
+ENTRYPOINT ["/ros_entrypoint.sh"]
+ENV TURTLEBOT3_MODEL=waffle_pi LDS_MODEL=LDS-01
+COPY robot.launch.py turtlebot3_state_publisher.launch.py waffle_pi.yaml /opt/sdi/turtlebot3-bringup/
+CMD ["ros2", "launch", "/opt/sdi/turtlebot3-bringup/robot.launch.py"]

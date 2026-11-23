@@ -175,6 +175,15 @@ returned bundle validates and GitHub reports successful artifact publication.
 The Stage table keeps lifecycle, execution conclusion, implementation mode, and
 Domain outcome separate and includes typed explanations and evidence paths.
 
+The Image build section has one row per placement: service, artifact, host,
+built architectures, placement status, short digest, and the reason a placement
+failed. Artifact and host come from the deployment schema and show `-` for an
+unresolved placement. Digests refer to the stack-local pipeline registry, which
+nothing outside the Jenkins stack pulls from. A Fixture result shows every
+placement `not_evaluated`. When Image-build was skipped, blocked, failed
+preflight, or timed out, it has no result, and the section gives its conclusion
+and reason in one line instead.
+
 A valid negative Domain outcome can remain green because the integration
 machinery completed correctly. Jenkins machinery failure, retrieval failure,
 contract rejection, identity mismatch, or artifact-publication failure is red.
@@ -195,10 +204,11 @@ the available receipt retrievable when GitHub still permits post-cancellation
 steps to complete.
 
 The composition Stage is implemented and calls the default generator of the
-committed composition config over the checked-out service repository, which no
-other Stage is given. Image build, CV, and CD use deterministic
-Fixtures, which never consume real composition output, so a successful
-composition leaves them skipped. Fixture files prove only the pipeline interface
-and evidence handling. They are not proof of a real Domain capability, CV
-verdict, deployment outcome, supported-combination KPI, or any aggregate Domain
-result. The summary therefore always states `KPI evaluation: not evaluated`.
+committed composition config over the checked-out service repository, which
+image build is also given for its recipes. Image build, CV, and CD use
+deterministic Fixtures, which never consume real composition output, so a
+successful composition leaves them skipped. Fixture files prove only the
+pipeline interface and evidence handling. They are not proof of a real Domain
+capability, CV verdict, deployment outcome, supported-combination KPI, or any
+aggregate Domain result. The summary therefore always states `KPI evaluation:
+not evaluated`.

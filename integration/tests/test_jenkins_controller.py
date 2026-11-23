@@ -12,9 +12,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import pytest
 from ruamel.yaml import YAML
 
-from sdi_pipeline_integration._integration_code import STALE_IMAGE_REASON
+from sdi_pipeline_integration._handoff_contracts import HANDOFF_PARAMETERS
+from sdi_pipeline_integration._integration_code import (
+    STALE_IMAGE_REASON,
+    integration_code_digest,
+)
+from sdi_pipeline_integration._stage_registry import RUN_LIMITS, STAGE_ORDER
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -26,15 +32,6 @@ EXPECTED_CONTROLLER_IMAGE = (
     "docker.io/jenkins/jenkins:2.568.3-jdk21@"
     "sha256:68964c38dbb70c0bf6adff480d6dda2e1191d2d07e076c9fd2996345303eb999"
 )
-EXPECTED_HANDOFF_PARAMETERS = {
-    "HANDOFF_CONTRACT_VERSION",
-    "EXECUTION_ID",
-    "REQUESTED_GIT_REF",
-    "RESOLVED_COMMIT_SHA",
-    "RUN_REQUEST_PATH",
-    "GITHUB_RUN_ID",
-    "GITHUB_RUN_ATTEMPT",
-}
 FAKE_AGENT_IMAGES = (
     "docker.io/example/composition@sha256:" + "1" * 64,
     "docker.io/example/image-build@sha256:" + "2" * 64,
@@ -42,6 +39,7 @@ FAKE_AGENT_IMAGES = (
     "docker.io/example/cd@sha256:" + "4" * 64,
 )
 SMOKE_CHECK = JENKINS_ROOT / "bin" / "smoke-check"
+STAGE_ARGUMENTS = " ".join(f"--stage {stage}" for stage in STAGE_ORDER)
 JOB_REPOSITORY_URLS = {
     "/job/pipeline-integration/config.xml": "https://github.com/example/repository.git",
     "/job/pipeline-integration-fork/config.xml": (
@@ -89,7 +87,14 @@ def _write_fake_deployment_tools(fake_bin: Path) -> None:
         "  'inspect --format {{.State.ExitCode}} forced-container') "
         "printf '137\\n' ;;\n"
         "  'image inspect --format {{json .Config.Volumes}}'*) "
-        "printf 'null\\n' ;;\n"
+        "printf '%s\\n' \"${FAKE_AGENT_VOLUMES:-null}\" ;;\n"
+        "  'image inspect --format {{.Id}} '*) "
+        '[ -z "${FAKE_NO_IMAGES:-}" ] || exit 1; shift 4; '
+        'for image do printf \'sha256:%s-%s\\n\' "${FAKE_IMAGE_ID:-1}" "$image"; '
+        "done ;;\n"
+        "  *' -T runner-'*' show') exit 3 ;;\n"
+        "  *' -T runner-'*' register '*) "
+        "printf 'the registration token is empty or invalid\\n' >&2; exit 2 ;;\n"
         "esac\n"
     )
     docker.chmod(0o755)
@@ -97,13 +102,11 @@ def _write_fake_deployment_tools(fake_bin: Path) -> None:
     uv = fake_bin / "uv"
     uv.write_text(
         "#!/bin/sh\n"
+        'printf \'uv %s\\n\' "$*" >> "$DOCKER_LOG"\n'
         'case "$*" in\n'
-        "  *composition-v1.yaml) "
-        f"printf '{FAKE_AGENT_IMAGES[0]}\\n' ;;\n"
-        "  *image-build-fixture-v1.yaml) "
-        f"printf '{FAKE_AGENT_IMAGES[1]}\\n' ;;\n"
-        f"  *cv-fixture-v1.yaml) printf '{FAKE_AGENT_IMAGES[2]}\\n' ;;\n"
-        f"  *cd-fixture-v1.yaml) printf '{FAKE_AGENT_IMAGES[3]}\\n' ;;\n"
+        f"  *'adapter-image --repository '*' {STAGE_ARGUMENTS}') "
+        f"printf '%s\\n' {' '.join(FAKE_AGENT_IMAGES)} ;;\n"
+        "  *sdi-integration*integration-code-digest*) printf '%064d\\n' 0 ;;\n"
         "  *sdi-integration*validate-installation*) exit 0 ;;\n"
         "  *) exit 2 ;;\n"
         "esac\n"
@@ -120,6 +123,9 @@ def _write_fake_deployment_tools(fake_bin: Path) -> None:
         'case "$*" in\n'
         "  --version) printf '%s\\n' 'git version 2.53.0' ;;\n"
         "  *'status --porcelain=v1 --untracked-files=all') exit 0 ;;\n"
+        "  *'stash create') exit 0 ;;\n"
+        "  *'rev-parse --verify --quiet HEAD^{tree}') "
+        "printf '%s\\n' \"${FAKE_TREE:-1}\" ;;\n"
         "  *) exit 2 ;;\n"
         "esac\n"
     )
@@ -306,13 +312,6 @@ def test_compose_exposes_only_loopback_http_and_persists_only_named_state() -> N
     assert compose["secrets"]["openai-api-key"] == {
         "file": "${JENKINS_OPENAI_API_KEY_FILE}"
     }
-    assert set(controller["environment"]) >= {
-        "JENKINS_PIPELINE_RUN_LIMIT_SECONDS",
-        "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS",
-        "JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS",
-        "JENKINS_CV_WORK_LIMIT_SECONDS",
-        "JENKINS_CD_WORK_LIMIT_SECONDS",
-    }
     assert set(controller["networks"]) == {
         "controller-egress",
         "controller-integration",
@@ -327,6 +326,8 @@ def test_compose_exposes_only_loopback_http_and_persists_only_named_state() -> N
         "jenkins-home",
         "runner-upstream-state",
         "runner-fork-state",
+        "buildkit-state",
+        "pipeline-registry",
     }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
 
@@ -351,26 +352,6 @@ def test_jcasc_owns_zero_executor_security_and_retention_defaults() -> None:
                     {
                         "key": "SDI_FORK_REPOSITORY_URL",
                         "value": "${JENKINS_FORK_REPOSITORY_URL}",
-                    },
-                    {
-                        "key": "JENKINS_PIPELINE_RUN_LIMIT_SECONDS",
-                        "value": "${JENKINS_PIPELINE_RUN_LIMIT_SECONDS}",
-                    },
-                    {
-                        "key": "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS",
-                        "value": "${JENKINS_COMPOSITION_WORK_LIMIT_SECONDS}",
-                    },
-                    {
-                        "key": "JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS",
-                        "value": "${JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS}",
-                    },
-                    {
-                        "key": "JENKINS_CV_WORK_LIMIT_SECONDS",
-                        "value": "${JENKINS_CV_WORK_LIMIT_SECONDS}",
-                    },
-                    {
-                        "key": "JENKINS_CD_WORK_LIMIT_SECONDS",
-                        "value": "${JENKINS_CD_WORK_LIMIT_SECONDS}",
                     },
                 ]
             }
@@ -483,36 +464,20 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
     assert "'pipeline-integration': env.SDI_REPOSITORY_URL," in pipeline
     assert "'pipeline-integration-fork': env.SDI_FORK_REPOSITORY_URL," in pipeline
     assert "][env.JOB_NAME]" in pipeline
-    assert "env.JENKINS_PIPELINE_RUN_LIMIT_SECONDS" in pipeline
     assert "timeout(time: runLimitSeconds, unit: 'SECONDS')" in pipeline
     assert "timeout(time: schedulingLimitSeconds, unit: 'SECONDS')" in pipeline
-    assert "timeout(time: 120, unit: 'SECONDS')" in pipeline
     assert (
-        "timeout(time: definition.workLimitSeconds + 60, unit: 'SECONDS')" in pipeline
+        f"timeout(time: {RUN_LIMITS.finalization_reserve_seconds}, unit: 'SECONDS')"
+        in pipeline
     )
-    assert "--work-limit-seconds '${definition.workLimitSeconds}'" in pipeline
+    assert "timeout(time: definition.safetyTimeoutSeconds, unit: 'SECONDS')" in pipeline
     assert "stageExecutionStatus == 3" in pipeline
     assert "System.currentTimeMillis() < schedulingDeadlineEpochMillis" in pipeline
     assert "TimeoutStepExecution.ExceededTimeout" in pipeline
     assert "throw interruption" in pipeline
     assert "System.currentTimeMillis() >= runDeadlineEpochMillis" in pipeline
     assert len(re.findall(r"try \{\n\s+deleteDir\(\)", pipeline)) == 4
-    assert [
-        (label, pipeline.count(f"label: '{label}'"))
-        for label in ("composition", "image-build", "cv", "cd")
-    ] == [
-        ("composition", 1),
-        ("image-build", 1),
-        ("cv", 1),
-        ("cd", 1),
-    ]
     assert pipeline.count("execute-jenkins-stage") == 1
-    composition_definition = pipeline[
-        pipeline.index("name: 'Composition'") : pipeline.index("name: 'Image build'")
-    ]
-    assert pipeline.count("--service-repository") == 1
-    assert "--service-repository service-repository" in composition_definition
-    assert "${definition.suppliedArguments}" in pipeline
     assert "--composition-config" not in pipeline
     assert "--generator" not in pipeline
     assert "preflight-jenkins-run" in pipeline
@@ -531,6 +496,59 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
     assert "lastBuild" not in pipeline
 
 
+def test_only_the_stack_refusal_names_a_limit_setting() -> None:
+    listed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(REPOSITORY_ROOT),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "Jenkinsfile",
+            "deployment",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    mentions = [
+        (path, line.strip())
+        for path in sorted(filter(None, listed.split("\0")))
+        if (REPOSITORY_ROOT / path).is_file()
+        for line in (REPOSITORY_ROOT / path).read_bytes().splitlines()
+        if b"LIMIT_SECONDS" in line
+    ]
+
+    assert mentions == [
+        (
+            "deployment/jenkins/bin/stack",
+            (
+                b"JENKINS_*_LIMIT_SECONDS) fail 'delete JENKINS_*_LIMIT_SECONDS from"
+                b" controller.env; limits come from the Stage grants in"
+                b" _stage_registry.py' ;;"
+            ),
+        )
+    ]
+
+
+def test_root_pipeline_passes_each_stage_its_credentials() -> None:
+    pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
+
+    assert "work-limit" not in pipeline
+    assert re.search(
+        r"if \(definition\.credentials\) \{\s+"
+        r"withCredentials\(definition\.credentials\.collect \{ credential ->\s+"
+        r"string\(credentialsId: credential\.id, variable: credential\.variable\)\s+"
+        r"\}\) \{\s+stageExecutionStatus = executeStage\(\)\s+\}\s+"
+        r"\} else \{\s+stageExecutionStatus = executeStage\(\)\s+\}",
+        pipeline,
+    )
+
+
 def test_root_pipeline_reports_stale_agent_images_as_their_typed_reason() -> None:
     pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
 
@@ -538,8 +556,64 @@ def test_root_pipeline_reports_stale_agent_images_as_their_typed_reason() -> Non
     assert "preflightStatus == 4" in pipeline
     assert "stageExecutionStatus == 4" in pipeline
     assert pipeline.count("--baked-code-digest") == 1
-    for resource in ("integration", "composition", "image-build", "cv", "cd"):
-        assert pipeline.count(f"--{resource}-baked-code-digest") == 1
+    assert pipeline.count("--integration-baked-code-digest") == 1
+    assert pipeline.count("--stage-baked-code-digest") == 1
+
+
+def _fresh_image_step(pipeline: str, digest_file: Path) -> str:
+    command = re.search(
+        r"^def bakedCodeDigestCommand = '(.*)'$", pipeline, re.MULTILINE
+    )
+    step = re.search(
+        r'^def requireFreshAgentImage = """(.*?)"""$',
+        pipeline,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert command
+    assert step
+    return (
+        step.group(1)
+        .replace("${bakedCodeDigestCommand}", command.group(1))
+        .replace("\\$", "$")
+        .replace("\\\\", "\\")
+        .replace("/etc/sdi/integration-code-digest", str(digest_file))
+    )
+
+
+OTHER_COMMIT_PREFLIGHT = (
+    "sdi-integration preflight-jenkins-run --composition-node ci"
+    " --composition-baked-code-digest missing\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("baked", "status"),
+    [("0" * 64, 4), ("", 4), (None, 4), ("checkout", 2)],
+)
+def test_stale_image_fails_typed_before_any_flag_is_parsed(
+    tmp_path: Path, baked: str | None, status: int
+) -> None:
+    pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
+    digest_file = tmp_path / "integration-code-digest"
+    if baked == "checkout":
+        baked = integration_code_digest(REPOSITORY_ROOT / "integration")
+    if baked is not None:
+        digest_file.write_text(baked)
+    script = f"set -eu\n{_fresh_image_step(pipeline, digest_file)}\n"
+
+    executed = subprocess.run(
+        ["sh", "-c", script + OTHER_COMMIT_PREFLIGHT],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert executed.returncode == status, executed.stderr
+    if status == 4:
+        assert executed.stderr.startswith(f"{STALE_IMAGE_REASON}: "), executed.stderr
+    else:
+        assert "the following arguments are required" in executed.stderr
 
 
 def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa: C901
@@ -625,7 +699,7 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
                     "<hudson.model.StringParameterDefinition>"
                     f"<name>{name}</name>"
                     "</hudson.model.StringParameterDefinition>"
-                    for name in EXPECTED_HANDOFF_PARAMETERS
+                    for name in HANDOFF_PARAMETERS
                 )
                 permissions = "".join(
                     f"<permission>{permission}</permission>"
@@ -800,11 +874,6 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
         "JENKINS_REPOSITORY_URL=https://github.com/example/repository.git\n"
         "JENKINS_FORK_REPOSITORY_URL=https://github.com/example-fork/repository.git\n"
         "JENKINS_AGENT_CONTROLLER_URL=http://controller:8080\n"
-        "JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400\n"
-        "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600\n"
-        "JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=1800\n"
-        "JENKINS_CV_WORK_LIMIT_SECONDS=2700\n"
-        "JENKINS_CD_WORK_LIMIT_SECONDS=900\n"
         f"JENKINS_ADMIN_PASSWORD_FILE={admin_secret}\n"
         f"JENKINS_HANDOFF_PASSWORD_FILE={handoff_secret}\n"
         f"JENKINS_OPENAI_API_KEY_FILE={openai_secret}\n"
@@ -875,21 +944,20 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
     openai_secret.chmod(0o600)
 
     valid_config = config.read_text()
-    for fork_url, message in (
+    fork_url = "https://github.com/example-fork/repository.git"
+    for valid, invalid, message in (
         (
+            fork_url,
             "https://github.com/example/repository.git",
             "JENKINS_REPOSITORY_URL and JENKINS_FORK_REPOSITORY_URL must differ",
         ),
         (
+            fork_url,
             "https://github.com/example-fork@token/repository.git",
             "JENKINS_FORK_REPOSITORY_URL must not contain credentials",
         ),
     ):
-        config.write_text(
-            valid_config.replace(
-                "https://github.com/example-fork/repository.git", fork_url
-            )
-        )
+        config.write_text(valid_config.replace(valid, invalid))
         completed = subprocess.run(
             [JENKINS_ROOT / "bin" / "stack", "--config", config, "validate"],
             check=False,
@@ -923,12 +991,7 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
     agent_secrets["cd"].chmod(0o600)
 
     valid_config = config.read_text()
-    config.write_text(
-        valid_config.replace(
-            "JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400",
-            "JENKINS_PIPELINE_RUN_LIMIT_SECONDS=120",
-        )
-    )
+    config.write_text(f"{valid_config}JENKINS_CV_WORK_LIMIT_SECONDS=2700\n")
     completed = subprocess.run(
         [JENKINS_ROOT / "bin" / "stack", "--config", config, "validate"],
         check=False,
@@ -940,7 +1003,10 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
         text=True,
     )
     assert completed.returncode == 2
-    assert "must reserve at least two minutes" in completed.stderr
+    assert completed.stderr == (
+        "stack: delete JENKINS_*_LIMIT_SECONDS from controller.env;"
+        " limits come from the Stage grants in _stage_registry.py\n"
+    )
     config.write_text(valid_config)
 
     _assert_plaintext_relocated_agent_url_is_rejected(config, fake_bin, docker_log)
@@ -1059,3 +1125,189 @@ def test_smoke_prunes_only_dangling_sdi_images() -> None:
     ) in smoke
     assert "prune --all" not in smoke
     assert "builder prune" not in smoke
+
+
+def test_smoke_validates_and_builds_each_image_once(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    jenkins = checkout / "deployment" / "jenkins"
+    (jenkins / "bin").mkdir(parents=True)
+    for entry in JENKINS_ROOT.iterdir():
+        if entry.name not in {"bin", "config"}:
+            (jenkins / entry.name).symlink_to(entry)
+    (checkout / "deployment" / "installation.env").symlink_to(
+        REPOSITORY_ROOT / "deployment" / "installation.env"
+    )
+    for name in ("smoke", "stack"):
+        (jenkins / "bin" / name).symlink_to(JENKINS_ROOT / "bin" / name)
+    checker = jenkins / "bin" / "smoke-check"
+    checker.write_text(
+        "#!/bin/sh\n"
+        '[ "$1" = provision-secrets ] || exit 0\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '    [ "$1" != --agent-secret-directory ] || directory=$2\n'
+        "    shift\n"
+        "done\n"
+        "for name in integration ci image-build cv cd; do\n"
+        "    od -An -tx1 -N32 /dev/urandom | tr -d ' \\n' "
+        '> "$directory/$name-agent-secret"\n'
+        "done\n"
+    )
+    checker.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_deployment_tools(fake_bin)
+    temporary = tmp_path / "tmp"
+    temporary.mkdir()
+    docker_log = tmp_path / "docker.log"
+
+    completed = subprocess.run(
+        [jenkins / "bin" / "smoke"],
+        check=False,
+        capture_output=True,
+        env={
+            "DOCKER_LOG": str(docker_log),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "TMPDIR": str(temporary),
+        },
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.count("tracked sources match") == 1
+    log = docker_log.read_text()
+    for dockerfile in (
+        "controller/Dockerfile",
+        "agents/Dockerfile",
+        "runner/Dockerfile",
+        "runner-proxy/Dockerfile",
+    ):
+        assert (
+            len(re.findall(rf"build --check .*--file \S*/{dockerfile} ", log)) == 1
+        ), dockerfile
+    assert log.count("--tag sdi-jenkins-controller:2.568.3") == 1
+    assert log.count(" build integration ci image-build cv cd\n") == 1
+    assert log.count(" build runner-fork runner-fork-proxy\n") == 2
+    assert log.count("up --no-build --detach --wait --wait-timeout 240\n") == 3
+    adapter_image_calls = [line for line in log.splitlines() if "adapter-image" in line]
+    assert adapter_image_calls
+    assert all(STAGE_ARGUMENTS in line for line in adapter_image_calls)
+
+
+class _BuiltStack:
+    def __init__(self, root: Path) -> None:
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        _write_fake_deployment_tools(fake_bin)
+        self.docker_log = root / "docker.log"
+        secrets: dict[str, Path] = {}
+        for index, name in enumerate(
+            (
+                "admin",
+                "handoff",
+                "openai",
+                "integration",
+                "ci",
+                "image-build",
+                "cv",
+                "cd",
+            ),
+            start=1,
+        ):
+            secrets[name] = root / f"{name}-secret"
+            secrets[name].write_text(f"{index:x}" * 64)
+            secrets[name].chmod(0o600)
+        self.config = root / "controller.env"
+        self.config.write_text(
+            "JENKINS_HTTP_PORT=8080\n"
+            "JENKINS_ADMIN_ID=administrator\n"
+            "JENKINS_HANDOFF_ID=github-handoff\n"
+            "JENKINS_REPOSITORY_URL=https://github.com/example/repository.git\n"
+            "JENKINS_FORK_REPOSITORY_URL=https://github.com/example-fork/repository.git\n"
+            "JENKINS_AGENT_CONTROLLER_URL=http://controller:8080\n"
+            f"JENKINS_ADMIN_PASSWORD_FILE={secrets['admin']}\n"
+            f"JENKINS_HANDOFF_PASSWORD_FILE={secrets['handoff']}\n"
+            f"JENKINS_OPENAI_API_KEY_FILE={secrets['openai']}\n"
+            f"JENKINS_INTEGRATION_AGENT_SECRET_FILE={secrets['integration']}\n"
+            f"JENKINS_CI_AGENT_SECRET_FILE={secrets['ci']}\n"
+            f"JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE={secrets['image-build']}\n"
+            f"JENKINS_CV_AGENT_SECRET_FILE={secrets['cv']}\n"
+            f"JENKINS_CD_AGENT_SECRET_FILE={secrets['cd']}\n"
+        )
+        self.path = f"{fake_bin}:{os.environ['PATH']}"
+
+    def run(self, *arguments: str, **state: str) -> subprocess.CompletedProcess[str]:
+        self.docker_log.write_text("")
+        return subprocess.run(
+            [JENKINS_ROOT / "bin" / "stack", "--config", self.config, *arguments],
+            check=False,
+            capture_output=True,
+            env={"DOCKER_LOG": str(self.docker_log), "PATH": self.path} | state,
+            text=True,
+        )
+
+    def refuses_prebuilt(self, action: str, **state: str) -> bool:
+        completed = self.run("--prebuilt", action, **state)
+        return (
+            completed.returncode == 2
+            and f"run: deployment/jenkins/bin/stack --config {self.config} build"
+            in completed.stderr
+            and " up " not in self.docker_log.read_text()
+        )
+
+
+@pytest.mark.parametrize(
+    "action", ["start-controller", "start", "verify-live", "exercise-live"]
+)
+def test_prebuilt_actions_require_a_build_of_this_checkout(
+    tmp_path: Path, action: str
+) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    assert stack.refuses_prebuilt(action)
+
+    built = stack.run("build")
+    assert built.returncode == 0, built.stderr
+    assert stack.refuses_prebuilt(action, FAKE_TREE="2")
+    assert stack.refuses_prebuilt(action, FAKE_IMAGE_ID="2")
+    assert stack.refuses_prebuilt(action, FAKE_NO_IMAGES="1")
+
+
+@pytest.mark.parametrize("action", ["start-controller", "start"])
+def test_prebuilt_start_reuses_a_build_of_this_checkout(
+    tmp_path: Path, action: str
+) -> None:
+    stack = _BuiltStack(tmp_path)
+    built = stack.run("build")
+    assert built.returncode == 0, built.stderr
+
+    completed = stack.run("--prebuilt", action)
+
+    assert completed.returncode == 0, completed.stderr
+    log = stack.docker_log.read_text()
+    assert "validate-installation" not in log
+    assert "build --check" not in log
+    assert "--tag sdi-jenkins-controller" not in log
+    assert " up --no-build --detach --wait" in log
+
+
+def test_build_refuses_an_agent_image_that_declares_a_volume(tmp_path: Path) -> None:
+    stack = _BuiltStack(tmp_path)
+
+    completed = stack.run("build", FAKE_AGENT_VOLUMES='{"/var/lib/data":{}}')
+
+    assert completed.returncode == 2
+    assert (
+        "integration agent image declares an unexpected persistent volume"
+        in completed.stderr
+    )
+    assert stack.refuses_prebuilt("start")
+
+
+@pytest.mark.parametrize("action", ["build", "validate", "destroy"])
+def test_prebuilt_applies_only_to_start_and_live_checks(
+    tmp_path: Path, action: str
+) -> None:
+    completed = _BuiltStack(tmp_path).run("--prebuilt", action)
+
+    assert completed.returncode == 2
+    assert f"--prebuilt does not apply to {action}" in completed.stderr

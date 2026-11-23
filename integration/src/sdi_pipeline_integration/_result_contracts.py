@@ -26,19 +26,22 @@ from ._contracts import (
 )
 from ._git_input import validate_repository_path
 from ._stage_contracts import (
+    AcceptedAttemptEnvelope,
+    ExecutionId,
+    Sha256,
+    SlotName,
+    parse_wire_datetime,
+    require_unique_paths,
+)
+from ._stage_registry import (
     COMMITTED_SLOTS,
     EXPECTED_STAGE_EVIDENCE,
     EXPECTED_STAGE_INPUT_SLOTS,
     EXPECTED_STAGE_OUTPUTS,
     SLOT_BY_SCHEMA,
+    STAGE_ORDER,
     SUPPLIED_INPUT_SLOTS,
-    AcceptedAttemptEnvelope,
-    ExecutionId,
-    Sha256,
-    SlotName,
     StageName,
-    parse_wire_datetime,
-    require_unique_paths,
 )
 
 PIPELINE_RESULT_SCHEMA_VERSION = "sdi.pipeline-integration-result/v1"
@@ -49,7 +52,6 @@ FIXTURE_NOTICE = (
     "real Domain capability; no Validation verdict, deployment outcome, or KPI "
     "was evaluated."
 )
-EXPECTED_STAGES: tuple[StageName, ...] = ("composition", "image_build", "cv", "cd")
 GitCommitSha = Annotated[
     str,
     StringConstraints(strict=True, pattern=r"^[0-9a-f]{40}$"),
@@ -196,7 +198,7 @@ class PipelineIntegrationResult(ContractModel):
     @model_validator(mode="after")
     def validate_complete_result(self) -> Self:  # noqa: C901, PLR0912, PLR0915
         stages = tuple(attempt.correlation.stage for attempt in self.attempts)
-        if stages != EXPECTED_STAGES:
+        if stages != STAGE_ORDER:
             msg = "result must contain one terminal attempt in reviewed Stage order"
             raise ValueError(msg)
         if any(

@@ -1,6 +1,44 @@
 #!/bin/sh
 set -eu
 
+usage() {
+    printf '%s\n' 'usage: verify [--fast]' >&2
+    exit 2
+}
+
+hold_host_lock_reusing_an_inherited_descriptor() {
+    host_lock_fd=
+    for fd in /proc/$$/fd/*; do
+        if [ "$(readlink "$fd" 2>/dev/null)" = "$host_lock" ]; then
+            host_lock_fd=${fd##*/}
+            break
+        fi
+    done
+    if [ -z "$host_lock_fd" ]; then
+        exec 9>>"$host_lock"
+        host_lock_fd=9
+    fi
+    if ! flock -n "$host_lock_fd"; then
+        printf 'verify: waiting for %s\n' "$host_lock"
+        flock "$host_lock_fd"
+    fi
+}
+
+fast=
+case $# in
+    0) ;;
+    1) [ "$1" = --fast ] || usage; fast=1 ;;
+    *) usage ;;
+esac
+
+if [ -z "$fast" ]; then
+    if ! command -v flock >/dev/null; then
+        printf '%s\n' 'verify: flock(1) is required for the host lock' >&2
+        exit 2
+    fi
+    host_lock=$(realpath -m -- "${SDI_HOST_LOCK:-/tmp/sdi-host.lock}")
+fi
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
 
@@ -18,6 +56,7 @@ uv lock --check
 uv sync --frozen --all-groups
 uv run --frozen sdi-integration schemas --check --directory schemas
 uv run --frozen sdi-integration stage-profiles --check --directory stage-profiles
+uv run --frozen sdi-integration jenkinsfile --check --jenkinsfile ../Jenkinsfile
 uv run --frozen python -m sdi_pipeline_integration._fixture_regeneration --check
 uv run --frozen check-jsonschema --quiet --builtin-schema \
     vendor.github-workflows ../.github/workflows/pipeline-integration.yml
@@ -26,6 +65,14 @@ uv run --frozen ruff check .
 uv run --frozen basedpyright
 # Slow tests wait out real limits, so parallel load must not stretch them.
 uv run --frozen pytest -m 'not slow' -n auto --dist worksteal
+
+if [ -n "$fast" ]; then
+    printf '%s\n' 'fast tier passed; run integration/scripts/verify before opening a PR'
+    exit 0
+fi
+
+hold_host_lock_reusing_an_inherited_descriptor
+
 uv run --frozen pytest -m slow
 
 printf '%s\n' 'Locked Python dependency closure:'
@@ -39,10 +86,25 @@ while IFS= read -r line; do
     printf '%s\n' "$line"
 done < ../deployment/jenkins/controller/plugins.txt
 
-../deployment/jenkins/bin/stack smoke
+smoke_inputs='^(deployment/jenkins/|integration/src/|integration/fixtures/)|^(deployment/installation\.env|Jenkinsfile|integration/pyproject\.toml|integration/uv\.lock|integration/README\.md|integration/\.python-version)$'
+if ! merge_base=$(git -C .. merge-base origin/main HEAD 2>/dev/null); then
+    smoke_reason='no merge base with origin/main'
+elif [ "$merge_base" = "$(git -C .. rev-parse HEAD)" ]; then
+    smoke_reason='HEAD is the merge base with origin/main'
+elif {
+    git -C .. diff --no-renames --name-only -z "$merge_base"
+    git -C .. ls-files -z --others --exclude-standard --full-name
+} | grep -Ezq "$smoke_inputs"; then
+    smoke_reason='a smoke input changed since the merge base with origin/main'
+else
+    smoke_reason=
+fi
+if [ -n "$smoke_reason" ]; then
+    printf 'stack smoke runs: %s\n' "$smoke_reason"
+    ../deployment/jenkins/bin/stack smoke
+else
+    printf '%s\n' 'stack smoke skipped: no smoke inputs changed since the merge base with origin/main'
+fi
 
-printf '%s\n' \
-    'Repository acceptance passed.' \
-    'Passing proves the integration scaffold, the Fixture behavior of the image-build, CV, and CD Stages, and the composition Stage contract: outcomes, outputs, evidence, and diagnostics.' \
-    'Live-model composition tests are skipped when their provider keys are unavailable.' \
-    'Passing proves no real image build, CV verdict, deployment, or KPI evaluation; product security assurance, availability, and deferred infrastructure remain out of scope.'
+stage_status=$(uv run --frozen sdi-integration stage-status --repository ..)
+printf '%s\n' 'Repository acceptance passed.' "$stage_status"

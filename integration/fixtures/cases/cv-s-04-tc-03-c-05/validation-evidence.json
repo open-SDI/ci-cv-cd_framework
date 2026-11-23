@@ -19,15 +19,15 @@
       "slot": "target_profile"
     },
     {
-      "sha256": "4fe20a33975cdba64dbd6be3521282cd712b4f9c888cae1515f08a71ac1e1a3e",
+      "sha256": "58da1149dc48d4701b817697186f440cbd75cd3f015c5a7e9541142b84962a39",
       "slot": "composition_blueprint"
     },
     {
-      "sha256": "129b7fb28b3e4afa1343c1fb9baf91ebd2fdfdba8d2b9b8209c40a30361b056d",
+      "sha256": "472a0a23d491f3c81a81c24d6a2a4724c8e6a9a403612c6d214cff71cc61e5d8",
       "slot": "deployment_schema"
     },
     {
-      "sha256": "1c0b108f3ffba4966009585aa2e04355110eed35301b2096f72701ff2a6fb529",
+      "sha256": "e6731178d4bdc37bc734d630fa38da02aa96f243bccf593c1d3726cc129d31cc",
       "slot": "image_build_result"
     }
   ],

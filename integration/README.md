@@ -15,6 +15,7 @@ push their timing past its bounds. For a fast check while developing, run from
 this directory:
 
 ```sh
+uv sync --frozen --all-groups
 uv run pytest -m "not live and not slow" -n auto --dist worksteal
 ```
 
@@ -57,17 +58,24 @@ uv run --project integration sdi-integration execute-stage \
   --attempt-root artifacts/composition-attempt
 ```
 
-Only the composition Stage is granted the run-supplied composition inputs.
-`execute-stage` and `execute-jenkins-stage` require `--service-repository` for
-composition and reject `--service-repository`, `--composition-config`, and
-`--generator` for any other Stage. `dispatch-local` runs composition, so it
-always requires `--service-repository`. The Jenkins preflight takes only
-`--composition-config` and `--generator`, to check the config's key names, and
-`finalize-jenkins-run` takes none of them.
-`--service-repository` names a directory of `SDI.md` descriptions; the runtime
-copies every description into the composition Stage's inputs and gives the
-adapter a manifest of their paths, sizes, and digests. It refuses symbolic
-links, non-regular descriptions, and more than 256 files or 1 MiB.
+Composition is granted every run-supplied input, and image-build only the
+service repository, where the recipes live. `execute-stage` requires
+`--service-repository` for composition and image-build, rejects
+`--composition-config` and `--generator` for any Stage but composition, and
+rejects all three for CV and CD. `execute-jenkins-stage` takes no
+`--service-repository`: a Stage granted the service repository reads
+`service-repository/` from the checked-out commit, and only composition accepts
+the other two. `dispatch-local` runs both
+Stages, so it always requires `--service-repository`. The Jenkins preflight
+takes only `--composition-config` and `--generator`, to check the config's key
+names, and `finalize-jenkins-run` takes none of them.
+`--service-repository` names a directory of service folders, each holding its
+`<service_id>/SDI.md` description and any recipes; the runtime copies every
+regular file in the service folders into the Stage's inputs and gives the
+adapter a manifest of their paths, sizes, and digests. It skips files
+at the directory's root and refuses a folder without `SDI.md`, dotfiles and other
+unsupported names, symbolic links, non-regular files, and more than 256 files or
+1 MiB. Only each folder's `SDI.md` is a description.
 `--composition-config` is a repository path read at the resolved commit and
 defaults to `integration/composition-config.yaml`
 (`sdi.composition-config/v1`), so a run can only pair a reviewed model endpoint
@@ -166,9 +174,10 @@ with its reason and size, every omitted one with its reason (`not retrieved` or
 proposal is preferred and discovery omitted descriptions, the assessment reason
 says the result holds within the bounded supplied context. It is never an input
 to a later Stage. Each assessed service carries its chosen artifact's `route` as
-declared. A `mutable-artifact` finding marks a route that may install different
-content later: any apt route, an image without a digest, or a source revision
-that is not a full commit. It is read from the declared route only, never
+declared. A route is provenance only and does not describe what the artifact's
+`dockerfile:` recipe builds. A `mutable-artifact` finding marks a route that may
+install different content later: any apt route, an image without a digest, or a
+source revision that is not a full commit. It is read from the declared route only, never
 resolved against a registry, and never counts as a gap. Reading the repository
 fails rather than truncates at its limits, so the digests omit no description.
 Reason summaries and the diagnostic come from fixed templates
@@ -181,7 +190,48 @@ its diagnostic says so.
 Fixture cases match exact input digests and cannot recognize real output, so a
 Fixture Stage whose inputs include implemented output is skipped with
 `sdi.dependency.implemented-evidence`. A successful composition therefore ends
-the run with image build skipped and CV and CD blocked; the run still exits 0.
+a `dispatch-local` run with image build skipped and CV and CD blocked; the run
+still exits 0.
+
+## Image-build Adapter
+
+`sdi-image-build-adapter` runs only in Jenkins, on the image-build agent,
+because the builder exists only inside the stack; `dispatch-local` keeps the
+Fixture. For each placement it builds the placed artifact's `dockerfile:`
+recipe, with the service folder as build context, for every architecture the
+artifact declares (`noarch` means amd64 and arm64), one `buildctl` client per
+placement against `tcp://buildkitd:1234`, and pushes
+`registry:5000/sdi/<service_id>:<artifact_id>-<execution id>`. Both addresses are
+constants, since the adapter's environment holds only `PATH` and `LC_ALL`;
+`buildctl` itself gets a fixed environment with an empty home and Docker config.
+An unresolved placement fails `unresolved-placement`; an artifact without a
+recipe, or whose recipe is not a captured file, fails `no-recipe`. A build fails
+`build-failed` when any architecture fails, when it reports no digest, or when
+the index read back from the registry does not match the digest or the requested
+platforms. Builds still running at the work limit minus 60 seconds are sent
+SIGTERM, then SIGKILL after 15 seconds, and fail `work-limit`. Each failure
+`detail` is the build log's last line once URLs, machine paths and private
+addresses are masked, and the diagnostic adds a fair share of each failed log's
+redacted tail.
+
+| Outcome code | Execution | Domain outcome | Published |
+| --- | --- | --- | --- |
+| `sdi.image-build.recorded` | succeeded | succeeded | image-build result |
+| `sdi.image-build.input-mismatch` | failed | not evaluated | diagnostic |
+| `sdi.image-build.too-many-placements` | failed | not evaluated | diagnostic |
+| `sdi.image-build.builder-unreachable` | failed | not evaluated | diagnostic |
+| `sdi.image-build.registry-unreachable` | failed | not evaluated | diagnostic |
+| `sdi.image-build.arm64-unavailable` | failed | not evaluated | diagnostic |
+
+`recorded` means every placement was judged, even when nothing built; it does
+not mean any image is available. The input mismatch is a service repository
+whose digest differs from the deployment schema's, and the placement limit is
+48. The builder, registry and arm64 checks run only when some placement is
+buildable, so a run with nothing to build never touches the builder. In Jenkins,
+a successful composition is followed by a real image build, after which the
+Fixture CV skips with `sdi.dependency.implemented-evidence` and CD is blocked.
+A runtime hard timeout kills the adapter and its clients together and leaves
+its scratch directory on the agent's `/tmp` tmpfs until the agent restarts.
 
 ## Dispatch A Local Run
 
@@ -221,18 +271,21 @@ six-combination verdict.
 The root `Jenkinsfile` composes five public CLI operations rather than parsing or
 constructing contracts in Groovy:
 
-- `preflight-jenkins-run` first compares the integration code digest each of
-  the five agent images recorded at build time with the digest of the
-  submitted checkout. It then preserves the submitted Execution ID and
-  revalidates the seven scalar handoff values, committed inputs, all
-  descriptors and Stage profiles, settled default limits, and the allocated
+- `preflight-jenkins-run` takes `--integration-node` and
+  `--integration-baked-code-digest`, plus `--stage-node STAGE=NODE` and
+  `--stage-baked-code-digest STAGE=DIGEST` once per Stage. It first compares
+  the integration code digest each of the five agent images recorded at build
+  time with the digest of the submitted checkout. It then preserves the
+  submitted Execution ID and revalidates the seven scalar handoff values,
+  committed inputs, all descriptors and Stage profiles, and the allocated
   resource mapping.
-- `execute-jenkins-stage` first repeats that digest comparison for its own
-  agent. It then reconstructs prior accepted attempts from bounded Jenkins
-  stashes, validates every transferred byte and the trusted deployment work
-  limit, and executes only the next reviewed descriptor on its matching
-  immutable agent. An expired run deadline returns control without launching an
-  adapter so integration-owned finalization can create the typed skip.
+- `execute-jenkins-stage --stage STAGE` first repeats that digest comparison
+  for its own agent. It then reconstructs prior accepted attempts from bounded
+  Jenkins stashes, validates every transferred byte, and executes the Stage's
+  reviewed Jenkins descriptor from the Stage registry on its matching immutable
+  agent under the work limit of the Stage's grant. An expired run deadline
+  returns control without launching an adapter so integration-owned
+  finalization can create the typed skip.
 - `attempt-allows-continuation` derives whether another Domain Stage may run.
 - `finalize-jenkins-run` creates typed downstream skips, assembles the exact
   archive, and validates it on the integration agent.
@@ -247,6 +300,20 @@ digest of the checkout cannot be trusted. `integration-code-digest --root
 <integration directory>` prints the digest over `pyproject.toml`, `uv.lock`,
 `src`, and `fixtures`, which the agent image build records in
 `/etc/sdi/integration-code-digest`.
+
+The `Jenkinsfile` reads the run limit and each Stage's name, agent label,
+safety timeout, and credentials from a block rendered from the Stage registry.
+After editing the registry, run this from the repository root:
+
+```sh
+uv run --project integration sdi-integration jenkinsfile --write --jenkinsfile Jenkinsfile
+```
+
+`jenkinsfile --check` fails while the block is stale, and `scripts/verify` runs
+it beside the schema and Stage-profile checks. `adapter-image --repository .
+--stage STAGE`, repeated once per Stage, prints the runtime image of each
+Stage's Jenkins adapter descriptor, one per line in argument order; `bin/stack`
+selects the agent images with it.
 
 These commands are pipeline-facing primitives. Operators submit only through the
 fixed Jenkins job; they do not manually coordinate the primitives or reuse their
@@ -326,7 +393,9 @@ After publication, `github-summary` independently validates the receipt and any
 returned bundle, incorporates GitHub's handoff and publication outcomes, renders
 the status-first summary, and returns the final machinery conclusion. It never
 derives an aggregate Domain verdict. A result-less failed or cancelled handoff
-is summarized from its receipt without promising Stage evidence.
+is summarized from its receipt without promising Stage evidence. The Image build
+section joins each image-build record with its deployment-schema placement, or
+gives Image-build's conclusion and reason in one line when it recorded no result.
 
 Authenticated operators can submit the reviewed six S-04 request paths
 sequentially through the same workflow with:

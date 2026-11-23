@@ -25,13 +25,8 @@ from ._contracts import (
     TestcaseId,
     reject_explicit_nulls,
 )
-from ._stage_contracts import (
-    EXPECTED_STAGE_INPUT_SLOTS,
-    ImageReference,
-    Sha256,
-    SlotName,
-    StageName,
-)
+from ._stage_contracts import Sha256, SlotName  # noqa: TC001
+from ._stage_registry import EXPECTED_STAGE_INPUT_SLOTS, StageName
 
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
@@ -199,20 +194,80 @@ class DeploymentSchema(ContractModel):
         return self
 
 
-class FixtureImageRecord(ContractModel):
-    """One deterministic image reference without a build-success claim."""
+ImageDigest = Annotated[
+    str, StringConstraints(strict=True, pattern=r"^sha256:[0-9a-f]{64}$")
+]
+# The redacted last error line: printable ASCII without quotes or backslashes,
+# so a summary can show it without escaping.
+FailureDetail = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[\x20\x21\x23-\x5b\x5d-\x7e]{1,256}$"),
+]
+
+
+class PlatformImage(ContractModel):
+    """The image built for one architecture."""
+
+    architecture: Literal["amd64", "arm64"]
+    digest: ImageDigest
+
+
+class BuiltImageRecord(ContractModel):
+    """A placement whose image was pushed to the pipeline registry.
+
+    The digest is an index for several architectures and a plain manifest for
+    one.
+    """
 
     service_id: Slug
-    architecture: Literal["arm64", "amd64"]
-    image: ImageReference
-    build_status: Literal["not_evaluated"]
+    status: Literal["built"]
+    repository: Annotated[
+        str,
+        StringConstraints(
+            strict=True, pattern=r"^sdi/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$", max_length=67
+        ),
+    ]
+    digest: ImageDigest
+    platforms: Annotated[list[PlatformImage], Field(min_length=1, max_length=2)]
+
+    @model_validator(mode="after")
+    def validate_image(self) -> Self:
+        if self.repository != f"sdi/{self.service_id}":
+            msg = "a built image repository must be sdi/<service_id>"
+            raise ValueError(msg)
+        _require_unique(
+            [item.architecture for item in self.platforms], "platform architecture"
+        )
+        return self
+
+
+class FailedImageRecord(ContractModel):
+    """A placement that has no image, with one reason from a closed set."""
+
+    service_id: Slug
+    status: Literal["failed"]
+    reason: Literal["unresolved-placement", "no-recipe", "build-failed", "work-limit"]
+    detail: FailureDetail
+
+
+class NotEvaluatedImageRecord(ContractModel):
+    """A Fixture placement without a build claim."""
+
+    service_id: Slug
+    status: Literal["not_evaluated"]
+
+
+ImageRecord = Annotated[
+    BuiltImageRecord | FailedImageRecord | NotEvaluatedImageRecord,
+    Field(discriminator="status"),
+]
 
 
 class ImageBuildResult(ContractModel):
-    """Fixture-qualified image-build handoff for one composition."""
+    """One image-build record per placement of one composition."""
 
     schema_version: Literal["sdi.image-build-result/v1"]
-    evidence_basis: Literal["fixture"]
+    evidence_basis: Literal["fixture", "implemented"]
     image_build_result_id: Slug
     blueprint_id: Slug
     deployment_schema_id: Slug
@@ -221,11 +276,22 @@ class ImageBuildResult(ContractModel):
     combination_id: CombinationId
     profile_id: Slug
     source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("image_build")]
-    images: Annotated[list[FixtureImageRecord], Field(min_length=1)]
+    # Stack-local: nothing outside the Jenkins stack pulls from it.
+    registry: Literal["registry:5000"]
+    images: Annotated[list[ImageRecord], Field(min_length=1)]
 
     @model_validator(mode="after")
     def validate_records(self) -> Self:
         _require_unique([item.service_id for item in self.images], "image service_id")
+        if any(
+            (item.status == "not_evaluated") != (self.evidence_basis == "fixture")
+            for item in self.images
+        ):
+            msg = (
+                "a fixture result records every image not_evaluated, "
+                "and an implemented result none"
+            )
+            raise ValueError(msg)
         return self
 
 

@@ -20,6 +20,7 @@ dependencies = [
 sdi-integration = "sdi_pipeline_integration._cli:main"
 sdi-fixture-adapter = "sdi_pipeline_integration._fixture_adapter:main"
 sdi-composition-adapter = "sdi_pipeline_integration._composition_adapter:main"
+sdi-image-build-adapter = "sdi_pipeline_integration._image_build_adapter:main"
 
 [tool.hatch.build.targets.wheel.force-include]
 "fixtures/cases" = "sdi_pipeline_integration/_fixture_cases"
@@ -33,6 +34,8 @@ dev = [
     "pytest-xdist==3.8.0",
     "ruff==0.16.6",
 ]
+# Built from an sdist that downloads its binary from GitHub, so only verify installs it.
+workflow-lint = ["actionlint-py==1.7.12.25"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers"]

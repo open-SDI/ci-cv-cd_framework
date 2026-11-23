@@ -15,7 +15,7 @@ from ._contracts import (
     TargetExecutionProfile,
 )
 from ._git_input import CommittedBlob, GitRepository, validate_repository_path
-from ._stage_contracts import COMMITTED_SLOTS, SLOT_BY_NAME
+from ._stage_registry import COMMITTED_SLOTS, SLOT_BY_NAME
 from ._yaml_input import InputError, parse_front_matter, parse_yaml
 
 if TYPE_CHECKING:

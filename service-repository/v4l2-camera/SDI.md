@@ -24,13 +24,11 @@ artifacts:
     host_requirement:
       os: ubuntu-24.04
       ros_distro: jazzy
+    dockerfile: Dockerfile.jazzy-debs
     route:
       kind: apt
       packages:
         - ros-jazzy-v4l2-camera=0.7.3-1*
-    invocation: >-
-      ros2 run v4l2_camera v4l2_camera_node --ros-args
-      -p video_device:=/dev/video0 -r image_raw:=image
 
 publishes:
   /image: {type: sensor_msgs/msg/Image, reliability: reliable, durability: volatile}
@@ -50,7 +48,7 @@ Publishes raw images from a USB webcam (any V4L2 device) as a ROS image stream.
 
 - A V4L2 camera is attached, by default `/dev/video0`, supporting the requested
   pixel format (`YUYV` by default).
-- The upstream node publishes `image_raw`; this service's fixed invocation
+- The upstream node publishes `image_raw`; the `CMD` of this service's recipe
   remaps it to `/image` (`-r image_raw:=image`), so camera info is published on
   `/camera_info`.
 
@@ -65,7 +63,9 @@ Publishes raw images from a USB webcam (any V4L2 device) as a ROS image stream.
 ## Configuration notes
 
 Defaults kept: `image_size [640, 480]`, `pixel_format YUYV`, `output_encoding rgb8`,
-`camera_frame_id camera`.
+`camera_frame_id camera`. The recipe installs only `ros-jazzy-v4l2-camera` and
+`ros-jazzy-ros2run`, and the image lists its installed packages in
+`/usr/share/sdi/installed-packages.txt`.
 
 ## Evaluation
 

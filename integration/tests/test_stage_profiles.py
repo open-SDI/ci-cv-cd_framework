@@ -10,12 +10,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from sdi_pipeline_integration import _stage_contracts
+from sdi_pipeline_integration import _stage_registry
 from sdi_pipeline_integration._stage_contracts import (
-    STAGE_GRANTS,
-    Slot,
     StageProfile,
     render_stage_profile,
+)
+from sdi_pipeline_integration._stage_registry import (
+    STAGES,
+    Slot,
 )
 
 PROFILES = Path(__file__).parents[1] / "stage-profiles"
@@ -91,10 +93,10 @@ def test_a_slot_added_to_the_registry_reaches_the_rendered_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        _stage_contracts,
+        _stage_registry,
         "SLOTS",
         (
-            *_stage_contracts.SLOTS,
+            *_stage_registry.SLOTS,
             Slot(
                 "attestation",
                 "attestation.json",
@@ -104,11 +106,16 @@ def test_a_slot_added_to_the_registry_reaches_the_rendered_profiles(
             ),
         ),
     )
-    grant = STAGE_GRANTS["cd"]
+    cd_stage = STAGES["cd"]
     monkeypatch.setitem(
-        STAGE_GRANTS,
+        STAGES,
         "cd",
-        dataclasses.replace(grant, inputs=(*grant.inputs, "attestation")),
+        dataclasses.replace(
+            cd_stage,
+            grant=dataclasses.replace(
+                cd_stage.grant, inputs=(*cd_stage.grant.inputs, "attestation")
+            ),
+        ),
     )
 
     image_build = render_stage_profile("image_build")
@@ -119,7 +126,7 @@ def test_a_slot_added_to_the_registry_reaches_the_rendered_profiles(
         "attestation",
         "outputs/attestation.json",
         "domain_output",
-        STAGE_GRANTS["image_build"].domain_output_max_bytes,
+        STAGES["image_build"].grant.domain_output_max_bytes,
     )
     assert (cd.inputs[-1].slot, cd.inputs[-1].path) == (
         "attestation",

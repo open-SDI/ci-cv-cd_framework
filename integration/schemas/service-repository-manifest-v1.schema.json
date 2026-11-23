@@ -2,7 +2,7 @@
   "$defs": {
     "ManifestFile": {
       "additionalProperties": false,
-      "description": "One description file copied into a Stage's inputs.",
+      "description": "One service-folder file copied into a Stage's inputs.",
       "properties": {
         "byte_size": {
           "minimum": 0,
@@ -10,7 +10,7 @@
           "type": "integer"
         },
         "path": {
-          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*SDI\\.md$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
           "title": "Path",
           "type": "string"
         },
@@ -30,7 +30,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "The exact description files a Stage receives from the service repository.",
+  "description": "The exact service-folder files a Stage receives from the service repository.",
   "properties": {
     "files": {
       "items": {

@@ -54,7 +54,7 @@ esac
 """
 FAKE_UV = r"""#!/bin/sh
 case "$*" in
-  *adapter-image*) printf 'docker.io/example/agent@sha256:%064d\n' 1 ;;
+  *adapter-image*) printf 'docker.io/example/agent@sha256:%064d\n' 1 2 3 4 ;;
   *sdi-integration*validate-installation*) exit 0 ;;
   *) exit 2 ;;
 esac
@@ -368,11 +368,6 @@ class _Stack:
             "JENKINS_FORK_REPOSITORY_URL="
             "https://github.com/example-fork/repository.git\n"
             "JENKINS_AGENT_CONTROLLER_URL=http://controller:8080\n"
-            "JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400\n"
-            "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600\n"
-            "JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS=1800\n"
-            "JENKINS_CV_WORK_LIMIT_SECONDS=2700\n"
-            "JENKINS_CD_WORK_LIMIT_SECONDS=900\n"
             f"JENKINS_ADMIN_PASSWORD_FILE={secret_files['admin']}\n"
             f"JENKINS_HANDOFF_PASSWORD_FILE={secret_files['handoff']}\n"
             f"JENKINS_OPENAI_API_KEY_FILE={secret_files['openai']}\n"
@@ -551,8 +546,19 @@ def test_start_builds_and_starts_only_the_configured_runners(
     assert stack.profiles("up --no-build --detach --wait --wait-timeout 240") == [
         profiles
     ]
+    assert stack.profiles("pull --quiet --policy missing buildkitd registry") == [
+        profiles
+    ]
+    log = stack.log()
+    pull = next(i for i, line in enumerate(log) if "pull --quiet" in line)
+    build = next(i for i, line in enumerate(log) if "build integration" in line)
+    assert pull < build
     proxy_check = f"build --check --file {JENKINS_ROOT}/runner-proxy/Dockerfile"
-    assert any(line.startswith(proxy_check) for line in stack.log())
+    assert any(line.startswith(proxy_check) for line in log)
+    agent_check = (
+        f"build --check --target image-build --file {JENKINS_ROOT}/agents/Dockerfile"
+    )
+    assert any(line.startswith(agent_check) for line in log)
 
 
 @pytest.mark.parametrize("action", ["stop", "status", "logs", "destroy"])

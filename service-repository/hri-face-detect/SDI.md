@@ -30,7 +30,6 @@ artifacts:
       kind: source
       repository: https://github.com/ros4hri/hri_face_detect
       revision: 599fde067a0e9360d107ad1bb1e63f07651b1e2b
-    invocation: ros2 launch hri_face_detect face_detect.launch.py
 
 subscribes:
   /image: {type: sensor_msgs/msg/Image, reliability: best_effort, durability: volatile}

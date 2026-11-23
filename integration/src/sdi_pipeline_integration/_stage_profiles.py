@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 from ruamel.yaml import YAML
 
 from ._generated_files import check_generated, write_generated
-from ._stage_contracts import STAGE_GRANTS, render_stage_profile
+from ._stage_contracts import render_stage_profile
+from ._stage_registry import STAGE_ORDER
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ._stage_contracts import StageName
+    from ._stage_registry import StageName
 
 
 def stage_profile_file_name(stage: StageName) -> str:
@@ -38,7 +39,7 @@ def stage_profile_bytes(stage: StageName) -> bytes:
 def _rendered_profiles() -> dict[str, bytes]:
     return {
         stage_profile_file_name(stage): stage_profile_bytes(stage)
-        for stage in STAGE_GRANTS
+        for stage in STAGE_ORDER
     }
 
 

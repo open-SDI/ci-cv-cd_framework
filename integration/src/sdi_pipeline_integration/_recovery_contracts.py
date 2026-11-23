@@ -8,7 +8,7 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, Self, cast
+from typing import Annotated, Literal, Self, assert_never, cast
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -21,6 +21,7 @@ from pydantic import (
 )
 
 from ._contracts import ContractModel
+from ._stage_registry import STAGES, StageName
 from ._yaml_input import parse_yaml
 
 RECOVERY_MANIFEST_SCHEMA_VERSION = "sdi.scaffold-recovery-manifest/v1"
@@ -46,6 +47,8 @@ class InstallationPins(ContractModel):
     python_runtime_image: PinnedImage
     uv_image: PinnedImage
     jenkins_remoting_image: PinnedImage
+    buildkit_image: PinnedImage
+    registry_image: PinnedImage
     composition_adapter_image: PinnedImage
     image_build_adapter_image: PinnedImage
     cv_adapter_image: PinnedImage
@@ -56,6 +59,20 @@ class InstallationPins(ContractModel):
     github_runner_sha256: Sha256
     checkout_action_commit: GitCommit
     upload_artifact_action_commit: GitCommit
+
+    def adapter_image(self, stage: StageName) -> str:
+        """Return the runtime image every descriptor of one Stage must name."""
+        match stage:
+            case "composition":
+                return self.composition_adapter_image
+            case "image_build":
+                return self.image_build_adapter_image
+            case "cv":
+                return self.cv_adapter_image
+            case "cd":
+                return self.cd_adapter_image
+            case _:
+                assert_never(stage)
 
 
 class ArchiveFacts(ContractModel):
@@ -128,6 +145,8 @@ _EXPECTED_KEYS = {
     "SDI_PYTHON_RUNTIME_IMAGE",
     "SDI_UV_IMAGE",
     "SDI_JENKINS_REMOTING_IMAGE",
+    "SDI_BUILDKIT_IMAGE",
+    "SDI_REGISTRY_IMAGE",
     "SDI_COMPOSITION_ADAPTER_IMAGE",
     "SDI_IMAGE_BUILD_ADAPTER_IMAGE",
     "SDI_CV_ADAPTER_IMAGE",
@@ -189,6 +208,8 @@ def load_installation_authority(path: Path) -> InstallationAuthority:
             python_runtime_image=values["SDI_PYTHON_RUNTIME_IMAGE"],
             uv_image=values["SDI_UV_IMAGE"],
             jenkins_remoting_image=values["SDI_JENKINS_REMOTING_IMAGE"],
+            buildkit_image=values["SDI_BUILDKIT_IMAGE"],
+            registry_image=values["SDI_REGISTRY_IMAGE"],
             composition_adapter_image=values["SDI_COMPOSITION_ADAPTER_IMAGE"],
             image_build_adapter_image=values["SDI_IMAGE_BUILD_ADAPTER_IMAGE"],
             cv_adapter_image=values["SDI_CV_ADAPTER_IMAGE"],
@@ -276,6 +297,7 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
             ("Python runtime pin", "RUNTIME_IMAGE", pins.python_runtime_image),
             ("uv image pin", "UV_IMAGE", pins.uv_image),
             ("Jenkins Remoting pin", "REMOTING_IMAGE", pins.jenkins_remoting_image),
+            ("BuildKit pin", "BUILDKIT_IMAGE", pins.buildkit_image),
         ),
     )
     from_directives = _docker_instructions(agents, "FROM")
@@ -283,26 +305,20 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
         "${RUNTIME_IMAGE} AS runtime",
         "${UV_IMAGE} AS uv",
         "${REMOTING_IMAGE} AS remoting",
+        "${BUILDKIT_IMAGE} AS buildkit",
         "runtime AS tooling",
-        "runtime",
+        "runtime AS agent",
+        "agent AS image-build",
     ]:
         msg = "agent build stages do not consume the reviewed image pins"
         raise ValueError(msg)
 
-    adapters = repository / "deployment/jenkins/adapters"
-    for filename, image in (
-        ("composition-v1.yaml", pins.composition_adapter_image),
-        ("image-build-fixture-v1.yaml", pins.image_build_adapter_image),
-        ("cv-fixture-v1.yaml", pins.cv_adapter_image),
-        ("cd-fixture-v1.yaml", pins.cd_adapter_image),
-    ):
-        descriptor = parse_yaml(
-            (adapters / filename).read_bytes(),
-            f"deployment/jenkins/adapters/{filename}",
-        )
-        if descriptor.get("image") != image:
-            msg = f"{filename} image pin does not match the installation authority"
-            raise ValueError(msg)
+    for name, stage in STAGES.items():
+        for path in dict.fromkeys((stage.jenkins_descriptor, stage.local_descriptor)):
+            descriptor = parse_yaml((repository / path).read_bytes(), path)
+            if descriptor.get("image") != pins.adapter_image(name):
+                msg = f"{path} image pin does not match the installation authority"
+                raise ValueError(msg)
 
     compose = repository / "deployment/jenkins/compose.yaml"
     compose_document = parse_yaml(
@@ -321,6 +337,16 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
     if integration_args.get("RUNTIME_IMAGE") != pins.python_runtime_image:
         msg = "integration agent runtime pin does not match the installation authority"
         raise ValueError(msg)
+    for service_name, image in (
+        ("buildkitd", pins.buildkit_image),
+        ("registry", pins.registry_image),
+    ):
+        service = _mapping(
+            services.get(service_name), label=f"Compose {service_name} service"
+        )
+        if service.get("image") != image:
+            msg = f"{service_name} image pin does not match the installation authority"
+            raise ValueError(msg)
 
 
 def _validate_workflow_pins(repository: Path, pins: InstallationPins) -> None:

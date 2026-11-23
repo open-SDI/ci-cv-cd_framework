@@ -53,26 +53,30 @@ from ._service_descriptions import (
 from ._stage_contracts import (
     ASCII_CONTROL_LIMIT,
     ASCII_DELETE,
-    COMMITTED_SLOTS,
-    EXPECTED_STAGE_EVIDENCE,
-    EXPECTED_STAGE_INPUT_SLOTS,
-    EXPECTED_STAGE_OUTPUTS,
-    SLOT_BY_NAME,
-    SLOT_BY_SCHEMA,
     AcceptedAttemptEnvelope,
     AdapterDescriptor,
     AdapterRequest,
     AdapterResponse,
     DomainOutcome,
     ImplementationMode,
-    StageName,
     StageProfile,
     contains_sensitive_contract_material,
     contains_sensitive_material,
     render_stage_profile,
     require_unique_paths,
 )
+from ._stage_documents import validate_stage_documents
 from ._stage_profiles import stage_profile_bytes
+from ._stage_registry import (
+    COMMITTED_SLOTS,
+    EXPECTED_STAGE_EVIDENCE,
+    EXPECTED_STAGE_INPUT_SLOTS,
+    EXPECTED_STAGE_OUTPUTS,
+    SLOT_BY_NAME,
+    SLOT_BY_SCHEMA,
+    STAGES,
+    StageName,
+)
 from ._yaml_input import (
     InputError,
     parse_front_matter,
@@ -114,6 +118,17 @@ class StageExecution:
     envelope: AcceptedAttemptEnvelope
     files: dict[str, bytes]
     outputs: dict[str, StageInputSource]
+
+    @property
+    def blocks_downstream(self) -> bool:
+        """Whether this attempt stops every later Stage from running."""
+        envelope = self.envelope
+        return (
+            envelope.lifecycle_state == "skipped"
+            or envelope.execution_conclusion != "succeeded"
+            or envelope.domain_outcome == "failed"
+            or envelope.implementation_mode == "not_implemented"
+        )
 
 
 class ExternalCancellation(BaseException):
@@ -500,157 +515,6 @@ def _capture_candidate(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         msg = "candidate bundle changed after capture"
         raise InputError(msg)
     return response, captured
-
-
-def validate_stage_documents(  # noqa: C901, PLR0912, PLR0913, PLR0915
-    stage: StageName,
-    outputs: Mapping[str, BaseModel],
-    inputs: Mapping[str, BaseModel],
-    expected_input_digests: Mapping[str, str],
-    expected_identity: tuple[str, str, str, str],
-    *,
-    domain_outcome: DomainOutcome,
-    evidence: Sequence[BaseModel] = (),
-) -> None:
-    """Check a Stage's outputs against each other and the accepted inputs.
-
-    Stage evidence shares the outputs' correlation but is never a Domain output.
-    """
-    for output in [*outputs.values(), *evidence]:
-        if not isinstance(
-            output,
-            (
-                CompositionBlueprint,
-                DeploymentSchema,
-                ImageBuildResult,
-                ValidationEvidence,
-                DeploymentResult,
-                CompositionEvidence,
-            ),
-        ):
-            msg = "candidate output is not a supported Domain contract"
-            raise InputError(msg)
-        actual_identity = (
-            output.scenario_id,
-            output.testcase_id,
-            output.combination_id,
-            output.profile_id,
-        )
-        if actual_identity != expected_identity:
-            msg = "candidate Domain output correlation does not match accepted inputs"
-            raise InputError(msg)
-        if {
-            item.slot: item.sha256 for item in output.source_inputs
-        } != expected_input_digests:
-            msg = "candidate Domain output input digests do not match the request"
-            raise InputError(msg)
-    if domain_outcome == "failed":
-        if outputs:
-            msg = f"{stage} negative Domain outcome cannot carry Domain output"
-            raise InputError(msg)
-        return
-
-    blueprint = outputs.get("composition_blueprint") or inputs.get(
-        "composition_blueprint"
-    )
-    deployment = outputs.get("deployment_schema") or inputs.get("deployment_schema")
-    if not isinstance(blueprint, CompositionBlueprint) or not isinstance(
-        deployment, DeploymentSchema
-    ):
-        msg = f"{stage} candidate is missing its composition inputs"
-        raise InputError(msg)
-    if deployment.blueprint_id != blueprint.blueprint_id:
-        msg = "deployment schema does not reference the accepted blueprint"
-        raise InputError(msg)
-    if {item.service_id for item in deployment.placements} != {
-        item.service_id for item in blueprint.services
-    }:
-        msg = "deployment schema must place every accepted blueprint service once"
-        raise InputError(msg)
-    profile = inputs.get("target_profile")
-    profile_hosts = (
-        profile.hosts if isinstance(profile, TargetExecutionProfile) else None
-    )
-    if profile_hosts is not None and any(
-        item.host is not None and item.host not in profile_hosts
-        for item in deployment.placements
-    ):
-        msg = "deployment schema names a host outside the target profile"
-        raise InputError(msg)
-    hosts = {
-        item.service_id: profile_hosts[item.host]
-        for item in deployment.placements
-        if profile_hosts is not None and item.host is not None
-    }
-
-    if stage == "composition":
-        if set(outputs) != {"composition_blueprint", "deployment_schema"}:
-            msg = "composition candidate must contain both Domain outputs"
-            raise InputError(msg)
-        return
-
-    image_build = outputs.get("image_build_result") or inputs.get("image_build_result")
-    if not isinstance(image_build, ImageBuildResult):
-        msg = f"{stage} candidate is missing the image-build result"
-        raise InputError(msg)
-    if (
-        image_build.blueprint_id != blueprint.blueprint_id
-        or image_build.deployment_schema_id != deployment.deployment_schema_id
-    ):
-        msg = "image-build result does not reference accepted composition outputs"
-        raise InputError(msg)
-    if {item.service_id for item in image_build.images} != {
-        item.service_id for item in blueprint.services
-    }:
-        msg = "image-build result does not cover the accepted services"
-        raise InputError(msg)
-    if any(
-        item.service_id in hosts
-        and item.architecture != hosts[item.service_id].architecture
-        for item in image_build.images
-    ):
-        msg = "image-build result does not match the accepted target architecture"
-        raise InputError(msg)
-    if stage == "image_build":
-        if set(outputs) != {"image_build_result"}:
-            msg = "image-build candidate must contain its result"
-            raise InputError(msg)
-        return
-
-    validation = outputs.get("validation_evidence") or inputs.get("validation_evidence")
-    if not isinstance(validation, ValidationEvidence):
-        msg = f"{stage} candidate is missing Validation evidence"
-        raise InputError(msg)
-    if (
-        validation.blueprint_id != blueprint.blueprint_id
-        or validation.deployment_schema_id != deployment.deployment_schema_id
-        or validation.image_build_result_id != image_build.image_build_result_id
-    ):
-        msg = "Validation evidence does not reference accepted prior outputs"
-        raise InputError(msg)
-    if stage == "cv":
-        if set(outputs) != {"validation_evidence"}:
-            msg = "CV candidate must contain Validation evidence"
-            raise InputError(msg)
-        return
-
-    deployment_result = outputs.get("deployment_result")
-    if not isinstance(deployment_result, DeploymentResult):
-        msg = "CD candidate must contain its deployment result"
-        raise InputError(msg)
-    if (
-        deployment_result.blueprint_id != blueprint.blueprint_id
-        or deployment_result.deployment_schema_id != deployment.deployment_schema_id
-        or deployment_result.image_build_result_id != image_build.image_build_result_id
-        or deployment_result.validation_evidence_id != validation.validation_evidence_id
-    ):
-        msg = "deployment result does not reference accepted prior outputs"
-        raise InputError(msg)
-    if {
-        (item.service_id, item.host) for item in deployment_result.deployment_records
-    } != {(item.service_id, item.host) for item in deployment.placements}:
-        msg = "deployment result does not cover every intended placement"
-        raise InputError(msg)
 
 
 def _accepted_envelope(  # noqa: PLR0913
@@ -1487,10 +1351,6 @@ def _adapter_environment(
     return environment, tuple(secrets)
 
 
-def enforce_jenkins_agent_boundary(descriptor: AdapterDescriptor) -> None:
-    enforce_domain_execution_boundary(expected_label=descriptor.agent_label)
-
-
 def execute_identified_stage(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
     *,
     repository: GitRepository,
@@ -1506,7 +1366,9 @@ def execute_identified_stage(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
         msg = "attempt root must not already exist"
         raise InputError(msg)
     descriptor, profile = load_stage_adapter(repository, descriptor_path)
-    enforce_jenkins_agent_boundary(descriptor)
+    enforce_domain_execution_boundary(
+        expected_label=STAGES[descriptor.stage].agent.label
+    )
     effective_work_limit_seconds = (
         profile.work_limit_seconds if work_limit_seconds is None else work_limit_seconds
     )
