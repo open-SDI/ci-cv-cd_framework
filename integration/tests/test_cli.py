@@ -51,8 +51,7 @@ def test_handoff_cli_exposes_only_non_secret_run_and_output_arguments() -> None:
 
 def test_cli_reads_the_descriptor_selected_agent_image() -> None:
     descriptor = (
-        Path(__file__).parents[2]
-        / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
+        Path(__file__).parents[2] / "deployment/jenkins/adapters/composition-v1.yaml"
     )
     completed = subprocess.run(
         ["sdi-integration", "adapter-image", "--descriptor", str(descriptor)],
@@ -99,6 +98,10 @@ def test_cli_writes_and_freshness_checks_contract_schemas(tmp_path: Path) -> Non
         "accepted-attempt-envelope-v1.schema.json",
         "adapter-descriptor-v1.schema.json",
         "composition-blueprint-v1.schema.json",
+        "composition-config-v1.schema.json",
+        "composition-evidence-v1.schema.json",
+        "composition-proposals-v1.schema.json",
+        "composition-settings-v1.schema.json",
         "deployment-result-v1.schema.json",
         "deployment-schema-v1.schema.json",
         "fixture-case-v1.schema.json",
@@ -108,6 +111,8 @@ def test_cli_writes_and_freshness_checks_contract_schemas(tmp_path: Path) -> Non
         "pipeline-integration-result-v1.schema.json",
         "pipeline-integration-run-request-v1.schema.json",
         "recovery-manifest-v1.schema.json",
+        "service-description-v1.schema.json",
+        "service-repository-manifest-v1.schema.json",
         "stage-adapter-request-v1.schema.json",
         "stage-adapter-response-v1.schema.json",
         "stage-profile-v1.schema.json",
@@ -138,19 +143,9 @@ def test_cli_writes_and_freshness_checks_contract_schemas(tmp_path: Path) -> Non
 
     profile_schema_path = tmp_path / "target-execution-profile-v1.schema.json"
     profile_schema = json.loads(profile_schema_path.read_text())
-    resources = profile_schema["$defs"]["ResourceCapacity"]
-    assert resources["minProperties"] == 1
-    assert profile_schema["$defs"]["NetworkLink"]["anyOf"] == [
-        {"required": ["latency_ms"]},
-        {"required": ["bandwidth_mbps"]},
-    ]
-    assert profile_schema["properties"]["network_links"]["minItems"] == 1
+    assert profile_schema["properties"]["hosts"]["minProperties"] == 1
     profile_schema_text = profile_schema_path.read_text()
     assert '"type": "null"' not in profile_schema_text
-    assert '"exclusiveMinimum": 0' in profile_schema_text
-    assert '"minimum": 0' in profile_schema_text
-    assert '"gt":' not in profile_schema_text
-    assert '"ge":' not in profile_schema_text
 
     request_schema = json.loads(
         (tmp_path / "stage-adapter-request-v1.schema.json").read_text()
@@ -172,7 +167,7 @@ def test_cli_writes_and_freshness_checks_contract_schemas(tmp_path: Path) -> Non
     }
     assert forbidden_request_fields.isdisjoint(request_schema["properties"])
     output_grant = request_schema["$defs"]["OutputGrant"]
-    assert "required" in output_grant["required"]
+    assert "role" in output_grant["required"]
 
     receipt_schema = json.loads(
         (tmp_path / "handoff-receipt-v1.schema.json").read_text()

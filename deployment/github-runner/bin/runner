@@ -275,6 +275,21 @@ runner_service_active() {
     esac
 }
 
+registration_value() {
+    value=$(sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
+        "$RUNNER_HOME/.runner" | head -n 1)
+    printf '%s\n' "${value:-unknown}"
+}
+
+show_registration() {
+    if [ ! -f "$RUNNER_HOME/.runner" ]; then
+        printf '%s\n' 'Runner registration: not configured'
+        return
+    fi
+    printf 'Runner repository: %s\nRunner name: %s\n' \
+        "$(registration_value gitHubUrl)" "$(registration_value agentName)"
+}
+
 unregister_runner() {
     load_installation
     check_host
@@ -351,6 +366,7 @@ case "$command" in
         ;;
     status)
         check_host
+        show_registration
         systemctl --user status sdi-github-runner.service
         ;;
     unregister)

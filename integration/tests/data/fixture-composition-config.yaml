@@ -1,0 +1,12 @@
+schema_version: sdi.composition-config/v1
+default_generator: luna
+generators:
+  luna:
+    model: gpt-6-luna
+    reasoning_effort: high
+    max_output_tokens: 32000
+    timeout_seconds: 300
+    max_context_bytes: 98304
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+discovery: {}

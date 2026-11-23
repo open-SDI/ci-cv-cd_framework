@@ -9,10 +9,10 @@
           "title": "Application Status",
           "type": "string"
         },
-        "location_id": {
+        "host": {
           "maxLength": 63,
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-          "title": "Location Id",
+          "title": "Host",
           "type": "string"
         },
         "service_id": {
@@ -24,7 +24,6 @@
       },
       "required": [
         "service_id",
-        "location_id",
         "application_status"
       ],
       "title": "FixtureDeploymentRecord",

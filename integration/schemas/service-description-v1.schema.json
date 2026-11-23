@@ -1,0 +1,413 @@
+{
+  "$defs": {
+    "AptRoute": {
+      "additionalProperties": false,
+      "description": "Debian packages installed with their carried version pins.",
+      "properties": {
+        "kind": {
+          "const": "apt",
+          "title": "Kind",
+          "type": "string"
+        },
+        "packages": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9+.-]+=\\S+$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Packages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "packages"
+      ],
+      "title": "AptRoute",
+      "type": "object"
+    },
+    "Architecture": {
+      "enum": [
+        "amd64",
+        "arm64",
+        "noarch"
+      ],
+      "type": "string"
+    },
+    "Artifact": {
+      "additionalProperties": false,
+      "description": "One fixed deployable variant of a service.",
+      "properties": {
+        "architectures": {
+          "items": {
+            "$ref": "#/$defs/Architecture"
+          },
+          "minItems": 1,
+          "title": "Architectures",
+          "type": "array"
+        },
+        "host_requirement": {
+          "$ref": "#/$defs/Baseline",
+          "title": "Host Requirement"
+        },
+        "invocation": {
+          "minLength": 1,
+          "title": "Invocation",
+          "type": "string"
+        },
+        "route": {
+          "discriminator": {
+            "mapping": {
+              "apt": "#/$defs/AptRoute",
+              "image": "#/$defs/ImageRoute",
+              "source": "#/$defs/SourceRoute"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AptRoute"
+            },
+            {
+              "$ref": "#/$defs/ImageRoute"
+            },
+            {
+              "$ref": "#/$defs/SourceRoute"
+            }
+          ],
+          "title": "Route"
+        }
+      },
+      "required": [
+        "architectures",
+        "route"
+      ],
+      "title": "Artifact",
+      "type": "object"
+    },
+    "Baseline": {
+      "additionalProperties": false,
+      "description": "Operating system and ROS baseline of a host or required by an artifact.",
+      "properties": {
+        "jetpack": {
+          "minLength": 1,
+          "title": "Jetpack",
+          "type": "string"
+        },
+        "os": {
+          "minLength": 1,
+          "title": "Os",
+          "type": "string"
+        },
+        "ros_distro": {
+          "minLength": 1,
+          "title": "Ros Distro",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "ros_distro"
+      ],
+      "title": "Baseline",
+      "type": "object"
+    },
+    "DeclaredProvenance": {
+      "additionalProperties": false,
+      "description": "Facts asserted by an accountable upstream source.",
+      "properties": {
+        "basis": {
+          "const": "declared",
+          "title": "Basis",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis",
+        "source"
+      ],
+      "title": "DeclaredProvenance",
+      "type": "object"
+    },
+    "Endpoint": {
+      "additionalProperties": false,
+      "description": "One ROS interface keyed by its exact name in a role map.",
+      "properties": {
+        "durability": {
+          "enum": [
+            "volatile",
+            "transient_local"
+          ],
+          "title": "Durability",
+          "type": "string"
+        },
+        "reliability": {
+          "enum": [
+            "reliable",
+            "best_effort"
+          ],
+          "title": "Reliability",
+          "type": "string"
+        },
+        "type": {
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Endpoint",
+      "type": "object"
+    },
+    "Frames": {
+      "additionalProperties": false,
+      "description": "Carried coordinate frame names.",
+      "properties": {
+        "global": {
+          "minLength": 1,
+          "title": "Global",
+          "type": "string"
+        },
+        "odometry": {
+          "minLength": 1,
+          "title": "Odometry",
+          "type": "string"
+        },
+        "robot_base": {
+          "minLength": 1,
+          "title": "Robot Base",
+          "type": "string"
+        }
+      },
+      "title": "Frames",
+      "type": "object"
+    },
+    "ImageRoute": {
+      "additionalProperties": false,
+      "description": "A container image reference.",
+      "properties": {
+        "kind": {
+          "const": "image",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reference": {
+          "minLength": 1,
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "title": "ImageRoute",
+      "type": "object"
+    },
+    "Implementation": {
+      "additionalProperties": false,
+      "description": "Carried identity of the upstream implementation.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "repository": {
+          "minLength": 1,
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "minLength": 1,
+          "title": "Revision",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "repository",
+        "revision"
+      ],
+      "title": "Implementation",
+      "type": "object"
+    },
+    "PlaceholderProvenance": {
+      "additionalProperties": false,
+      "description": "Facts that only exercise an interface; the label is carried.",
+      "properties": {
+        "basis": {
+          "const": "placeholder",
+          "title": "Basis",
+          "type": "string"
+        },
+        "note": {
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis",
+        "note"
+      ],
+      "title": "PlaceholderProvenance",
+      "type": "object"
+    },
+    "RoleMap": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Endpoint"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "type": "object"
+    },
+    "SourceRoute": {
+      "additionalProperties": false,
+      "description": "A source checkout built on the host.",
+      "properties": {
+        "kind": {
+          "const": "source",
+          "title": "Kind",
+          "type": "string"
+        },
+        "repository": {
+          "minLength": 1,
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "minLength": 1,
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "repository",
+        "revision"
+      ],
+      "title": "SourceRoute",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Front matter of one mobility service description.",
+  "properties": {
+    "action_clients": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Action Clients"
+    },
+    "action_servers": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Action Servers"
+    },
+    "artifacts": {
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+          "$ref": "#/$defs/Artifact"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 63
+      },
+      "title": "Artifacts",
+      "type": "object"
+    },
+    "depends_on": {
+      "items": {
+        "maxLength": 63,
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "devices": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Devices",
+      "type": "array"
+    },
+    "frames": {
+      "$ref": "#/$defs/Frames"
+    },
+    "implementation": {
+      "$ref": "#/$defs/Implementation"
+    },
+    "provenance": {
+      "discriminator": {
+        "mapping": {
+          "declared": "#/$defs/DeclaredProvenance",
+          "placeholder": "#/$defs/PlaceholderProvenance"
+        },
+        "propertyName": "basis"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DeclaredProvenance"
+        },
+        {
+          "$ref": "#/$defs/PlaceholderProvenance"
+        }
+      ],
+      "title": "Provenance"
+    },
+    "publishes": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Publishes"
+    },
+    "schema_version": {
+      "const": "sdi.service-description/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "service_clients": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Service Clients"
+    },
+    "service_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Service Id",
+      "type": "string"
+    },
+    "service_servers": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Service Servers"
+    },
+    "subscribes": {
+      "$ref": "#/$defs/RoleMap",
+      "title": "Subscribes"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "service_id",
+    "title",
+    "provenance"
+  ],
+  "title": "ServiceDescription",
+  "type": "object"
+}

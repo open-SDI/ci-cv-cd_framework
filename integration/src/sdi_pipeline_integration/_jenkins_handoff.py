@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -30,7 +29,7 @@ from ._handoff_contracts import (
     HandoffPhase,
     HandoffReceipt,
 )
-from ._json_input import parse_json
+from ._json_input import canonical_json, parse_json
 from ._local_dispatch import MAX_RESULT_BYTES, parse_pipeline_result, validate_bundle
 from ._result_contracts import PIPELINE_RESULT_PATH, PipelineIntegrationResult
 from ._run_input import identify_committed_run
@@ -167,19 +166,6 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _canonical_json(value: object) -> bytes:
-    return (
-        json.dumps(
-            value,
-            allow_nan=False,
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
-    ).encode()
-
-
 @final
 class _ReceiptWriter:
     def __init__(
@@ -215,7 +201,7 @@ class _ReceiptWriter:
             strict=True,
             extra="forbid",
         )
-        content = _canonical_json(receipt.model_dump(mode="json", exclude_none=True))
+        content = canonical_json(receipt.model_dump(mode="json", exclude_none=True))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{self._path.name}.",

@@ -342,7 +342,7 @@ def test_authority_rejects_shadowed_active_pin_assignments(tmp_path: Path) -> No
         ".github/workflows/pipeline-integration.yml",
         "deployment/github-runner/bin/runner",
         "deployment/jenkins/adapters/cd-fixture-v1.yaml",
-        "deployment/jenkins/adapters/composition-fixture-v1.yaml",
+        "deployment/jenkins/adapters/composition-v1.yaml",
         "deployment/jenkins/adapters/cv-fixture-v1.yaml",
         "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
         "deployment/jenkins/agents/Dockerfile",

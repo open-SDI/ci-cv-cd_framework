@@ -8,15 +8,15 @@ import json
 import os
 import sys
 import time
-import uuid
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from ._adapter_output import atomic_write
 from ._jenkins_agent_boundary import enforce_domain_execution_boundary
-from ._json_input import parse_json
+from ._json_input import canonical_json, parse_json
 from ._stage_contracts import (
     ASCII_CONTROL_LIMIT,
     ASCII_DELETE,
@@ -31,30 +31,6 @@ if TYPE_CHECKING:
     from importlib.resources.abc import Traversable
 
 MAX_REQUEST_BYTES = 128 * 1024
-
-
-def _canonical_json(value: object) -> bytes:
-    return (
-        json.dumps(
-            value,
-            allow_nan=False,
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
-    ).encode()
-
-
-def _atomic_write(root: Path, relative_path: str, content: bytes) -> None:
-    destination = root / relative_path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-    with temporary.open("xb") as stream:
-        stream.write(content)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(destination)
 
 
 def _load_request(path: Path) -> AdapterRequest:
@@ -178,7 +154,7 @@ def _response(  # noqa: PLR0913
         strict=True,
         extra="forbid",
     )
-    return _canonical_json(response.model_dump(mode="json"))
+    return canonical_json(response.model_dump(mode="json"))
 
 
 def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
@@ -208,11 +184,13 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
             produced_outputs=[],
             diagnostic_present=False,
         )
-        _atomic_write(output_root, "response.json", response)
+        atomic_write(output_root, "response.json", response)
         return
 
     case, case_root = selected
-    output_by_slot = {item.slot: item for item in request.outputs}
+    # Fixtures publish only Domain outputs, never optional Stage evidence.
+    domain_grants = [item for item in request.outputs if item.role == "domain_output"]
+    output_by_slot = {item.slot: item for item in domain_grants}
     if case.behavior == "absent_response":
         return
     if case.behavior == "crash":
@@ -220,17 +198,17 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
     if case.behavior == "timeout":
         time.sleep(request.work_limit_seconds + 60)
     if case.behavior == "malformed_response":
-        _atomic_write(output_root, "response.json", b"{malformed")
+        atomic_write(output_root, "response.json", b"{malformed")
         return
     if case.behavior == "undeclared_output":
-        _atomic_write(output_root, "undeclared.txt", b"undeclared Fixture output\n")
+        atomic_write(output_root, "undeclared.txt", b"undeclared Fixture output\n")
         return
     if case.behavior == "unsafe_output":
         (output_root / "unsafe-link").symlink_to("/dev/null")
         return
     if case.behavior == "oversize_output":
-        grant = request.outputs[0]
-        _atomic_write(output_root, grant.path, b"x" * (grant.max_bytes + 1))
+        grant = domain_grants[0]
+        atomic_write(output_root, grant.path, b"x" * (grant.max_bytes + 1))
         return
     if case.behavior == "missing_output":
         response = _response(
@@ -238,23 +216,23 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
             conclusion="succeeded",
             code=case.reason.code,
             summary=case.reason.summary,
-            produced_outputs=[item.slot for item in request.outputs],
+            produced_outputs=list(output_by_slot),
             diagnostic_present=False,
         )
-        _atomic_write(output_root, "response.json", response)
+        atomic_write(output_root, "response.json", response)
         return
     if case.behavior == "schema_mismatch":
-        for grant in request.outputs:
-            _atomic_write(output_root, grant.path, b"{}\n")
+        for grant in domain_grants:
+            atomic_write(output_root, grant.path, b"{}\n")
         response = _response(
             request,
             conclusion="succeeded",
             code=case.reason.code,
             summary=case.reason.summary,
-            produced_outputs=[item.slot for item in request.outputs],
+            produced_outputs=list(output_by_slot),
             diagnostic_present=False,
         )
-        _atomic_write(output_root, "response.json", response)
+        atomic_write(output_root, "response.json", response)
         return
     if case.behavior == "response_mismatch":
         response = json.loads(
@@ -268,11 +246,13 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
             )
         )
         response["correlation"]["attempt_number"] += 1
-        _atomic_write(output_root, "response.json", _canonical_json(response))
+        atomic_write(output_root, "response.json", canonical_json(response))
         return
-    if case.execution_conclusion == "succeeded" and set(output_by_slot) != {
-        item.slot for item in case.outputs
-    }:
+    if (
+        case.execution_conclusion == "succeeded"
+        and case.domain_outcome != "failed"
+        and set(output_by_slot) != {item.slot for item in case.outputs}
+    ):
         msg = "Fixture outputs do not match the request grants"
         raise InputError(msg)
 
@@ -285,7 +265,7 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
             expected_sha256=fixture_output.sha256,
             granted_size=grant.max_bytes,
         )
-        _atomic_write(output_root, grant.path, content)
+        atomic_write(output_root, grant.path, content)
 
     diagnostic = _read_fixture_payload(
         case_root,
@@ -306,7 +286,7 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
     ):
         msg = "Fixture diagnostic contains unsanitized control characters"
         raise InputError(msg)
-    _atomic_write(output_root, request.diagnostic.path, diagnostic)
+    atomic_write(output_root, request.diagnostic.path, diagnostic)
     response = _response(
         request,
         conclusion=case.execution_conclusion,
@@ -317,7 +297,7 @@ def run_adapter(  # noqa: C901, PLR0911, PLR0912, PLR0915
         produced_outputs=[item.slot for item in case.outputs],
         diagnostic_present=True,
     )
-    _atomic_write(output_root, "response.json", response)
+    atomic_write(output_root, "response.json", response)
 
 
 def _parser() -> argparse.ArgumentParser:

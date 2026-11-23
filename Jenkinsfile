@@ -23,7 +23,7 @@ if (runLimitSeconds < 180) {
 
 def stages = [
     [name: 'Composition', stage: 'composition', label: 'composition',
-     descriptor: 'deployment/jenkins/adapters/composition-fixture-v1.yaml',
+     descriptor: 'deployment/jenkins/adapters/composition-v1.yaml',
      workLimitSeconds: readPositiveSeconds(
          'JENKINS_COMPOSITION_WORK_LIMIT_SECONDS', env.JENKINS_COMPOSITION_WORK_LIMIT_SECONDS)],
     [name: 'Image build', stage: 'image_build', label: 'image-build',
@@ -46,14 +46,25 @@ def isTimeoutInterruption = { interruption ->
     }
 }
 
+// Each job clones its own repository, so the protected-main ancestry check runs
+// against the repository that submitted the run. The job names match
+// deployment/jenkins/jobs/pipeline-integration.groovy; this installation does
+// not bind the scm variable, so the URL is selected by job name.
 def checkoutSubmittedCommit = {
+    def repositoryUrl = [
+        'pipeline-integration': env.SDI_REPOSITORY_URL,
+        'pipeline-integration-fork': env.SDI_FORK_REPOSITORY_URL,
+    ][env.JOB_NAME]
+    if (!repositoryUrl) {
+        error("Job ${env.JOB_NAME} has no configured repository")
+    }
     checkout([
         $class: 'GitSCM',
         branches: [[name: env.RESOLVED_COMMIT_SHA]],
         extensions: [[$class: 'CloneOption', honorRefspec: true, noTags: true]],
         userRemoteConfigs: [[
             refspec: '+refs/heads/main:refs/remotes/origin/main',
-            url: env.SDI_REPOSITORY_URL,
+            url: repositoryUrl,
         ]],
     ])
     sh '''set -eu
@@ -64,12 +75,20 @@ git update-ref refs/heads/main "$RESOLVED_COMMIT_SHA"
 '''
 }
 
+// The Domain agents reach only the OpenAI endpoint, so Jenkins composes with
+// the config's default luna generator and passes no generator. The config is
+// read from the submitted commit, and its key comes from the sdi-openai-api-key
+// credential bound around the composition Stage only.
+def compositionConfigPath = 'integration/composition-config.yaml'
+
 def commonArguments = '''\
   --repository . \
   --requested-ref "$REQUESTED_GIT_REF" \
   --resolved-commit "$RESOLVED_COMMIT_SHA" \
   --run-request-path "$RUN_REQUEST_PATH" \
-  --execution-id "$EXECUTION_ID"'''
+  --execution-id "$EXECUTION_ID" \
+  --service-repository service-repository \
+  --composition-config ''' + "'${compositionConfigPath}'"
 
 def resourceNodes = [:]
 def acceptedStages = []
@@ -151,12 +170,8 @@ ${commonArguments} \\
                     }.join(' ')
                     priorArguments = "${priorArguments} --work-limit-seconds '${definition.workLimitSeconds}'"
                     def stageExecutionStatus = 0
-                    withEnv([
-                        "SDI_RUN_DEADLINE_EPOCH_MILLIS=${runDeadlineEpochMillis}",
-                    ]) {
-                        try {
-                            timeout(time: definition.workLimitSeconds + 60, unit: 'SECONDS') {
-                                stageExecutionStatus = sh(returnStatus: true, script: """set -eu
+                    def executeStage = {
+                        sh(returnStatus: true, script: """set -eu
 sdi-integration execute-jenkins-stage \\
 ${commonArguments} \\
   --descriptor-path '${definition.descriptor}' \\
@@ -164,6 +179,22 @@ ${commonArguments} \\
   ${priorArguments} \\
   --run-deadline-epoch-millis \"\$SDI_RUN_DEADLINE_EPOCH_MILLIS\" >/dev/null
 """)
+                    }
+                    withEnv([
+                        "SDI_RUN_DEADLINE_EPOCH_MILLIS=${runDeadlineEpochMillis}",
+                    ]) {
+                        try {
+                            timeout(time: definition.workLimitSeconds + 60, unit: 'SECONDS') {
+                                if (definition.stage == 'composition') {
+                                    withCredentials([string(
+                                        credentialsId: 'sdi-openai-api-key',
+                                        variable: 'OPENAI_API_KEY',
+                                    )]) {
+                                        stageExecutionStatus = executeStage()
+                                    }
+                                } else {
+                                    stageExecutionStatus = executeStage()
+                                }
                             }
                         } catch (FlowInterruptedException interruption) {
                             if (isTimeoutInterruption(interruption)

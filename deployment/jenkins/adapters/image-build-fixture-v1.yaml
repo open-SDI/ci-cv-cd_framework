@@ -6,6 +6,6 @@ entrypoint: sdi-fixture-adapter
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/image-build-v1.yaml
 stage_profile_version: sdi.image-build-stage-profile/v1
-stage_profile_sha256: 6257cb67ec169eee35b447ed58d0b2eb4f914ea083968b98c6c6c1ccdb73729c
+stage_profile_sha256: a9291d5f495bf1fc9d2fa67141c57fb62ed0e895b2a41fff18fe7f616d33ff3f
 agent_label: image-build
 secret_bindings: []

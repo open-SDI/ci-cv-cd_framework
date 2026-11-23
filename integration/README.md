@@ -19,7 +19,7 @@ uv run --project integration sdi-integration identify-run \
   --repository . \
   --requested-ref refs/heads/main \
   --resolved-commit "$GITHUB_SHA" \
-  --run-request-path runs/s-04/s-04-tc-03-c-01-fixture.yaml
+  --run-request-path runs/s-04/s-04-tc-03-c-05-fixture.yaml
 ```
 
 The repository must have one uncredentialed GitHub `origin` URL. Successful
@@ -40,56 +40,161 @@ uv run --project integration sdi-integration execute-stage \
   --repository . \
   --requested-ref refs/heads/main \
   --resolved-commit "$GITHUB_SHA" \
-  --run-request-path runs/s-04/s-04-tc-03-c-01-fixture.yaml \
-  --descriptor-path deployment/jenkins/adapters/composition-fixture-v1.yaml \
+  --run-request-path runs/s-04/s-04-tc-03-c-05-fixture.yaml \
+  --descriptor-path deployment/jenkins/adapters/composition-v1.yaml \
+  --service-repository service-repository \
   --attempt-root artifacts/composition-attempt
 ```
+
+Every Stage-executing command takes the same run-supplied composition inputs.
+`--service-repository` names a directory of `SDI.md` descriptions; the runtime
+copies every description into the composition Stage's inputs and gives the
+adapter a manifest of their paths, sizes, and digests. It refuses symbolic
+links, non-regular descriptions, and more than 256 files or 1 MiB.
+`--composition-config` is a repository path read at the resolved commit and
+defaults to `integration/composition-config.yaml`
+(`sdi.composition-config/v1`), so a run can only pair a reviewed model endpoint
+with the key variable that config names. The config names each generator with
+its model, limits, context budget, endpoint and key variable, the
+`default_generator`, and the `discovery` settings every generator shares. A run
+uses the default generator (luna) unless `--generator NAME` names another the
+config defines; an unknown name stops the run before launch. Nothing probes an
+endpoint or falls back to another generator. The runtime resolves the config to
+one declared, digest-checked input, `composition-settings.json`
+(`sdi.composition-settings/v1`): the config's path and SHA-256, the selected
+generator's name and settings, and the shared discovery settings. The committed
+`qwen` generator is a self-hosted endpoint that keeps live tests cheap; it is not
+a product choice. Discovery still embeds with OpenAI, so a qwen run also needs
+`OPENAI_API_KEY`.
 
 The adapter process exposes only:
 
 ```sh
-sdi-fixture-adapter run \
+sdi-composition-adapter run \
   --request request.json \
   --input-root inputs \
   --output-root candidate
 ```
 
-The accepted envelope records `execution_conclusion: succeeded`,
-`implementation_mode: fixture`, and `domain_outcome: not_evaluated` separately.
-The deterministic blueprint and deployment schema prove pipeline-interface
-handling only. They are not composition, deployment, Validation, or KPI evidence.
+## Implemented Composition
 
-## Dispatch The Four-Stage Fixture
+The composition descriptor selects `sdi-composition-adapter` with
+`implementation_mode: implemented`. The adapter validates the copied
+descriptions, discovers the ones the mission needs, asks the configured model
+for proposals over those, assesses them against the whole repository with the
+same rules as `assess-proposals`, and publishes the preferred proposal as the
+composition blueprint and deployment schema. The preferred proposal supports the
+most requirements, then has the fewest gaps; no performance evidence is
+available, so equal proposals keep the model's order. The blueprint records the
+`proposal_id` and each requirement's checked coverage status; each placement is
+`resolved` or `unresolved`.
+
+Discovery queries the service repository once per requirement, with its ID and
+original Shall statement, and once with the profile's architectures, devices,
+baselines and orchestrator interfaces. SQLite FTS5 BM25 ranks every
+description's title, interfaces and body; when the composition config's
+`discovery` has an `embeddings` block, cosine similarity over that endpoint's
+embeddings ranks them too, and reciprocal rank fusion merges the two. The
+committed config embeds with OpenAI's `text-embedding-3-small` for every
+generator, so every generator ranks descriptions the same way. The orchestrator's inputs, then
+each query's top three services in turn, are admitted along with every service
+that provides one of their inputs or that their `depends_on` names. Admission
+stops at the selected generator's `max_context_bytes`, a model-capacity limit,
+and nothing fills the rest, so the model sees and may choose only the selected
+descriptions. Without an `embeddings` block discovery is lexical only. With one,
+an unset key or a failed embeddings call fails the run before generation, unless
+`embeddings.on_unavailable: lexical` allows lexical-only discovery; the Stage's
+reason summary and the `generate-proposals` stderr then say so, besides
+`discovery.dense.status`.
+
+The runtime forwards only the selected generator's key variable and the
+embeddings key variable, and only when the descriptor's `secret_bindings` lists
+them; otherwise `dispatch-local` and the Jenkins preflight reject the run before
+any Stage starts. Each client reads only the key
+paired with its own endpoint, so a generator's key never reaches the embeddings
+endpoint and the embeddings key never reaches a generator. `HTTPS_PROXY`, `NO_PROXY`, and `SSL_CERT_FILE` are forwarded when
+set. A candidate holding the forwarded key's exact bytes is rejected.
+
+| Outcome code | Execution | Domain outcome | Published |
+| --- | --- | --- | --- |
+| `sdi.composition.preferred-proposal` | succeeded | succeeded | blueprint, deployment schema, evidence |
+| `sdi.composition.bounded-no-result` | succeeded | failed | evidence |
+| `sdi.composition.scoped-rejection` | succeeded | failed | evidence |
+| `sdi.composition.insufficient-proposals` | succeeded | failed | evidence |
+| `sdi.composition.discovery-no-result` | failed | not evaluated | diagnostic |
+| `sdi.composition.discovery-over-budget` | failed | not evaluated | diagnostic |
+| `sdi.composition.dense-discovery-unavailable` | failed | not evaluated | diagnostic |
+| `sdi.composition.invalid-service-description` | failed | not evaluated | diagnostic |
+| `sdi.composition.generation-invalid` | failed | not evaluated | diagnostic |
+| `sdi.composition.generation-refused` | failed | not evaluated | diagnostic |
+| `sdi.composition.provider-error` | failed | not evaluated | diagnostic |
+
+Discovery fails with no result when no query retrieves any description, and
+over budget when it retrieved some but none fits `max_context_bytes`; the
+diagnostic counts the descriptions selected, omitted and left out for the
+budget. A bounded result means generation reached `max_output_tokens`. A scoped
+rejection means every proposal lost all of its services to placement removals.
+`composition-evidence.json` (`sdi.composition-evidence/v1`, at most 256 KiB)
+records the repository's description digests, the discovery trace, the
+`composition_config_sha256`, the selected generator's name and resolved
+settings, the exact model request and response summary, and the
+complete assessment with its ranking order and, for each other eligible
+proposal, the criterion that ranked it lower. The discovery trace holds each
+query, its top ten fused, lexical and dense ranks, every selected description
+with its reason and size, every omitted one with its reason (`not retrieved` or
+`budget`), the input references left unexpanded, and the budget used. When no
+proposal is preferred and discovery omitted descriptions, the assessment reason
+says the result holds within the bounded supplied context. It is never an input
+to a later Stage. Each assessed service carries its chosen artifact's `route` as
+declared. A `mutable-artifact` finding marks a route that may install different
+content later: any apt route, an image without a digest, or a source revision
+that is not a full commit. It is read from the declared route only, never
+resolved against a registry, and never counts as a gap. Reading the repository
+fails rather than truncates at its limits, so the digests omit no description.
+Reason summaries and the diagnostic come from fixed templates
+and never repeat provider error text. Once the composition config is read, the
+diagnostic names its digest and the selected generator, model, reasoning effort,
+output limit, effective timeout and context budget, so a failed attempt still
+records the settings it ran with. A failed attempt publishes no evidence, and
+its diagnostic says so.
+
+Fixture cases match exact input digests and cannot recognize real output, so a
+Fixture Stage whose inputs include implemented output is skipped with
+`sdi.dependency.implemented-evidence`. A successful composition therefore ends
+the run with image build skipped and CV and CD blocked; the run still exits 0.
+
+## Dispatch A Local Run
 
 `dispatch-local` assigns one Execution ID, executes the reviewed composition,
 image-build, CV, and CD descriptors sequentially, and passes only exact accepted
 files along the least-required graph. It atomically publishes a complete archive
-candidate only after all attempts, Domain outputs, diagnostics, result metadata,
-and checksums validate:
+candidate only after all attempts, Domain outputs, evidence, diagnostics, result
+metadata, and checksums validate:
 
 ```sh
 uv run --project integration sdi-integration dispatch-local \
   --repository . \
   --requested-ref refs/heads/main \
   --resolved-commit "$GITHUB_SHA" \
-  --run-request-path runs/s-04/s-04-tc-03-c-01-fixture.yaml \
-  --bundle-root artifacts/s-04-tc-03-c-01
+  --run-request-path runs/s-04/s-04-tc-03-c-05-fixture.yaml \
+  --service-repository service-repository \
+  --bundle-root artifacts/s-04-tc-03-c-05
 ```
 
-The archive contains the fixed `pipeline-integration-result.json`, five small
-Domain handoff files, and four bounded diagnostics. The result is the manifest;
-its checksummed inventory covers every other archive file without a recursive
-self-digest. Revalidate the complete archive independently with:
+Export `OPENAI_API_KEY`, which luna and the embeddings use. To spend less while
+the self-hosted endpoint serves, add `--generator qwen` and also export
+`VLLM_KEY`. The result is the manifest; its checksummed inventory covers every
+other archive file without a recursive self-digest. Revalidate the complete
+archive independently with:
 
 ```sh
 uv run --project integration sdi-integration validate-bundle \
-  --bundle-root artifacts/s-04-tc-03-c-01
+  --bundle-root artifacts/s-04-tc-03-c-05
 ```
 
-Every attempt remains `implementation_mode: fixture` and
-`domain_outcome: not_evaluated`; the result explicitly records
-`kpi_evaluation: not_evaluated` and contains no overall Domain or six-combination
-verdict.
+Image-build, CV, and CD remain Fixtures. The result explicitly records
+`kpi_evaluation: not_evaluated` and contains no overall Domain or
+six-combination verdict.
 
 ## Jenkins Pipeline Operations
 
@@ -215,8 +320,8 @@ Candidate acceptance is transactional. A malformed, missing, changing, unsafe,
 undeclared, oversized, identity-mismatched, or schema-invalid candidate
 contributes no adapter-authored files. The resulting failed attempt explicitly
 records that no adapter response was accepted. An implemented adapter cannot
-consume unevaluated Fixture output, while an implemented output may feed a later
-Fixture during incremental replacement.
+consume unevaluated Fixture output, and a Fixture never consumes implemented
+output. A negative Domain outcome publishes no Domain output.
 
 External `SIGINT` or `SIGTERM` cancellation is the deliberate exception: the CLI
 immediately terminates the active adapter process tree, removes attempt-local and

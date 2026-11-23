@@ -9,13 +9,20 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixture_inputs import (
+    FIXTURE_COMPOSITION_CONFIG,
+    SUPPLIED_INPUT_ARGUMENTS,
+    write_fixture_composition_descriptor,
+    write_scripted_adapter,
+)
+
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 COMMITTED_FILES = (
-    "runs/s-04/s-04-tc-03-c-01-fixture.yaml",
-    "requirements/s-04/deliver-book-to-joe.yaml",
-    "profiles/s-04/waffle-native-arm64.yaml",
+    "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
+    "requirements/s-04/deliver-book-to-joe.md",
+    "profiles/s-04/waffle-jetson-arm64.yaml",
     "integration/stage-profiles/composition-v1.yaml",
-    "deployment/jenkins/adapters/composition-fixture-v1.yaml",
+    FIXTURE_COMPOSITION_CONFIG,
 )
 
 
@@ -46,6 +53,7 @@ def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
         destination = repository / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
+    write_fixture_composition_descriptor(repository)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Add composition Fixture")
     return repository, _git(repository, "rev-parse", "HEAD")
@@ -67,11 +75,12 @@ def _execute(
             "--resolved-commit",
             commit_sha,
             "--run-request-path",
-            "runs/s-04/s-04-tc-03-c-01-fixture.yaml",
+            "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
             "--descriptor-path",
-            "deployment/jenkins/adapters/composition-fixture-v1.yaml",
+            "deployment/jenkins/adapters/composition-v1.yaml",
             "--attempt-root",
             str(attempt_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
         ],
         check=False,
         capture_output=True,
@@ -124,25 +133,10 @@ def test_records_an_undeclared_candidate_without_salvaging_files(
     tmp_path: Path,
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
-    profile_path = repository / "integration/stage-profiles/composition-v1.yaml"
-    profile_digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
     adapter = tmp_path / "nonconforming-adapter"
-    adapter.write_text(
-        """#!/usr/bin/env python3
-import argparse
-import json
-from pathlib import Path
-
-parser = argparse.ArgumentParser()
-commands = parser.add_subparsers(dest="command", required=True)
-run = commands.add_parser("run")
-run.add_argument("--request", required=True)
-run.add_argument("--input-root", required=True)
-run.add_argument("--output-root", required=True)
-arguments = parser.parse_args()
-request = json.loads(Path(arguments.request).read_text())
-output = Path(arguments.output_root)
-(output / "undeclared.txt").write_text("must not be accepted")
+    write_scripted_adapter(
+        adapter,
+        """(output / "undeclared.txt").write_text("must not be accepted")
 response = {
     "schema_version": "sdi.stage-adapter-response/v1",
     "correlation": request["correlation"],
@@ -159,27 +153,8 @@ response = {
 }
 (output / "response.json").write_text(json.dumps(response))
 """,
-        encoding="utf-8",
     )
-    adapter.chmod(0o755)
-    descriptor_path = (
-        repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
-    )
-    descriptor_path.write_text(
-        f"""schema_version: sdi.adapter-descriptor/v1
-stage: composition
-implementation_mode: fixture
-image: ghcr.io/gurkhaman/sdi-stage-fixture@sha256:{"1" * 64}
-entrypoint: {adapter}
-process_contract_version: sdi.stage-adapter-process/v1
-stage_profile: integration/stage-profiles/composition-v1.yaml
-stage_profile_version: sdi.composition-stage-profile/v1
-stage_profile_sha256: {profile_digest}
-agent_label: composition
-secret_bindings: []
-""",
-        encoding="utf-8",
-    )
+    write_fixture_composition_descriptor(repository, entrypoint=adapter)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Select conformance adapter")
     commit_sha = _git(repository, "rev-parse", "HEAD")
@@ -201,29 +176,56 @@ secret_bindings: []
     )
 
 
+def test_classifies_off_contract_output_by_its_contract_failure(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _commit_fixture_repository(tmp_path)
+    adapter = tmp_path / "off-contract-adapter"
+    # Pydantic quotes the offending input, so the failure text names a device.
+    write_scripted_adapter(
+        adapter,
+        """(output / "outputs").mkdir()
+(output / "outputs/composition-evidence.json").write_text(
+    json.dumps({"devices": ["camera"]})
+)
+response = {
+    "schema_version": "sdi.stage-adapter-response/v1",
+    "correlation": request["correlation"],
+    "execution_conclusion": "succeeded",
+    "domain_outcome": "failed",
+    "reason": {
+        "category": "domain",
+        "code": "sdi.fixture.off-contract",
+        "summary": "The candidate evidence is outside its contract.",
+    },
+    "consumed_inputs": [item["slot"] for item in request["inputs"]],
+    "produced_outputs": ["composition_evidence"],
+    "diagnostic": {"present": False, "truncated": False},
+}
+(output / "response.json").write_text(json.dumps(response))
+""",
+    )
+    write_fixture_composition_descriptor(repository, entrypoint=adapter)
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "Select off-contract adapter")
+    commit_sha = _git(repository, "rev-parse", "HEAD")
+
+    completed = _execute(repository, commit_sha, tmp_path / "attempt")
+
+    assert completed.returncode == 0, completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["adapter_response_accepted"] is False
+    assert envelope["reason"]["code"] == "sdi.adapter.schema-mismatch"
+
+
 def test_records_a_replaced_candidate_root_without_accepting_its_response(
     tmp_path: Path,
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
-    profile_path = repository / "integration/stage-profiles/composition-v1.yaml"
-    profile_digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
     adapter = tmp_path / "root-replacing-adapter"
-    adapter.write_text(
-        """#!/usr/bin/env python3
-import argparse
-import json
-from pathlib import Path
-
-parser = argparse.ArgumentParser()
-commands = parser.add_subparsers(dest="command", required=True)
-run = commands.add_parser("run")
-run.add_argument("--request", required=True)
-run.add_argument("--input-root", required=True)
-run.add_argument("--output-root", required=True)
-arguments = parser.parse_args()
-request = json.loads(Path(arguments.request).read_text())
-output = Path(arguments.output_root)
-output.rmdir()
+    write_scripted_adapter(
+        adapter,
+        """output.rmdir()
 replacement = output.parent / "replacement"
 replacement.mkdir()
 output.symlink_to(replacement, target_is_directory=True)
@@ -243,27 +245,8 @@ response = {
 }
 (replacement / "response.json").write_text(json.dumps(response))
 """,
-        encoding="utf-8",
     )
-    adapter.chmod(0o755)
-    descriptor_path = (
-        repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
-    )
-    descriptor_path.write_text(
-        f"""schema_version: sdi.adapter-descriptor/v1
-stage: composition
-implementation_mode: fixture
-image: ghcr.io/gurkhaman/sdi-stage-fixture@sha256:{"1" * 64}
-entrypoint: {adapter}
-process_contract_version: sdi.stage-adapter-process/v1
-stage_profile: integration/stage-profiles/composition-v1.yaml
-stage_profile_version: sdi.composition-stage-profile/v1
-stage_profile_sha256: {profile_digest}
-agent_label: composition
-secret_bindings: []
-""",
-        encoding="utf-8",
-    )
+    write_fixture_composition_descriptor(repository, entrypoint=adapter)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Select root-replacing adapter")
     commit_sha = _git(repository, "rev-parse", "HEAD")
@@ -293,7 +276,7 @@ def test_rejects_unconfined_output_grants_before_invocation(
         profile.read_text().replace("outputs/composition-blueprint.json", profile_path),
         encoding="utf-8",
     )
-    descriptor = repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
+    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     descriptor.write_text(
         descriptor.read_text().replace(
             next(
@@ -320,7 +303,7 @@ def test_rejects_a_descriptor_profile_digest_mismatch_before_invocation(
     tmp_path: Path,
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
-    descriptor = repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
+    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     old_digest = next(
         line.split(": ", 1)[1]
         for line in descriptor.read_text().splitlines()

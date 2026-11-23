@@ -40,6 +40,12 @@ FAKE_AGENT_IMAGES = (
     "docker.io/example/cd@sha256:" + "4" * 64,
 )
 SMOKE_CHECK = JENKINS_ROOT / "bin" / "smoke-check"
+JOB_REPOSITORY_URLS = {
+    "/job/pipeline-integration/config.xml": "https://github.com/example/repository.git",
+    "/job/pipeline-integration-fork/config.xml": (
+        "https://github.com/example-fork/repository.git"
+    ),
+}
 
 
 def _load_yaml(path: Path) -> Mapping[str, Any]:
@@ -90,7 +96,7 @@ def _write_fake_deployment_tools(fake_bin: Path) -> None:
     uv.write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
-        "  *composition-fixture-v1.yaml) "
+        "  *composition-v1.yaml) "
         f"printf '{FAKE_AGENT_IMAGES[0]}\\n' ;;\n"
         "  *image-build-fixture-v1.yaml) "
         f"printf '{FAKE_AGENT_IMAGES[1]}\\n' ;;\n"
@@ -177,7 +183,12 @@ def _assert_single_agent_reconciliation(
                 body = b'{"crumbRequestField":"Jenkins-Crumb","crumb":"test"}'
             elif self.path.startswith("/queue/api/json"):
                 body = b'{"items":[]}'
-            elif self.path.startswith("/job/pipeline-integration/api/json"):
+            elif self.path.startswith(
+                (
+                    "/job/pipeline-integration/api/json",
+                    "/job/pipeline-integration-fork/api/json",
+                )
+            ):
                 body = b'{"builds":[]}'
             elif self.path.startswith("/api/json"):
                 body = b'{"quietingDown":false}'
@@ -256,6 +267,7 @@ def _assert_stack_lifecycle_log(lifecycle_log: str) -> None:
 def test_controller_image_and_complete_plugin_set_are_exactly_pinned() -> None:
     dockerfile = (JENKINS_ROOT / "controller" / "Dockerfile").read_text()
     assert f"FROM {EXPECTED_CONTROLLER_IMAGE}" in dockerfile
+    assert "LABEL org.sdi.project=ci-cv-cd_framework" in dockerfile
     assert "jenkins-plugin-cli --latest=false" in dockerfile
 
     plugin_lines = [
@@ -286,6 +298,14 @@ def test_compose_exposes_only_loopback_http_and_persists_only_controller_state()
     assert controller["ports"] == ["127.0.0.1:${JENKINS_HTTP_PORT}:8080"]
     assert controller["restart"] == "no"
     assert controller["volumes"] == ["jenkins-home:/var/jenkins_home"]
+    assert controller["secrets"] == [
+        "jenkins-admin-password",
+        "jenkins-handoff-password",
+        "openai-api-key",
+    ]
+    assert compose["secrets"]["openai-api-key"] == {
+        "file": "${JENKINS_OPENAI_API_KEY_FILE}"
+    }
     assert set(controller["environment"]) >= {
         "JENKINS_PIPELINE_RUN_LIMIT_SECONDS",
         "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS",
@@ -321,6 +341,10 @@ def test_jcasc_owns_zero_executor_security_and_retention_defaults() -> None:
                     {
                         "key": "SDI_REPOSITORY_URL",
                         "value": "${JENKINS_REPOSITORY_URL}",
+                    },
+                    {
+                        "key": "SDI_FORK_REPOSITORY_URL",
+                        "value": "${JENKINS_FORK_REPOSITORY_URL}",
                     },
                     {
                         "key": "JENKINS_PIPELINE_RUN_LIMIT_SECONDS",
@@ -372,10 +396,31 @@ def test_jcasc_owns_zero_executor_security_and_retention_defaults() -> None:
             "providedEnv": {
                 "HANDOFF_USER": "${JENKINS_HANDOFF_ID}",
                 "REPOSITORY_URL": "${JENKINS_REPOSITORY_URL}",
+                "FORK_REPOSITORY_URL": "${JENKINS_FORK_REPOSITORY_URL}",
             }
         },
         {"file": "/usr/local/share/jenkins/job-dsl/pipeline-integration.groovy"},
     ]
+    assert casc["credentials"] == {
+        "system": {
+            "domainCredentials": [
+                {
+                    "credentials": [
+                        {
+                            "string": {
+                                "scope": "GLOBAL",
+                                "id": "sdi-openai-api-key",
+                                "description": (
+                                    "OpenAI API key bound around the composition Stage"
+                                ),
+                                "secret": "${openai-api-key}",
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    }
     assert casc["security"]["apiToken"] == {
         "creationOfLegacyTokenEnabled": False,
         "tokenGenerationOnCreationEnabled": False,
@@ -399,11 +444,13 @@ def test_job_dsl_defines_the_fixed_non_secret_handoff_contract() -> None:
 
     parameter_names = set(re.findall(r"stringParam\('([A-Z_]+)'", job_dsl))
     assert parameter_names == EXPECTED_HANDOFF_PARAMETERS
-    assert "pipelineJob('pipeline-integration')" in job_dsl
+    assert "'pipeline-integration': REPOSITORY_URL," in job_dsl
+    assert "'pipeline-integration-fork': FORK_REPOSITORY_URL," in job_dsl
+    assert "pipelineJob(jobName)" in job_dsl
     assert "disableConcurrentBuilds()" in job_dsl
     assert "artifactDaysToKeep(90)" in job_dsl
     assert "daysToKeep(90)" in job_dsl
-    assert "url(REPOSITORY_URL)" in job_dsl
+    assert "url(repositoryUrl)" in job_dsl
     assert "refspec('+refs/heads/main:refs/remotes/origin/main')" in job_dsl
     assert "branch('${RESOLVED_COMMIT_SHA}')" in job_dsl
     assert "honorRefspec()" in job_dsl
@@ -428,7 +475,10 @@ def test_root_pipeline_is_a_thin_scheduler_over_public_cli_operations() -> None:
     assert "branches: [[name: env.RESOLVED_COMMIT_SHA]]" in pipeline
     assert "honorRefspec: true" in pipeline
     assert "noTags: true" in pipeline
-    assert "url: env.SDI_REPOSITORY_URL" in pipeline
+    assert "'pipeline-integration': env.SDI_REPOSITORY_URL," in pipeline
+    assert "'pipeline-integration-fork': env.SDI_FORK_REPOSITORY_URL," in pipeline
+    assert "][env.JOB_NAME]" in pipeline
+    assert "url: repositoryUrl," in pipeline
     assert "env.JENKINS_PIPELINE_RUN_LIMIT_SECONDS" in pipeline
     assert "timeout(time: runLimitSeconds, unit: 'SECONDS')" in pipeline
     assert "timeout(time: schedulingLimitSeconds, unit: 'SECONDS')" in pipeline
@@ -548,7 +598,8 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
                         ]
                     }
                 ).encode()
-            elif self.path == "/job/pipeline-integration/config.xml":
+            elif self.path in JOB_REPOSITORY_URLS:
+                repository_url = JOB_REPOSITORY_URLS[self.path]
                 parameters = "".join(
                     "<hudson.model.StringParameterDefinition>"
                     f"<name>{name}</name>"
@@ -573,7 +624,7 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
                     "</properties><logRotator><daysToKeep>90</daysToKeep>"
                     "<artifactDaysToKeep>90</artifactDaysToKeep></logRotator>"
                     "<definition><scm><userRemoteConfigs><hudson.plugins.git."
-                    "UserRemoteConfig><url>https://github.com/example/repository.git</url>"
+                    f"UserRemoteConfig><url>{repository_url}</url>"
                     "<refspec>+refs/heads/main:refs/remotes/origin/main</refspec>"
                     "</hudson.plugins.git.UserRemoteConfig></userRemoteConfigs>"
                     "<branches><hudson.plugins.git.BranchSpec>"
@@ -592,7 +643,10 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
                 ).encode()
                 self._respond(200, body, "application/xml")
                 return
-            elif self.path == "/job/pipeline-integration/api/json":
+            elif self.path in {
+                "/job/pipeline-integration/api/json",
+                "/job/pipeline-integration-fork/api/json",
+            }:
                 body = b"{}"
             elif self.path == "/script":
                 self._respond(403, b"")
@@ -654,6 +708,8 @@ def test_live_check_compiles_the_tracked_jenkinsfile_with_workflow_cps(  # noqa:
         handoff_password,
         "--repository-url",
         "https://github.com/example/repository.git",
+        "--fork-repository-url",
+        "https://github.com/example-fork/repository.git",
         "--plugin-lock",
         plugin_lock,
         "--casc",
@@ -697,6 +753,9 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
     handoff_secret.write_text("handoff-secret\n")
     admin_secret.chmod(0o600)
     handoff_secret.chmod(0o644)
+    openai_secret = tmp_path / "openai-api-key"
+    openai_secret.write_text("openai-api-key\n")
+    openai_secret.chmod(0o600)
     agent_secrets = {
         name: tmp_path / f"{name}-agent-secret"
         for name in ("integration", "ci", "image-build", "cv", "cd")
@@ -718,6 +777,7 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
         "JENKINS_ADMIN_ID=administrator\n"
         "JENKINS_HANDOFF_ID=github-handoff\n"
         "JENKINS_REPOSITORY_URL=https://github.com/example/repository.git\n"
+        "JENKINS_FORK_REPOSITORY_URL=https://github.com/example-fork/repository.git\n"
         "JENKINS_AGENT_CONTROLLER_URL=http://controller:8080\n"
         "JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400\n"
         "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600\n"
@@ -726,6 +786,7 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
         "JENKINS_CD_WORK_LIMIT_SECONDS=900\n"
         f"JENKINS_ADMIN_PASSWORD_FILE={admin_secret}\n"
         f"JENKINS_HANDOFF_PASSWORD_FILE={handoff_secret}\n"
+        f"JENKINS_OPENAI_API_KEY_FILE={openai_secret}\n"
         f"JENKINS_INTEGRATION_AGENT_SECRET_FILE={agent_secrets['integration']}\n"
         f"JENKINS_CI_AGENT_SECRET_FILE={agent_secrets['ci']}\n"
         f"JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE={agent_secrets['image-build']}\n"
@@ -776,6 +837,51 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
     assert "compose" in validation_log
     assert "config --quiet" in validation_log
     assert f"images={'|'.join(FAKE_AGENT_IMAGES)}" in validation_log
+
+    openai_secret.chmod(0o640)
+    completed = subprocess.run(
+        [JENKINS_ROOT / "bin" / "stack", "--config", config, "validate"],
+        check=False,
+        capture_output=True,
+        env={
+            "DOCKER_LOG": str(docker_log),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+        text=True,
+    )
+    assert completed.returncode == 2
+    assert "must not be accessible by group or other users" in completed.stderr
+    openai_secret.chmod(0o600)
+
+    valid_config = config.read_text()
+    for fork_url, message in (
+        (
+            "https://github.com/example/repository.git",
+            "JENKINS_REPOSITORY_URL and JENKINS_FORK_REPOSITORY_URL must differ",
+        ),
+        (
+            "https://github.com/example-fork@token/repository.git",
+            "JENKINS_FORK_REPOSITORY_URL must not contain credentials",
+        ),
+    ):
+        config.write_text(
+            valid_config.replace(
+                "https://github.com/example-fork/repository.git", fork_url
+            )
+        )
+        completed = subprocess.run(
+            [JENKINS_ROOT / "bin" / "stack", "--config", config, "validate"],
+            check=False,
+            capture_output=True,
+            env={
+                "DOCKER_LOG": str(docker_log),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            },
+            text=True,
+        )
+        assert completed.returncode == 2
+        assert message in completed.stderr
+    config.write_text(valid_config)
 
     agent_secrets["cd"].unlink()
     preflight = subprocess.run(
@@ -922,3 +1028,13 @@ def test_stack_validate_uses_compose_and_rejects_insecure_secret_files(  # noqa:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_smoke_prunes_only_dangling_sdi_images() -> None:
+    smoke = (JENKINS_ROOT / "bin" / "smoke").read_text()
+    assert (
+        "docker image prune --force \\\n"
+        "        --filter label=org.sdi.project=ci-cv-cd_framework"
+    ) in smoke
+    assert "prune --all" not in smoke
+    assert "builder prune" not in smoke

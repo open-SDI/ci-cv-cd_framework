@@ -8,6 +8,7 @@ from __future__ import annotations
 from io import StringIO
 from typing import TYPE_CHECKING, Any, cast
 
+from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, ScalarNode, SequenceNode
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from ruamel.yaml.nodes import Node
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
+FRONT_MATTER_FENCE = "---\n"
 MAX_NESTING_DEPTH = 32
 MAX_NODE_COUNT = 50_000
 STANDARD_TAGS = {
@@ -50,6 +52,17 @@ NESTING_END_TOKENS = (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)
 
 class InputError(ValueError):
     """A safe validation error for an accepted input boundary."""
+
+
+def validate_contract[ModelT: BaseModel](
+    model: type[ModelT], document: object, source: str
+) -> ModelT:
+    """Validate a parsed document strictly against a contract, naming its source."""
+    try:
+        return model.model_validate(document, strict=True, extra="forbid")
+    except ValidationError as error:
+        msg = f"{source}: contract validation failed: {error}"
+        raise InputError(msg) from error
 
 
 def _yaml() -> YAML:
@@ -163,3 +176,25 @@ def parse_yaml(raw: bytes, path: str) -> dict[str, Any]:
         msg = f"{path}: YAML document root must be a mapping"
         raise InputError(msg)
     return cast("dict[str, Any]", loaded)
+
+
+def parse_front_matter(raw: bytes, path: str) -> tuple[dict[str, Any], str]:
+    """Parse a Markdown file's YAML front matter and return it with the body."""
+    if len(raw) > MAX_INPUT_BYTES:
+        msg = f"{path}: file exceeds {MAX_INPUT_BYTES} bytes"
+        raise InputError(msg)
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        msg = f"{path}: file is not valid UTF-8"
+        raise InputError(msg) from error
+    end = text.find(f"\n{FRONT_MATTER_FENCE}", len(FRONT_MATTER_FENCE) - 1)
+    if not text.startswith(FRONT_MATTER_FENCE) or end == -1:
+        msg = f"{path}: expected YAML front matter between --- lines"
+        raise InputError(msg)
+    body = text[end + 1 + len(FRONT_MATTER_FENCE) :]
+    if not body.strip():
+        msg = f"{path}: Markdown body is empty"
+        raise InputError(msg)
+    front_matter = text[len(FRONT_MATTER_FENCE) : end + 1].encode()
+    return parse_yaml(front_matter, path), body

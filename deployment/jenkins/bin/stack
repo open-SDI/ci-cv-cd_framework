@@ -96,6 +96,7 @@ case "$action" in
         JENKINS_ADMIN_ID=unused
         JENKINS_HANDOFF_ID=unused
         JENKINS_REPOSITORY_URL=https://github.com/unused/unused.git
+        JENKINS_FORK_REPOSITORY_URL=https://github.com/unused/unused.git
         JENKINS_AGENT_CONTROLLER_URL=http://controller:8080
         JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400
         JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600
@@ -104,6 +105,7 @@ case "$action" in
         JENKINS_CD_WORK_LIMIT_SECONDS=900
         JENKINS_ADMIN_PASSWORD_FILE=/dev/null
         JENKINS_HANDOFF_PASSWORD_FILE=/dev/null
+        JENKINS_OPENAI_API_KEY_FILE=/dev/null
         JENKINS_INTEGRATION_AGENT_SECRET_FILE=/dev/null
         JENKINS_CI_AGENT_SECRET_FILE=/dev/null
         JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=/dev/null
@@ -115,12 +117,14 @@ case "$action" in
         JENKINS_CD_AGENT_IMAGE=unused
         JENKINS_AGENT_NETWORK_INTERNAL=true
         export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
-        export JENKINS_REPOSITORY_URL JENKINS_AGENT_CONTROLLER_URL
+        export JENKINS_REPOSITORY_URL JENKINS_FORK_REPOSITORY_URL
+        export JENKINS_AGENT_CONTROLLER_URL
         export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
         export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
         export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
         export JENKINS_CD_WORK_LIMIT_SECONDS
         export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
+        export JENKINS_OPENAI_API_KEY_FILE
         export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
         export JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE JENKINS_CV_AGENT_SECRET_FILE
         export JENKINS_CD_AGENT_SECRET_FILE
@@ -155,6 +159,7 @@ JENKINS_HTTP_PORT=
 JENKINS_ADMIN_ID=
 JENKINS_HANDOFF_ID=
 JENKINS_REPOSITORY_URL=
+JENKINS_FORK_REPOSITORY_URL=
 JENKINS_AGENT_CONTROLLER_URL=
 JENKINS_PIPELINE_RUN_LIMIT_SECONDS=
 JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=
@@ -163,6 +168,7 @@ JENKINS_CV_WORK_LIMIT_SECONDS=
 JENKINS_CD_WORK_LIMIT_SECONDS=
 JENKINS_ADMIN_PASSWORD_FILE=
 JENKINS_HANDOFF_PASSWORD_FILE=
+JENKINS_OPENAI_API_KEY_FILE=
 JENKINS_INTEGRATION_AGENT_SECRET_FILE=
 JENKINS_CI_AGENT_SECRET_FILE=
 JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=
@@ -176,6 +182,7 @@ while IFS='=' read -r key value; do
         JENKINS_ADMIN_ID) JENKINS_ADMIN_ID=$value ;;
         JENKINS_HANDOFF_ID) JENKINS_HANDOFF_ID=$value ;;
         JENKINS_REPOSITORY_URL) JENKINS_REPOSITORY_URL=$value ;;
+        JENKINS_FORK_REPOSITORY_URL) JENKINS_FORK_REPOSITORY_URL=$value ;;
         JENKINS_AGENT_CONTROLLER_URL) JENKINS_AGENT_CONTROLLER_URL=$value ;;
         JENKINS_PIPELINE_RUN_LIMIT_SECONDS) JENKINS_PIPELINE_RUN_LIMIT_SECONDS=$value ;;
         JENKINS_COMPOSITION_WORK_LIMIT_SECONDS) JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=$value ;;
@@ -184,6 +191,7 @@ while IFS='=' read -r key value; do
         JENKINS_CD_WORK_LIMIT_SECONDS) JENKINS_CD_WORK_LIMIT_SECONDS=$value ;;
         JENKINS_ADMIN_PASSWORD_FILE) JENKINS_ADMIN_PASSWORD_FILE=$value ;;
         JENKINS_HANDOFF_PASSWORD_FILE) JENKINS_HANDOFF_PASSWORD_FILE=$value ;;
+        JENKINS_OPENAI_API_KEY_FILE) JENKINS_OPENAI_API_KEY_FILE=$value ;;
         JENKINS_INTEGRATION_AGENT_SECRET_FILE) JENKINS_INTEGRATION_AGENT_SECRET_FILE=$value ;;
         JENKINS_CI_AGENT_SECRET_FILE) JENKINS_CI_AGENT_SECRET_FILE=$value ;;
         JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE) JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$value ;;
@@ -198,6 +206,7 @@ for value in \
     "$JENKINS_ADMIN_ID" \
     "$JENKINS_HANDOFF_ID" \
     "$JENKINS_REPOSITORY_URL" \
+    "$JENKINS_FORK_REPOSITORY_URL" \
     "$JENKINS_AGENT_CONTROLLER_URL" \
     "$JENKINS_PIPELINE_RUN_LIMIT_SECONDS" \
     "$JENKINS_COMPOSITION_WORK_LIMIT_SECONDS" \
@@ -206,6 +215,7 @@ for value in \
     "$JENKINS_CD_WORK_LIMIT_SECONDS" \
     "$JENKINS_ADMIN_PASSWORD_FILE" \
     "$JENKINS_HANDOFF_PASSWORD_FILE" \
+    "$JENKINS_OPENAI_API_KEY_FILE" \
     "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
     "$JENKINS_CI_AGENT_SECRET_FILE" \
     "$JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE" \
@@ -249,13 +259,19 @@ done
 [ "$JENKINS_ADMIN_ID" != "$JENKINS_HANDOFF_ID" ] || \
     fail 'administrator and handoff user IDs must differ'
 
-case "$JENKINS_REPOSITORY_URL" in
-    https://github.com/*/*.git) ;;
-    *) fail 'JENKINS_REPOSITORY_URL must be an HTTPS GitHub clone URL' ;;
-esac
-case "$JENKINS_REPOSITORY_URL" in
-    *@*) fail 'JENKINS_REPOSITORY_URL must not contain credentials' ;;
-esac
+validate_repository_url() {
+    case "$2" in
+        https://github.com/*/*.git) ;;
+        *) fail "$1 must be an HTTPS GitHub clone URL" ;;
+    esac
+    case "$2" in
+        *@*) fail "$1 must not contain credentials" ;;
+    esac
+}
+validate_repository_url JENKINS_REPOSITORY_URL "$JENKINS_REPOSITORY_URL"
+validate_repository_url JENKINS_FORK_REPOSITORY_URL "$JENKINS_FORK_REPOSITORY_URL"
+[ "$JENKINS_REPOSITORY_URL" != "$JENKINS_FORK_REPOSITORY_URL" ] || \
+    fail 'JENKINS_REPOSITORY_URL and JENKINS_FORK_REPOSITORY_URL must differ'
 
 command -v python3 >/dev/null 2>&1 || fail 'Python 3 is required'
 python3 - "$JENKINS_AGENT_CONTROLLER_URL" <<'PY' || \
@@ -519,10 +535,12 @@ case "$action" in
     start-controller)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_OPENAI_API_KEY_FILE"
         ;;
     preflight)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_OPENAI_API_KEY_FILE"
         for secret_file in \
             "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
             "$JENKINS_CI_AGENT_SECRET_FILE" \
@@ -553,6 +571,7 @@ case "$action" in
     *)
         validate_secret_file "$JENKINS_ADMIN_PASSWORD_FILE"
         validate_secret_file "$JENKINS_HANDOFF_PASSWORD_FILE"
+        validate_secret_file "$JENKINS_OPENAI_API_KEY_FILE"
         registration_secrets=':'
         for secret_file in \
             "$JENKINS_INTEGRATION_AGENT_SECRET_FILE" \
@@ -587,18 +606,20 @@ descriptor_image() {
         fail "invalid adapter descriptor: $descriptor"
 }
 
-JENKINS_COMPOSITION_AGENT_IMAGE=$(descriptor_image composition-fixture-v1.yaml)
+JENKINS_COMPOSITION_AGENT_IMAGE=$(descriptor_image composition-v1.yaml)
 JENKINS_IMAGE_BUILD_AGENT_IMAGE=$(descriptor_image image-build-fixture-v1.yaml)
 JENKINS_CV_AGENT_IMAGE=$(descriptor_image cv-fixture-v1.yaml)
 JENKINS_CD_AGENT_IMAGE=$(descriptor_image cd-fixture-v1.yaml)
 
 export JENKINS_HTTP_PORT JENKINS_ADMIN_ID JENKINS_HANDOFF_ID
-export JENKINS_REPOSITORY_URL JENKINS_AGENT_CONTROLLER_URL
+export JENKINS_REPOSITORY_URL JENKINS_FORK_REPOSITORY_URL
+export JENKINS_AGENT_CONTROLLER_URL
 export JENKINS_PIPELINE_RUN_LIMIT_SECONDS
 export JENKINS_COMPOSITION_WORK_LIMIT_SECONDS
 export JENKINS_IMAGE_BUILD_WORK_LIMIT_SECONDS JENKINS_CV_WORK_LIMIT_SECONDS
 export JENKINS_CD_WORK_LIMIT_SECONDS
 export JENKINS_ADMIN_PASSWORD_FILE JENKINS_HANDOFF_PASSWORD_FILE
+export JENKINS_OPENAI_API_KEY_FILE
 export JENKINS_INTEGRATION_AGENT_SECRET_FILE JENKINS_CI_AGENT_SECRET_FILE
 export JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE JENKINS_CV_AGENT_SECRET_FILE
 export JENKINS_CD_AGENT_SECRET_FILE
@@ -742,6 +763,7 @@ case "$action" in
             --handoff-id "$JENKINS_HANDOFF_ID" \
             --handoff-password-file "$JENKINS_HANDOFF_PASSWORD_FILE" \
             --repository-url "$JENKINS_REPOSITORY_URL" \
+            --fork-repository-url "$JENKINS_FORK_REPOSITORY_URL" \
             --plugin-lock "$root/controller/plugins.txt" \
             --casc "$root/casc/jenkins.yaml" \
             --jenkinsfile "$repository_root/Jenkinsfile"

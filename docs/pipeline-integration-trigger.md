@@ -22,15 +22,22 @@ Before enabling dispatch:
    machine user's API token, not its password.
 7. Require approval for every external fork workflow and never approve untrusted
    workflow code for this repository-scoped self-hosted runner.
-8. Register only the dedicated runner described in
+8. Register only the repository's dedicated runner described in
    `deployment/github-runner/README.md` with default labels disabled and the sole
    custom label `sdi-jenkins-handoff`.
 9. Permit no other repository workflow to target `sdi-jenkins-handoff`.
 
-For the tracked local Jenkins deployment, use the loopback base URL, job path
-`pipeline-integration`, repository identity
-`github.com/open-SDI/ci-cv-cd_framework`, and username `github-handoff`. The
-runner must be on the Jenkins host because Jenkins is not externally published.
+For the tracked local Jenkins deployment, use the loopback base URL and
+username `github-handoff`. Upstream uses job path `pipeline-integration` and
+repository identity `github.com/open-SDI/ci-cv-cd_framework`; the fork uses job
+path `pipeline-integration-fork` and repository identity
+`github.com/gurkhaman/ci-cv-cd_framework`. Each repository has its own runner
+account and registration. Runners must be on the Jenkins host because Jenkins is
+not externally published.
+
+Both repositories share one set of agent images, built from fork `main`.
+Dispatch on upstream only after a sync pull request has brought upstream `main`
+level with the fork `main` commit those images were built from.
 
 The workflow's job-level `github.ref == 'refs/heads/main'` condition prevents a
 non-`main` dispatch from being routed to the privileged runner or requesting the
@@ -81,7 +88,7 @@ The successful response contains `workflow_run_id`, API `run_url`, and exact
 browser `html_url`. Persist that returned identity rather than inferring a run
 from timestamps or listing order.
 
-## Dispatch The Six S-04 Fixtures
+## Dispatch The Six S-04 Runs
 
 The reviewed request paths, in sequential helper order, are:
 
@@ -106,10 +113,10 @@ aggregate result, Domain verdict, or KPI claim.
 
 ## Observe And Retrieve
 
-A queued run may be waiting for environment approval, for the dedicated runner
-to become idle, or for an offline runner to reconnect. GitHub is authoritative
-for this state; an absent Jenkins queue item is expected until the visible
-handoff step reaches its `submitting` phase.
+A queued run may be waiting for environment approval, for the repository's
+dedicated runner to become idle, or for an offline runner to reconnect. GitHub
+is authoritative for this state; an absent Jenkins queue item is expected until
+the visible handoff step reaches its `submitting` phase.
 
 Observe the exact run:
 
@@ -171,8 +178,10 @@ not promise a Pipeline integration result. An always-run publication step makes
 the available receipt retrievable when GitHub still permits post-cancellation
 steps to complete.
 
-Every current Stage uses a deterministic Fixture. Fixture files prove only the
-pipeline interface and evidence handling. They are not proof of a real Domain
-capability, CV verdict, deployment outcome, supported-combination KPI, or any
-aggregate Domain result. The summary therefore always states
-`KPI evaluation: not evaluated`.
+The composition Stage is implemented and calls the default generator of the
+pipeline's composition config. Image build, CV, and CD use deterministic
+Fixtures, which never consume real composition output, so a successful
+composition leaves them skipped. Fixture files prove only the pipeline interface
+and evidence handling. They are not proof of a real Domain capability, CV
+verdict, deployment outcome, supported-combination KPI, or any aggregate Domain
+result. The summary therefore always states `KPI evaluation: not evaluated`.

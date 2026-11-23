@@ -15,59 +15,25 @@ RUN_REQUEST = """\
 schema_version: sdi.pipeline-integration-run-request/v1
 scenario_id: S-04
 testcase_id: TC-03
-requirements_specification: requirements/delivery.yaml
+requirements_specification: requirements/delivery.md
 combination:
   combination_id: C-01
   target_profile: profiles/waffle-native-arm64.yaml
 """
 
 REQUIREMENTS_SPECIFICATION = """\
+---
 schema_version: sdi.mobility-requirements-specification/v1
 document_version: 1
-purpose: Define a deterministic delivery-navigation Fixture mission.
-scope: Pipeline-interface validation only.
-system_context:
-  description: A TurtleBot delivers a book to a named drop-off point.
-  parameters:
-    - parameter_id: arrival-radius
-      description: Maximum distance from the destination for arrival.
-      unit: m
-      value:
-        value: 0.25
-        basis: placeholder
-        note: Interface-only value; no mobility capability is claimed.
-stakeholders:
-  - stakeholder_id: delivery-operator
-    name: Delivery operator
-definitions:
-  - term: arrival
-    definition: Reaching the configured destination radius.
-assumptions:
-  - A map is available before navigation starts.
-dependencies:
-  - A localization service provides the current pose.
-external_interfaces:
-  - interface_id: navigation-goal
-    description: Receives the selected destination.
-stakeholder_needs:
-  - need_id: complete-delivery
-    stakeholder_id: delivery-operator
-    statement: The delivery reaches the selected destination.
-requirements:
-  - requirement_id: reach-destination
-    type: functional
-    title: Reach the selected destination
-    normative_statement: The mobility target shall reach the selected destination.
-    priority: must
-    rationale: Arrival is necessary to complete delivery.
-    source: S-04 Fixture definition.
-    traces_to:
-      - complete-delivery
-    depends_on: []
-    verification:
-      method: test
-      acceptance_criteria:
-        - Final distance is within the arrival-radius parameter.
+requirement_ids:
+  - reach-destination
+---
+
+# Delivery
+
+## reach-destination
+
+The mobility target shall reach the selected destination.
 """
 
 TARGET_PROFILE = """\
@@ -76,10 +42,10 @@ profile_id: waffle-native-arm64
 target:
   target_id: turtlebot3-waffle
   kind: sdv
-platform:
-  platform_id: waffle-native
-  kind: native
-  architecture: arm64
+hosts:
+  waffle-native:
+    role: native
+    architecture: arm64
 """
 
 
@@ -110,7 +76,7 @@ def committed_inputs(tmp_path: Path) -> tuple[Path, str]:
 
     inputs = {
         "runs/request.yaml": RUN_REQUEST,
-        "requirements/delivery.yaml": REQUIREMENTS_SPECIFICATION,
+        "requirements/delivery.md": REQUIREMENTS_SPECIFICATION,
         "profiles/waffle-native-arm64.yaml": TARGET_PROFILE,
     }
     for relative_path, content in inputs.items():
@@ -190,7 +156,7 @@ def test_identifies_a_valid_committed_run(
     assert identified["profile_id"] == "waffle-native-arm64"
     assert [item["path"] for item in identified["inputs"]] == [
         "runs/request.yaml",
-        "requirements/delivery.yaml",
+        "requirements/delivery.md",
         "profiles/waffle-native-arm64.yaml",
     ]
     assert [item["schema_version"] for item in identified["inputs"]] == [
@@ -232,56 +198,40 @@ def test_rejects_unknown_contract_keys(
     _assert_rejected_without_identity(completed, "extra inputs are not permitted")
 
 
-def test_rejects_malformed_requirement_relationships(
-    committed_inputs: tuple[Path, str],
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        (
+            REQUIREMENTS_SPECIFICATION.removeprefix("---\n"),
+            "expected YAML front matter",
+        ),
+        (
+            REQUIREMENTS_SPECIFICATION.replace(
+                "  - reach-destination\n",
+                "  - reach-destination\n  - reach-destination\n",
+            ),
+            "requirement_id values must be unique",
+        ),
+        (
+            REQUIREMENTS_SPECIFICATION.replace(
+                "  - reach-destination\n", "  - reach-destination\npurpose: x\n"
+            ),
+            "extra inputs are not permitted",
+        ),
+    ],
+    ids=["no-front-matter", "duplicate-requirement-id", "unknown-field"],
+)
+def test_rejects_an_invalid_requirements_specification(
+    committed_inputs: tuple[Path, str], replacement: str, message: str
 ) -> None:
     repository, _ = committed_inputs
-    malformed = REQUIREMENTS_SPECIFICATION.replace(
-        "      - complete-delivery", "      - missing-need"
-    )
     commit_sha = _replace_and_commit(
-        repository, "requirements/delivery.yaml", malformed
+        repository, "requirements/delivery.md", replacement
     )
 
     completed = _identify(repository, commit_sha)
 
-    _assert_rejected_without_identity(completed, "unknown traces_to")
-
-
-def test_rejects_duplicate_requirement_relationships(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    duplicate_relationship = REQUIREMENTS_SPECIFICATION.replace(
-        "      - complete-delivery\n    depends_on:",
-        "      - complete-delivery\n      - complete-delivery\n    depends_on:",
-    )
-    commit_sha = _replace_and_commit(
-        repository, "requirements/delivery.yaml", duplicate_relationship
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "traces_to values must be unique")
-
-
-def test_rejects_value_basis_without_its_required_evidence(
-    committed_inputs: tuple[Path, str],
-) -> None:
-    repository, _ = committed_inputs
-    invalid_basis = REQUIREMENTS_SPECIFICATION.replace(
-        "        basis: placeholder\n"
-        "        note: Interface-only value; no mobility capability is claimed.",
-        "        basis: declared\n"
-        "        note: A note cannot replace an accountable source.",
-    )
-    commit_sha = _replace_and_commit(
-        repository, "requirements/delivery.yaml", invalid_basis
-    )
-
-    completed = _identify(repository, commit_sha)
-
-    _assert_rejected_without_identity(completed, "contract validation failed")
+    _assert_rejected_without_identity(completed, message)
 
 
 def test_rejects_parent_traversal_in_a_referenced_path(
@@ -289,7 +239,7 @@ def test_rejects_parent_traversal_in_a_referenced_path(
 ) -> None:
     repository, _ = committed_inputs
     traversal = RUN_REQUEST.replace(
-        "requirements/delivery.yaml", "../requirements/delivery.yaml"
+        "requirements/delivery.md", "../requirements/delivery.md"
     )
     commit_sha = _replace_and_commit(repository, "runs/request.yaml", traversal)
 
@@ -321,7 +271,7 @@ def test_provenance_uses_immutable_committed_bytes(
     committed_inputs: tuple[Path, str],
 ) -> None:
     repository, commit_sha = committed_inputs
-    (repository / "requirements/delivery.yaml").write_text(
+    (repository / "requirements/delivery.md").write_text(
         "dirty worktree content\n", encoding="utf-8"
     )
 
@@ -514,33 +464,29 @@ def test_rejects_non_utf8_origin_without_a_traceback(
     assert "Traceback" not in completed.stderr
 
 
-def test_accepts_a_declared_zero_gpu_capacity(
+def test_rejects_a_connection_outside_the_profile_hosts(
     committed_inputs: tuple[Path, str],
 ) -> None:
     repository, _ = committed_inputs
-    zero_gpu = (
-        f"{TARGET_PROFILE}resources:\n"
-        "  gpu_count:\n"
-        "    value: 0\n"
-        "    basis: declared\n"
-        "    source: Target operator inventory.\n"
-    )
+    unknown_host = f"{TARGET_PROFILE}connections:\n  - [waffle-native, orin]\n"
     commit_sha = _replace_and_commit(
-        repository, "profiles/waffle-native-arm64.yaml", zero_gpu
+        repository, "profiles/waffle-native-arm64.yaml", unknown_host
     )
 
     completed = _identify(repository, commit_sha)
 
-    assert completed.returncode == 0, completed.stderr
+    _assert_rejected_without_identity(
+        completed, "connection must name two distinct profile hosts"
+    )
 
 
-def test_rejects_explicit_null_for_an_unknown_capacity(
+def test_rejects_explicit_null_for_unknown_orchestrator_inputs(
     committed_inputs: tuple[Path, str],
 ) -> None:
     repository, _ = committed_inputs
-    null_capacity = f"{TARGET_PROFILE}resources:\n  cpu_cores: null\n"
+    null_inputs = f"{TARGET_PROFILE}orchestrator_provides: null\n"
     commit_sha = _replace_and_commit(
-        repository, "profiles/waffle-native-arm64.yaml", null_capacity
+        repository, "profiles/waffle-native-arm64.yaml", null_inputs
     )
 
     completed = _identify(repository, commit_sha)
@@ -583,7 +529,7 @@ def test_committed_s04_fixtures_preserve_the_accepted_combination_order(
         "https://github.com/example/sdi-fixture.git",
     )
 
-    requirement_path = "requirements/s-04/deliver-book-to-joe.yaml"
+    requirement_path = "requirements/s-04/deliver-book-to-joe.md"
     profiles = [
         "waffle-native-arm64",
         "waffle-xycar-amd64",

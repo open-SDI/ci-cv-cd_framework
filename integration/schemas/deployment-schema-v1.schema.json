@@ -1,48 +1,19 @@
 {
   "$defs": {
-    "DeploymentLocation": {
-      "additionalProperties": false,
-      "description": "One intended mobility or SDI execution location.",
-      "properties": {
-        "location_id": {
-          "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-          "title": "Location Id",
-          "type": "string"
-        },
-        "resource_id": {
-          "maxLength": 63,
-          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-          "title": "Resource Id",
-          "type": "string"
-        },
-        "tier": {
-          "enum": [
-            "mobility",
-            "edge",
-            "fog",
-            "cloud"
-          ],
-          "title": "Tier",
-          "type": "string"
-        }
-      },
-      "required": [
-        "location_id",
-        "tier",
-        "resource_id"
-      ],
-      "title": "DeploymentLocation",
-      "type": "object"
-    },
     "ServicePlacement": {
       "additionalProperties": false,
-      "description": "One service-to-location mapping.",
+      "description": "One service placed as a chosen artifact on a profile host.",
       "properties": {
-        "location_id": {
+        "artifact_id": {
           "maxLength": 63,
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-          "title": "Location Id",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "host": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Host",
           "type": "string"
         },
         "service_id": {
@@ -50,11 +21,19 @@
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
           "title": "Service Id",
           "type": "string"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "unresolved"
+          ],
+          "title": "Status",
+          "type": "string"
         }
       },
       "required": [
         "service_id",
-        "location_id"
+        "status"
       ],
       "title": "ServicePlacement",
       "type": "object"
@@ -111,14 +90,6 @@
       "title": "Evidence Basis",
       "type": "string"
     },
-    "locations": {
-      "items": {
-        "$ref": "#/$defs/DeploymentLocation"
-      },
-      "minItems": 1,
-      "title": "Locations",
-      "type": "array"
-    },
     "placements": {
       "items": {
         "$ref": "#/$defs/ServicePlacement"
@@ -147,8 +118,8 @@
       "items": {
         "$ref": "#/$defs/SourceInputDigest"
       },
-      "maxItems": 3,
-      "minItems": 3,
+      "maxItems": 5,
+      "minItems": 5,
       "title": "Source Inputs",
       "type": "array"
     },
@@ -168,7 +139,6 @@
     "combination_id",
     "profile_id",
     "source_inputs",
-    "locations",
     "placements"
   ],
   "title": "DeploymentSchema",

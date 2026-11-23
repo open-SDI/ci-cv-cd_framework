@@ -3,14 +3,20 @@ case_id: composition-s-04-tc-03-c-05
 stage: composition
 match_inputs:
   - slot: run_request
-    byte_size: 257
-    sha256: 0678d2b54cec3681310a689ee9343c0d820dca93bc33c51c2055fe2ab3081040
+    byte_size: 255
+    sha256: 6e091b064d5ff13afd3486ccd970b9669f8212bc89fae3c7aa0b6167d88ee031
   - slot: requirements_specification
-    byte_size: 2260
-    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+    byte_size: 8550
+    sha256: 852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55
   - slot: target_profile
-    byte_size: 203
-    sha256: d7a68cd54ddad8ccafbb0f34809faa00c84a20e7af69b34af259c99dd933faf3
+    byte_size: 675
+    sha256: b18ef771accd5b48c7b50c2bc188fddedc0a599e5452f6d8bf40117a05983c93
+  - slot: service_repository
+    byte_size: 192
+    sha256: b19d11139b8172261548482e72aeec31d82fdbfd43500f80ef2ad20996533cb5
+  - slot: composition_settings
+    byte_size: 449
+    sha256: 352b1a9e903dcf32a95afcbe4a2edfeb93f6278fbf76f05137f9c1ffcd36fea5
 execution_conclusion: succeeded
 domain_outcome: not_evaluated
 reason:
@@ -20,12 +26,12 @@ reason:
 outputs:
   - slot: composition_blueprint
     source_path: composition-blueprint.json
-    byte_size: 1406
-    sha256: 06543e51a9d2fb8f31ea06d144df1926f85b878b9a86443e3e94c51d7dad98e1
+    byte_size: 2616
+    sha256: de321ca90d30399e91ff50e8bef62bb8b9afba86658edd5e6389e5f53f4a2e05
   - slot: deployment_schema
     source_path: deployment-schema.json
-    byte_size: 1157
-    sha256: 0d1ab2607069bd2dfe2a746c4cb22ff46bfca92a328993f6792b55fbcd0834c2
+    byte_size: 1336
+    sha256: 646183c4b73299019e1566000df8ea638406a178f84205536ec8247191000ed7
 diagnostic:
   source_path: diagnostic.txt
   byte_size: 96

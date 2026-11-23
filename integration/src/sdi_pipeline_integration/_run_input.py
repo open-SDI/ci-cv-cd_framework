@@ -18,7 +18,7 @@ from ._contracts import (
     TargetExecutionProfile,
 )
 from ._git_input import CommittedBlob, GitRepository, validate_repository_path
-from ._yaml_input import InputError, parse_yaml
+from ._yaml_input import InputError, parse_front_matter, parse_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,9 +39,12 @@ class InputProvenance:
 
 
 def _validate_model[ModelT: BaseModel](
-    model: type[ModelT], blob: CommittedBlob
+    model: type[ModelT], blob: CommittedBlob, *, markdown: bool = False
 ) -> ModelT:
-    parsed = parse_yaml(blob.content, blob.path)
+    if markdown:
+        parsed, _body = parse_front_matter(blob.content, blob.path)
+    else:
+        parsed = parse_yaml(blob.content, blob.path)
     try:
         return model.model_validate(parsed, strict=True, extra="forbid")
     except ValidationError as error:
@@ -85,7 +88,7 @@ def identify_committed_run(
         raise InputError(msg)
 
     requirements_blob = repository.read_regular_file(request.requirements_specification)
-    _validate_model(MobilityRequirementsSpecification, requirements_blob)
+    _validate_model(MobilityRequirementsSpecification, requirements_blob, markdown=True)
     profile_blob = repository.read_regular_file(request.combination.target_profile)
     profile = _validate_model(TargetExecutionProfile, profile_blob)
 

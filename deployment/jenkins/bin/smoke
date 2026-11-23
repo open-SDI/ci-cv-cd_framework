@@ -9,6 +9,7 @@ project_name=$(printf '%s' "${temporary##*/}" | tr '[:upper:]' '[:lower:]')
 config=$temporary/controller.env
 admin_password=$temporary/admin-password
 handoff_password=$temporary/handoff-password
+openai_api_key=$temporary/openai-api-key
 integration_agent_secret=$temporary/integration-agent-secret
 ci_agent_secret=$temporary/ci-agent-secret
 image_build_agent_secret=$temporary/image-build-agent-secret
@@ -33,6 +34,9 @@ cleanup() {
             status=$cleanup_status
         fi
     fi
+    docker image prune --force \
+        --filter label=org.sdi.project=ci-cv-cd_framework >/dev/null || \
+        printf '%s\n' 'smoke: failed to prune superseded SDI images' >&2
     exit "$status"
 }
 trap cleanup EXIT
@@ -49,11 +53,13 @@ port=$(python3 -c \
 umask 077
 printf '%s\n' 'ephemeral-admin-password-for-controller-smoke' > "$admin_password"
 printf '%s\n' 'ephemeral-handoff-password-for-controller-smoke' > "$handoff_password"
+printf '%s\n' 'ephemeral-openai-api-key-for-controller-smoke' > "$openai_api_key"
 printf '%s\n' \
     "JENKINS_HTTP_PORT=$port" \
     'JENKINS_ADMIN_ID=smoke-administrator' \
     'JENKINS_HANDOFF_ID=smoke-github-handoff' \
     'JENKINS_REPOSITORY_URL=https://github.com/open-SDI/ci-cv-cd_framework.git' \
+    'JENKINS_FORK_REPOSITORY_URL=https://github.com/gurkhaman/ci-cv-cd_framework.git' \
     'JENKINS_AGENT_CONTROLLER_URL=http://controller:8080' \
     'JENKINS_PIPELINE_RUN_LIMIT_SECONDS=5400' \
     'JENKINS_COMPOSITION_WORK_LIMIT_SECONDS=600' \
@@ -62,6 +68,7 @@ printf '%s\n' \
     'JENKINS_CD_WORK_LIMIT_SECONDS=900' \
     "JENKINS_ADMIN_PASSWORD_FILE=$admin_password" \
     "JENKINS_HANDOFF_PASSWORD_FILE=$handoff_password" \
+    "JENKINS_OPENAI_API_KEY_FILE=$openai_api_key" \
     "JENKINS_INTEGRATION_AGENT_SECRET_FILE=$integration_agent_secret" \
     "JENKINS_CI_AGENT_SECRET_FILE=$ci_agent_secret" \
     "JENKINS_IMAGE_BUILD_AGENT_SECRET_FILE=$image_build_agent_secret" \

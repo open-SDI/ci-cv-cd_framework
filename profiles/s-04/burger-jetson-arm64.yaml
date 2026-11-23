@@ -3,7 +3,7 @@ profile_id: burger-jetson-arm64
 target:
   target_id: turtlebot3-burger
   kind: sdr
-platform:
-  platform_id: jetson-nano
-  kind: edge
-  architecture: arm64
+hosts:
+  jetson-nano:
+    role: edge
+    architecture: arm64

@@ -34,6 +34,8 @@ jenkins:
         env:
           - key: "SDI_REPOSITORY_URL"
             value: "${JENKINS_REPOSITORY_URL}"
+          - key: "SDI_FORK_REPOSITORY_URL"
+            value: "${JENKINS_FORK_REPOSITORY_URL}"
           - key: "JENKINS_PIPELINE_RUN_LIMIT_SECONDS"
             value: "${JENKINS_PIPELINE_RUN_LIMIT_SECONDS}"
           - key: "JENKINS_COMPOSITION_WORK_LIMIT_SECONDS"
@@ -116,6 +118,16 @@ jenkins:
               workDirPath: "/home/jenkins/agent"
         retentionStrategy: "always"
 
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "sdi-openai-api-key"
+              description: "OpenAI API key bound around the composition Stage"
+              secret: "${openai-api-key}"
+
 unclassified:
   buildDiscarders:
     configuredBuildDiscarders:
@@ -130,6 +142,7 @@ jobs:
   - providedEnv:
       HANDOFF_USER: "${JENKINS_HANDOFF_ID}"
       REPOSITORY_URL: "${JENKINS_REPOSITORY_URL}"
+      FORK_REPOSITORY_URL: "${JENKINS_FORK_REPOSITORY_URL}"
   - file: /usr/local/share/jenkins/job-dsl/pipeline-integration.groovy
 
 security:

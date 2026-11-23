@@ -28,7 +28,7 @@ outputs:
     path: outputs/deployment-result.json
     media_type: application/json
     schema_version: sdi.deployment-result/v1
-    required: true
+    role: domain_output
     max_bytes: 32768
 diagnostic:
   path: diagnostic.txt

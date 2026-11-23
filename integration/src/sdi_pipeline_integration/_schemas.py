@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
+from ._assessment import CompositionProposals
+from ._composition_config import CompositionConfig, CompositionSettings
 from ._contracts import (
     MobilityRequirementsSpecification,
     RunRequest,
@@ -17,6 +19,7 @@ from ._contracts import (
 )
 from ._domain_contracts import (
     CompositionBlueprint,
+    CompositionEvidence,
     DeploymentResult,
     DeploymentSchema,
     ImageBuildResult,
@@ -25,6 +28,7 @@ from ._domain_contracts import (
 from ._handoff_contracts import HandoffReceipt
 from ._recovery_contracts import RecoveryManifest
 from ._result_contracts import PipelineIntegrationResult
+from ._service_descriptions import ServiceDescription, ServiceRepositoryManifest
 from ._stage_contracts import (
     AcceptedAttemptEnvelope,
     AdapterDescriptor,
@@ -39,6 +43,10 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "accepted-attempt-envelope-v1.schema.json": AcceptedAttemptEnvelope,
     "adapter-descriptor-v1.schema.json": AdapterDescriptor,
     "composition-blueprint-v1.schema.json": CompositionBlueprint,
+    "composition-config-v1.schema.json": CompositionConfig,
+    "composition-evidence-v1.schema.json": CompositionEvidence,
+    "composition-proposals-v1.schema.json": CompositionProposals,
+    "composition-settings-v1.schema.json": CompositionSettings,
     "deployment-schema-v1.schema.json": DeploymentSchema,
     "deployment-result-v1.schema.json": DeploymentResult,
     "fixture-case-v1.schema.json": FixtureCase,
@@ -47,6 +55,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "pipeline-integration-result-v1.schema.json": PipelineIntegrationResult,
     "pipeline-integration-run-request-v1.schema.json": RunRequest,
     "recovery-manifest-v1.schema.json": RecoveryManifest,
+    "service-description-v1.schema.json": ServiceDescription,
+    "service-repository-manifest-v1.schema.json": ServiceRepositoryManifest,
     "stage-adapter-request-v1.schema.json": AdapterRequest,
     "stage-adapter-response-v1.schema.json": AdapterResponse,
     "stage-profile-v1.schema.json": StageProfile,

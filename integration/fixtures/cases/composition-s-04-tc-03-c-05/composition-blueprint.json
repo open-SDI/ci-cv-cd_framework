@@ -1,52 +1,107 @@
 {
   "blueprint_id": "s-04-tc-03-c-05-composition",
   "combination_id": "C-05",
+  "coverage": [
+    {
+      "requirement_id": "secure-book",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "accept-spoken-request",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "resolve-rendezvous",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "navigate-to-rendezvous",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "verify-recipient-face",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "transfer-book",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "acknowledge-receipt",
+      "services": [],
+      "status": "missing"
+    },
+    {
+      "requirement_id": "return-to-origin",
+      "services": [],
+      "status": "missing"
+    }
+  ],
   "evidence_basis": "fixture",
   "profile_id": "waffle-jetson-arm64",
+  "proposal_id": "proposal-1",
   "requirement_ids": [
-    "deliver-book-to-joe"
+    "secure-book",
+    "accept-spoken-request",
+    "resolve-rendezvous",
+    "navigate-to-rendezvous",
+    "verify-recipient-face",
+    "transfer-book",
+    "acknowledge-receipt",
+    "return-to-origin"
   ],
   "scenario_id": "S-04",
   "schema_version": "sdi.composition-blueprint/v1",
   "services": [
     {
+      "basis": "placeholder",
       "capability": "localization",
       "depends_on": [],
-      "fixture_source": "pipeline-interface-fixture",
-      "service_id": "fixture-localization",
-      "version": "1"
+      "service_id": "fixture-localization"
     },
     {
+      "basis": "placeholder",
       "capability": "navigation",
       "depends_on": [
         "fixture-localization"
       ],
-      "fixture_source": "pipeline-interface-fixture",
-      "service_id": "fixture-navigation",
-      "version": "1"
+      "service_id": "fixture-navigation"
     },
     {
+      "basis": "placeholder",
       "capability": "delivery-mission-control",
       "depends_on": [
         "fixture-navigation"
       ],
-      "fixture_source": "pipeline-interface-fixture",
-      "service_id": "fixture-mission-control",
-      "version": "1"
+      "service_id": "fixture-mission-control"
     }
   ],
   "source_inputs": [
     {
-      "sha256": "0678d2b54cec3681310a689ee9343c0d820dca93bc33c51c2055fe2ab3081040",
+      "sha256": "6e091b064d5ff13afd3486ccd970b9669f8212bc89fae3c7aa0b6167d88ee031",
       "slot": "run_request"
     },
     {
-      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "sha256": "852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55",
       "slot": "requirements_specification"
     },
     {
-      "sha256": "d7a68cd54ddad8ccafbb0f34809faa00c84a20e7af69b34af259c99dd933faf3",
+      "sha256": "b18ef771accd5b48c7b50c2bc188fddedc0a599e5452f6d8bf40117a05983c93",
       "slot": "target_profile"
+    },
+    {
+      "sha256": "b19d11139b8172261548482e72aeec31d82fdbfd43500f80ef2ad20996533cb5",
+      "slot": "service_repository"
+    },
+    {
+      "sha256": "352b1a9e903dcf32a95afcbe4a2edfeb93f6278fbf76f05137f9c1ffcd36fea5",
+      "slot": "composition_settings"
     }
   ],
   "testcase_id": "TC-03"

@@ -54,7 +54,7 @@
     "secret_bindings": {
       "items": {
         "maxLength": 63,
-        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "pattern": "^[A-Z][A-Z0-9_]*$",
         "type": "string"
       },
       "title": "Secret Bindings",

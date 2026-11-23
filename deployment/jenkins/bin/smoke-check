@@ -37,6 +37,9 @@ EXPECTED_AGENTS = {
     "cv": "cv",
     "cd": "cd",
 }
+UPSTREAM_JOB = "pipeline-integration"
+FORK_JOB = "pipeline-integration-fork"
+JOBS = (UPSTREAM_JOB, FORK_JOB)
 EXPECTED_SCRIPT_APPROVAL = (
     "method org.jenkinsci.plugins.workflow.steps.FlowInterruptedException getCauses"
 )
@@ -63,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--handoff-id")
     parser.add_argument("--handoff-password-file", type=Path)
     parser.add_argument("--repository-url")
+    parser.add_argument("--fork-repository-url")
     parser.add_argument("--plugin-lock", type=Path)
     parser.add_argument("--casc", type=Path)
     parser.add_argument("--jenkinsfile", type=Path)
@@ -477,7 +481,7 @@ def _check_jenkinsfile(admin: _JenkinsClient, path: Path | None) -> None:
         raise ValueError("--jenkinsfile must name the tracked regular Jenkinsfile")
     data = urllib.parse.urlencode({"value": path.read_text(encoding="utf-8")}).encode()
     status, body, _ = admin.post_with_crumb(
-        "/job/pipeline-integration/descriptorByName/"
+        f"/job/{UPSTREAM_JOB}/descriptorByName/"
         "org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition/checkScriptCompile",
         data=data,
         content_type="application/x-www-form-urlencoded",
@@ -530,9 +534,13 @@ def _check(args: argparse.Namespace) -> None:
             message=f"{name} is not enabled",
         )
 
-    status, config_xml, _ = admin.request("/job/pipeline-integration/config.xml")
-    _equal(status, HTTP_OK, "job configuration status")
-    _check_job_config(config_xml, args.repository_url, args.handoff_id)
+    for job, repository_url in (
+        (UPSTREAM_JOB, args.repository_url),
+        (FORK_JOB, args.fork_repository_url),
+    ):
+        status, config_xml, _ = admin.request(f"/job/{job}/config.xml")
+        _equal(status, HTTP_OK, f"{job} configuration status")
+        _check_job_config(config_xml, repository_url, args.handoff_id)
     _check_jenkinsfile(admin, args.jenkinsfile)
 
     casc_bytes = args.casc.read_bytes()
@@ -562,8 +570,9 @@ def _check(args: argparse.Namespace) -> None:
     handoff = _JenkinsClient(
         args.url, args.handoff_id, _password(args.handoff_password_file)
     )
-    status, _, _ = handoff.json("/job/pipeline-integration/api/json")
-    _equal(status, HTTP_OK, "handoff user job visibility")
+    for job in JOBS:
+        status, _, _ = handoff.json(f"/job/{job}/api/json")
+        _equal(status, HTTP_OK, f"handoff user {job} visibility")
     status, _, _ = handoff.request("/script")
     _equal(status, HTTP_FORBIDDEN, "handoff user administration denial")
 
@@ -573,15 +582,19 @@ def _assert_no_active_run(admin: _JenkinsClient) -> None:
     _equal(status, HTTP_OK, "queue API status")
     if queue.get("items"):
         raise RuntimeError("active-run: Jenkins queue is not empty")
-    status, job, _ = admin.json(
-        "/job/pipeline-integration/api/json?tree=builds[number,building]"
-    )
-    _equal(status, HTTP_OK, "pipeline job API status")
-    builds = job.get("builds")
-    if not isinstance(builds, list):
-        raise TypeError("pipeline job has no build list")
-    if any(isinstance(build, dict) and build.get("building") is True for build in builds):
-        raise RuntimeError("active-run: a Pipeline integration run is building")
+    for name in JOBS:
+        status, job, _ = admin.json(
+            f"/job/{name}/api/json?tree=builds[number,building]"
+        )
+        _equal(status, HTTP_OK, f"{name} API status")
+        builds = job.get("builds")
+        if not isinstance(builds, list):
+            raise TypeError(f"{name} has no build list")
+        if any(
+            isinstance(build, dict) and build.get("building") is True
+            for build in builds
+        ):
+            raise RuntimeError("active-run: a Pipeline integration run is building")
 
 
 def _idle(args: argparse.Namespace, *, quiesce: bool) -> None:
@@ -625,7 +638,8 @@ def _introduce_drift(args: argparse.Namespace) -> None:
         "import jenkins.model.Jenkins\n"
         "def j = Jenkins.get()\n"
         "j.setNumExecutors(1)\n"
-        "j.getItem('pipeline-integration').delete()\n"
+        f"j.getItem('{UPSTREAM_JOB}').delete()\n"
+        f"j.getItem('{FORK_JOB}').delete()\n"
         "j.getNode('ci').setNumExecutors(2)\n"
         "j.getNode('ci').setLabelString('drifted')\n"
         "j.removeNode(j.getNode('cd'))\n"
@@ -637,8 +651,9 @@ def _introduce_drift(args: argparse.Namespace) -> None:
     status, root, _ = admin.json("/api/json?tree=numExecutors")
     _equal(status, HTTP_OK, "drifted root API status")
     _equal(root["numExecutors"], 1, "drifted controller executors")
-    status, _, _ = admin.request("/job/pipeline-integration/api/json")
-    _equal(status, HTTP_NOT_FOUND, "deleted job status")
+    for job in JOBS:
+        status, _, _ = admin.request(f"/job/{job}/api/json")
+        _equal(status, HTTP_NOT_FOUND, f"deleted {job} status")
     status, inventory, _ = admin.json(
         "/computer/api/json?tree=computer[displayName,numExecutors,assignedLabels[name]]"
     )

@@ -6,6 +6,6 @@ entrypoint: sdi-fixture-adapter
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/cv-v1.yaml
 stage_profile_version: sdi.cv-stage-profile/v1
-stage_profile_sha256: 4379a09bb382d71eec75f1f978ca2d6892e20e586708f970e9b8d9906487cba9
+stage_profile_sha256: 6789d1ef9be8c375fb474f711c75da271d4f423ea5d7dc1010abc0a32dfb0b34
 agent_label: cv
 secret_bindings: []

@@ -15,6 +15,7 @@ COPY integration/fixtures fixtures
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM runtime
+LABEL org.sdi.project=ci-cv-cd_framework
 
 ARG SDI_JENKINS_AGENT_LABEL
 ARG SDI_JENKINS_AGENT_ROLE=integration

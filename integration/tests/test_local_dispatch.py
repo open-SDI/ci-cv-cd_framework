@@ -13,55 +13,20 @@ from typing import cast
 
 import pytest
 
+from tests._fixture_inputs import (
+    FIXTURE_COMPOSITION_CONFIG,
+    SUPPLIED_INPUT_ARGUMENTS,
+    write_fixture_composition_descriptor,
+    write_scripted_adapter,
+)
+
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 S04_COMBINATION_EXPECTATIONS: dict[str, dict[str, str]] = {
-    "C-01": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-01-fixture.yaml",
-        "profile_id": "waffle-native-arm64",
-        "architecture": "arm64",
-        "resource_id": "waffle-native-system",
-        "location_id": "waffle-native",
-        "tier": "mobility",
-    },
-    "C-02": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-02-fixture.yaml",
-        "profile_id": "waffle-xycar-amd64",
-        "architecture": "amd64",
-        "resource_id": "xycar",
-        "location_id": "waffle-xycar",
-        "tier": "mobility",
-    },
-    "C-03": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-03-fixture.yaml",
-        "profile_id": "burger-native-arm64",
-        "architecture": "arm64",
-        "resource_id": "burger-native-system",
-        "location_id": "burger-native",
-        "tier": "mobility",
-    },
-    "C-04": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-04-fixture.yaml",
-        "profile_id": "burger-xycar-amd64",
-        "architecture": "amd64",
-        "resource_id": "xycar",
-        "location_id": "burger-xycar",
-        "tier": "mobility",
-    },
     "C-05": {
         "run_request_path": "runs/s-04/s-04-tc-03-c-05-fixture.yaml",
         "profile_id": "waffle-jetson-arm64",
         "architecture": "arm64",
-        "resource_id": "jetson-nano",
-        "location_id": "waffle-jetson",
-        "tier": "edge",
-    },
-    "C-06": {
-        "run_request_path": "runs/s-04/s-04-tc-03-c-06-fixture.yaml",
-        "profile_id": "burger-jetson-arm64",
-        "architecture": "arm64",
-        "resource_id": "jetson-nano",
-        "location_id": "burger-jetson",
-        "tier": "edge",
+        "host": "orin",
     },
 }
 S04_RUN_REQUEST_PATHS = tuple(
@@ -71,7 +36,7 @@ RUN_REQUEST_PATH = S04_RUN_REQUEST_PATHS[0]
 STAGES = ["composition", "image_build", "cv", "cd"]
 COMMITTED_FILES = (
     *S04_RUN_REQUEST_PATHS,
-    "requirements/s-04/deliver-book-to-joe.yaml",
+    "requirements/s-04/deliver-book-to-joe.md",
     "profiles/s-04/waffle-native-arm64.yaml",
     "profiles/s-04/waffle-xycar-amd64.yaml",
     "profiles/s-04/burger-native-arm64.yaml",
@@ -82,7 +47,6 @@ COMMITTED_FILES = (
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/composition-fixture-v1.yaml",
     "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
     "deployment/jenkins/adapters/cv-fixture-v1.yaml",
     "deployment/jenkins/adapters/cd-fixture-v1.yaml",
@@ -98,6 +62,7 @@ COMMITTED_FILES = (
     "runs/conformance/composition-oversize-output.yaml",
     "runs/conformance/composition-response-mismatch.yaml",
     "runs/conformance/composition-schema-mismatch.yaml",
+    FIXTURE_COMPOSITION_CONFIG,
 )
 VOLATILE_RESULT_FIELDS = {"execution_id", "started_at", "finished_at", "duration_ms"}
 
@@ -143,6 +108,7 @@ def _commit_fixture_repository(tmp_path: Path) -> tuple[Path, str]:
         destination = repository / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
+    write_fixture_composition_descriptor(repository)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Add four-Stage Fixture inputs")
     return repository, _git(repository, "rev-parse", "HEAD")
@@ -168,6 +134,7 @@ def _dispatch(
             run_request_path,
             "--bundle-root",
             str(bundle_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
         ],
         check=False,
         capture_output=True,
@@ -176,56 +143,17 @@ def _dispatch(
 
 
 def _select_adapter(repository: Path, adapter: Path, *, mode: str = "fixture") -> str:
-    profile = repository / "integration/stage-profiles/composition-v1.yaml"
-    descriptor = repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
-    descriptor.write_text(
-        f"""schema_version: sdi.adapter-descriptor/v1
-stage: composition
-implementation_mode: {mode}
-image: ghcr.io/gurkhaman/sdi-stage-fixture@sha256:{"1" * 64}
-entrypoint: {adapter}
-process_contract_version: sdi.stage-adapter-process/v1
-stage_profile: integration/stage-profiles/composition-v1.yaml
-stage_profile_version: sdi.composition-stage-profile/v1
-stage_profile_sha256: {hashlib.sha256(profile.read_bytes()).hexdigest()}
-agent_label: composition
-secret_bindings: []
-""",
-        encoding="utf-8",
-    )
+    write_fixture_composition_descriptor(repository, entrypoint=adapter, mode=mode)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Select conformance adapter")
     return _git(repository, "rev-parse", "HEAD")
-
-
-def _write_composition_adapter(path: Path, body: str) -> None:
-    path.write_text(
-        """#!/usr/bin/env python3
-import argparse
-import json
-from pathlib import Path
-
-parser = argparse.ArgumentParser()
-commands = parser.add_subparsers(dest="command", required=True)
-run = commands.add_parser("run")
-run.add_argument("--request", required=True)
-run.add_argument("--input-root", required=True)
-run.add_argument("--output-root", required=True)
-arguments = parser.parse_args()
-request = json.loads(Path(arguments.request).read_text())
-output = Path(arguments.output_root)
-"""
-        + body,
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
 
 
 def _configure_composition(
     repository: Path, *, mode: str | None = None, work_limit_seconds: int | None = None
 ) -> str:
     profile = repository / "integration/stage-profiles/composition-v1.yaml"
-    descriptor = repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
+    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     if work_limit_seconds is not None:
         profile.write_text(
             profile.read_text().replace(
@@ -298,7 +226,13 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
         [item["slot"] for item in attempt["accepted_inputs"]]
         for attempt in first_result["attempts"]
     ] == [
-        ["run_request", "requirements_specification", "target_profile"],
+        [
+            "run_request",
+            "requirements_specification",
+            "target_profile",
+            "service_repository",
+            "composition_settings",
+        ],
         ["target_profile", "composition_blueprint", "deployment_schema"],
         [
             "requirements_specification",
@@ -335,13 +269,7 @@ def test_dispatches_a_contract_valid_deterministic_four_stage_fixture(
     deployment = json.loads(
         (first_root / deployment_artifact["path"]).read_text(encoding="utf-8")
     )
-    assert deployment["locations"] == [
-        {
-            "location_id": expected["location_id"],
-            "resource_id": expected["resource_id"],
-            "tier": expected["tier"],
-        }
-    ]
+    assert {item["host"] for item in deployment["placements"]} == {expected["host"]}
     image_artifact = next(
         artifact
         for artifact in first_result["artifacts"]
@@ -381,7 +309,7 @@ def test_handled_execution_failure_publishes_a_complete_result_with_typed_skips(
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "handled-failure-adapter"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         """
 response = {
@@ -433,25 +361,53 @@ def test_negative_domain_outcome_blocks_dependents_without_machinery_failure(
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "negative-domain-adapter"
-    blueprint = (
-        (
-            SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
-            / "composition-blueprint.json"
-        )
-        .read_text()
-        .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
+    write_scripted_adapter(
+        adapter,
+        """
+response = {
+    "schema_version": "sdi.stage-adapter-response/v1",
+    "correlation": request["correlation"],
+    "execution_conclusion": "succeeded",
+    "domain_outcome": "failed",
+    "reason": {
+        "category": "domain",
+        "code": "sdi.domain.requirement-unsatisfied",
+        "summary": "The evaluated requirement was not satisfied.",
+    },
+    "consumed_inputs": [item["slot"] for item in request["inputs"]],
+    "produced_outputs": [],
+    "diagnostic": {"present": False, "truncated": False},
+}
+(output / "response.json").write_text(json.dumps(response))
+""",
     )
-    deployment = (
-        (
-            SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
-            / "deployment-schema.json"
-        )
-        .read_text()
-        .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
-    )
-    _write_composition_adapter(
+    commit_sha = _select_adapter(repository, adapter, mode="implemented")
+    bundle_root = tmp_path / "negative-domain-bundle"
+
+    completed = _dispatch(repository, commit_sha, bundle_root)
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["attempts"][0]["execution_conclusion"] == "succeeded"
+    assert result["attempts"][0]["domain_outcome"] == "failed"
+    assert [attempt["execution_conclusion"] for attempt in result["attempts"][1:]] == [
+        "skipped",
+        "skipped",
+        "skipped",
+    ]
+    assert result["artifacts"] == []
+
+
+def test_negative_domain_outcome_cannot_publish_domain_output(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _commit_fixture_repository(tmp_path)
+    adapter = tmp_path / "negative-domain-output-adapter"
+    case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
+    implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
+    blueprint = (case / "composition-blueprint.json").read_text().replace(*implemented)
+    deployment = (case / "deployment-schema.json").read_text().replace(*implemented)
+    write_scripted_adapter(
         adapter,
         f"""
 (output / "outputs").mkdir()
@@ -475,23 +431,13 @@ response = {{
 """,
     )
     commit_sha = _select_adapter(repository, adapter, mode="implemented")
-    bundle_root = tmp_path / "negative-domain-bundle"
 
-    completed = _dispatch(repository, commit_sha, bundle_root)
+    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 1, completed.stderr
     result = json.loads(completed.stdout)
-    assert result["attempts"][0]["execution_conclusion"] == "succeeded"
-    assert result["attempts"][0]["domain_outcome"] == "failed"
-    assert [attempt["execution_conclusion"] for attempt in result["attempts"][1:]] == [
-        "skipped",
-        "skipped",
-        "skipped",
-    ]
-    assert {artifact["slot"] for artifact in result["artifacts"]} == {
-        "composition_blueprint",
-        "deployment_schema",
-    }
+    assert result["attempts"][0]["adapter_response_accepted"] is False
+    assert result["artifacts"] == []
 
 
 def test_rejected_candidate_records_runtime_failure_without_salvaging_files(
@@ -499,7 +445,7 @@ def test_rejected_candidate_records_runtime_failure_without_salvaging_files(
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "undeclared-output-adapter"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         """
 (output / "private-endpoint.txt").write_text("https://private.example.test/secret")
@@ -601,7 +547,7 @@ def test_stage_timeout_terminates_attached_descendants_and_cleans_work(
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "timeout-tree-adapter"
     child_pid_path = tmp_path / "timeout-child.pid"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         f"""
 import subprocess
@@ -661,7 +607,7 @@ def test_external_cancellation_terminates_the_process_tree_without_a_result(
     adapter = tmp_path / "cancellable-adapter"
     child_pid_path = tmp_path / "child.pid"
     ready_path = tmp_path / "ready"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         f"""
 import subprocess
@@ -689,6 +635,7 @@ time.sleep(60)
             RUN_REQUEST_PATH,
             "--bundle-root",
             str(bundle_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -762,30 +709,16 @@ def test_implemented_adapter_cannot_consume_unevaluated_fixture_output(
     assert "process" not in blocked
 
 
-def test_implemented_composition_output_may_feed_a_later_fixture(
+def test_fixture_stage_skips_implemented_composition_output(
     tmp_path: Path,
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "implemented-composition-adapter"
-    blueprint = (
-        (
-            SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
-            / "composition-blueprint.json"
-        )
-        .read_text()
-        .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
-    )
-    deployment = (
-        (
-            SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
-            / "deployment-schema.json"
-        )
-        .read_text()
-        .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
-    )
-    _write_composition_adapter(
+    case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
+    implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
+    blueprint = (case / "composition-blueprint.json").read_text().replace(*implemented)
+    deployment = (case / "deployment-schema.json").read_text().replace(*implemented)
+    write_scripted_adapter(
         adapter,
         f"""
 (output / "outputs").mkdir()
@@ -807,24 +740,24 @@ response = {{
 
     completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
 
-    assert completed.returncode == 1, completed.stderr
+    assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
-    composition = result["attempts"][0]
+    composition, image_build, cv, cd = result["attempts"]
     assert composition["execution_conclusion"] == "succeeded"
     assert composition["implementation_mode"] == "implemented"
     assert "reason" not in composition
-    image_build = result["attempts"][1]
-    assert image_build["execution_conclusion"] == "succeeded"
-    assert image_build["adapter_response_accepted"] is True
-    assert image_build["reason"]["code"] == (
-        "sdi.fixture.image-build-after-implemented-composition"
-    )
-    assert result["attempts"][2]["reason"]["code"] == "sdi.fixture.input-mismatch"
+    assert image_build["lifecycle_state"] == "skipped"
+    assert image_build["reason"]["code"] == "sdi.dependency.implemented-evidence"
+    assert "process" not in image_build
+    assert [cv["reason"]["code"], cd["reason"]["code"]] == [
+        "sdi.dependency.prerequisite-blocked",
+        "sdi.dependency.prerequisite-blocked",
+    ]
 
 
 def test_process_loss_records_runtime_failure_and_skips(tmp_path: Path) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
-    descriptor = repository / "deployment/jenkins/adapters/composition-fixture-v1.yaml"
+    descriptor = repository / "deployment/jenkins/adapters/composition-v1.yaml"
     descriptor.write_text(
         descriptor.read_text().replace(
             "entrypoint: sdi-fixture-adapter",
@@ -848,7 +781,7 @@ def test_process_loss_records_runtime_failure_and_skips(tmp_path: Path) -> None:
 def test_process_signal_records_runtime_failure_and_skips(tmp_path: Path) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "signaled-adapter"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         """
 import os
@@ -883,7 +816,7 @@ def test_sensitive_diagnostic_is_not_accepted_or_archived(
 ) -> None:
     repository, _ = _commit_fixture_repository(tmp_path)
     adapter = tmp_path / "sensitive-diagnostic-adapter"
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         f"""
 (output / "diagnostic.txt").write_text({sentinel!r})
@@ -930,23 +863,23 @@ def test_sensitive_domain_output_is_not_accepted_or_archived(
     blueprint = (
         (
             SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
+            / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
             / "composition-blueprint.json"
         )
         .read_text()
         .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
-        .replace('"version": "1"', f'"version": "{sentinel}"', 1)
+        .replace('"capability": "localization"', f'"capability": "{sentinel}"', 1)
     )
     deployment = (
         (
             SOURCE_ROOT
-            / "integration/fixtures/cases/composition-s-04-tc-03-c-01"
+            / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
             / "deployment-schema.json"
         )
         .read_text()
         .replace('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
     )
-    _write_composition_adapter(
+    write_scripted_adapter(
         adapter,
         f"""
 (output / "outputs").mkdir()
@@ -956,12 +889,7 @@ response = {{
     "schema_version": "sdi.stage-adapter-response/v1",
     "correlation": request["correlation"],
     "execution_conclusion": "succeeded",
-    "domain_outcome": "failed",
-    "reason": {{
-        "category": "domain",
-        "code": "sdi.domain.requirement-unsatisfied",
-        "summary": "The evaluated requirement was not satisfied.",
-    }},
+    "domain_outcome": "succeeded",
     "consumed_inputs": [item["slot"] for item in request["inputs"]],
     "produced_outputs": ["composition_blueprint", "deployment_schema"],
     "diagnostic": {{"present": False, "truncated": False}},
@@ -981,6 +909,48 @@ response = {{
     assert (
         sentinel not in (bundle_root / "pipeline-integration-result.json").read_text()
     )
+
+
+def test_composition_placing_a_service_outside_the_profile_hosts_is_not_accepted(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _commit_fixture_repository(tmp_path)
+    adapter = tmp_path / "unknown-host-adapter"
+    case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
+    implemented = ('"evidence_basis": "fixture"', '"evidence_basis": "implemented"')
+    blueprint = (case / "composition-blueprint.json").read_text().replace(*implemented)
+    deployment = (
+        (case / "deployment-schema.json")
+        .read_text()
+        .replace(*implemented)
+        .replace('"host": "orin"', '"host": "xycar"', 1)
+    )
+    write_scripted_adapter(
+        adapter,
+        f"""
+(output / "outputs").mkdir()
+(output / "outputs/composition-blueprint.json").write_text({blueprint!r})
+(output / "outputs/deployment-schema.json").write_text({deployment!r})
+response = {{
+    "schema_version": "sdi.stage-adapter-response/v1",
+    "correlation": request["correlation"],
+    "execution_conclusion": "succeeded",
+    "domain_outcome": "succeeded",
+    "consumed_inputs": [item["slot"] for item in request["inputs"]],
+    "produced_outputs": ["composition_blueprint", "deployment_schema"],
+    "diagnostic": {{"present": False, "truncated": False}},
+}}
+(output / "response.json").write_text(json.dumps(response))
+""",
+    )
+    commit_sha = _select_adapter(repository, adapter, mode="implemented")
+
+    completed = _dispatch(repository, commit_sha, tmp_path / "bundle")
+
+    assert completed.returncode == 1, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["attempts"][0]["adapter_response_accepted"] is False
+    assert result["artifacts"] == []
 
 
 def test_bundle_validation_rejects_tampered_artifact_bytes(tmp_path: Path) -> None:
@@ -1144,7 +1114,7 @@ def test_bundle_validation_rejects_sensitive_domain_content(tmp_path: Path) -> N
     assert dispatched.returncode == 0, dispatched.stderr
     artifact_path = bundle_root / "stages/composition/composition-blueprint.json"
     document = json.loads(artifact_path.read_text(encoding="utf-8"))
-    document["services"][0]["version"] = "jenkins.internal"
+    document["services"][0]["capability"] = "jenkins.internal"
     content = (
         json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
     ).encode()
@@ -1270,6 +1240,17 @@ def test_bundle_validation_rejects_work_after_a_negative_domain_outcome(
         "code": "sdi.domain.requirement-unsatisfied",
         "summary": "The represented Domain requirement was not satisfied.",
     }
+    first["accepted_files"] = [
+        item for item in first["accepted_files"] if item["role"] != "domain_output"
+    ]
+    for artifact in result["artifacts"]:
+        if artifact["stage"] == "composition" and artifact["role"] == "domain_output":
+            (bundle_root / artifact["path"]).unlink()
+    result["artifacts"] = [
+        item
+        for item in result["artifacts"]
+        if not (item["stage"] == "composition" and item["role"] == "domain_output")
+    ]
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     validated = subprocess.run(

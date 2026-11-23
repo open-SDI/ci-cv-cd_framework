@@ -1,1 +1,0 @@
-CD pipeline-interface Fixture emitted deterministic data; no deployment was attempted.

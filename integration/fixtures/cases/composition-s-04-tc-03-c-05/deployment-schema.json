@@ -3,25 +3,21 @@
   "combination_id": "C-05",
   "deployment_schema_id": "s-04-tc-03-c-05-deployment",
   "evidence_basis": "fixture",
-  "locations": [
-    {
-      "location_id": "waffle-jetson",
-      "resource_id": "jetson-nano",
-      "tier": "edge"
-    }
-  ],
   "placements": [
     {
-      "location_id": "waffle-jetson",
-      "service_id": "fixture-localization"
+      "host": "orin",
+      "service_id": "fixture-localization",
+      "status": "unresolved"
     },
     {
-      "location_id": "waffle-jetson",
-      "service_id": "fixture-navigation"
+      "host": "orin",
+      "service_id": "fixture-navigation",
+      "status": "unresolved"
     },
     {
-      "location_id": "waffle-jetson",
-      "service_id": "fixture-mission-control"
+      "host": "orin",
+      "service_id": "fixture-mission-control",
+      "status": "unresolved"
     }
   ],
   "profile_id": "waffle-jetson-arm64",
@@ -29,16 +25,24 @@
   "schema_version": "sdi.deployment-schema/v1",
   "source_inputs": [
     {
-      "sha256": "0678d2b54cec3681310a689ee9343c0d820dca93bc33c51c2055fe2ab3081040",
+      "sha256": "6e091b064d5ff13afd3486ccd970b9669f8212bc89fae3c7aa0b6167d88ee031",
       "slot": "run_request"
     },
     {
-      "sha256": "01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5",
+      "sha256": "852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55",
       "slot": "requirements_specification"
     },
     {
-      "sha256": "d7a68cd54ddad8ccafbb0f34809faa00c84a20e7af69b34af259c99dd933faf3",
+      "sha256": "b18ef771accd5b48c7b50c2bc188fddedc0a599e5452f6d8bf40117a05983c93",
       "slot": "target_profile"
+    },
+    {
+      "sha256": "b19d11139b8172261548482e72aeec31d82fdbfd43500f80ef2ad20996533cb5",
+      "slot": "service_repository"
+    },
+    {
+      "sha256": "352b1a9e903dcf32a95afcbe4a2edfeb93f6278fbf76f05137f9c1ffcd36fea5",
+      "slot": "composition_settings"
     }
   ],
   "testcase_id": "TC-03"

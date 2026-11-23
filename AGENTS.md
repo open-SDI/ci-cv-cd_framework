@@ -3,7 +3,8 @@
 ## Boundaries
 
 - `integration/` is the supported Python project and owns the repository verification command. Run its commands from the directory stated below.
-- `CI/` is an explicitly unsupported workspace reserved for a future composition adapter. The architecture in `CI/APSEC_2025_Tools.pdf` is design context, not implemented code.
+- `CI/` is an explicitly unsupported workspace. The implemented composition adapter lives in `integration/` as `sdi-composition-adapter`; the architecture in `CI/APSEC_2025_Tools.pdf` is design context, not implemented code.
+- `service-repository/` is the SDI service repository: one `<service_id>/SDI.md` description per mobility service. CI reads it as a supplied read-only path and never writes it.
 - The Year-1 plugin and prototype were retired. Git history is their archive; do not restore their interfaces or artifact formats.
 - Most tracked files are Gazebo assets under `CV/gazebo/models/`; avoid repository-wide formatting or generated-file rewrites there.
 
@@ -11,13 +12,15 @@
 
 - Prefer mature, actively maintained, purpose-built libraries for standard capabilities such as parsing and validation when they satisfy the project contract. Assess compatibility, security posture, licensing, and maintenance, then lock the selected version exactly.
 - Build custom infrastructure only when no suitable library exists or project-specific semantics require it, and record that rationale in the implementing issue or code review.
+- Contracts are unreleased during development; change schemas in place without bumping versions.
 
 ## Pipeline Integration Scaffold
 
 - `integration/` requires Python `>=3.12,<3.13`, pins CPython 3.12.13 for development, and uses its own exact `uv.lock`.
 - Run the deterministic repository checks from any directory with `integration/scripts/verify`. It performs frozen environment setup, generated-schema freshness, Ruff formatting and linting, Basedpyright, pytest, and the ephemeral six-container Jenkins stack smoke check on the supported Docker host.
 - The public entry point is `uv run --project integration sdi-integration`. The CLI, committed file contracts, and language-neutral Stage-adapter process interface are the supported boundaries; internal Python modules are not compatibility contracts.
-- The current scaffold validates committed inputs and executes the four-Stage Fixture locally or through the protected GitHub workflow and thin root Jenkins pipeline on five isolated inbound agents. Real Domain adapters remain deferred to dedicated implementation work.
+- The current scaffold validates committed inputs and executes four Stages locally or through the protected GitHub workflow and thin root Jenkins pipeline on five isolated inbound agents. Composition is implemented: it calls the default generator, or the one `--generator` names, of the committed composition config (`integration/composition-config.yaml`) over the supplied service repository. The config's `qwen` generator is self-hosted for cheap live tests only. Image-build, CV, and CD remain Fixtures; their real adapters are deferred to dedicated implementation work.
+- The composition live tests call a real model. Keep keys in the environment or the ignored root `.env`; never print, write, or commit them.
 
 ## Change And Review Workflow
 

@@ -280,7 +280,7 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
 
     adapters = repository / "deployment/jenkins/adapters"
     for filename, image in (
-        ("composition-fixture-v1.yaml", pins.composition_adapter_image),
+        ("composition-v1.yaml", pins.composition_adapter_image),
         ("image-build-fixture-v1.yaml", pins.image_build_adapter_image),
         ("cv-fixture-v1.yaml", pins.cv_adapter_image),
         ("cd-fixture-v1.yaml", pins.cd_adapter_image),

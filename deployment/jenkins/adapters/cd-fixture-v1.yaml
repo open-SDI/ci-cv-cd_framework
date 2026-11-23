@@ -6,6 +6,6 @@ entrypoint: sdi-fixture-adapter
 process_contract_version: sdi.stage-adapter-process/v1
 stage_profile: integration/stage-profiles/cd-v1.yaml
 stage_profile_version: sdi.cd-stage-profile/v1
-stage_profile_sha256: 8409acb384d73fb555f737615030060f3dbf499450a27c7c5b4ed7360487c09d
+stage_profile_sha256: b5940f7380e76c57c16c89fdc5009545bc2f5f437cc56c1e987cba4fc2e30502
 agent_label: cd
 secret_bindings: []

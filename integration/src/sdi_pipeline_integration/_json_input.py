@@ -1,4 +1,4 @@
-"""Strict bounded JSON parsing for machine-produced records."""
+"""Strict bounded JSON parsing and canonical encoding of machine records."""
 
 from __future__ import annotations
 
@@ -61,3 +61,17 @@ def parse_json(raw: bytes, path: str, *, max_bytes: int) -> dict[str, Any]:
         raise InputError(msg)
     _check_depth(cast("object", loaded))
     return cast("dict[str, Any]", loaded)
+
+
+def canonical_json(value: object) -> bytes:
+    """Encode a record as the exact bytes its digests are computed over."""
+    return (
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()

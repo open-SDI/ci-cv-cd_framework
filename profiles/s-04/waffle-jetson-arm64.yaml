@@ -3,7 +3,26 @@ profile_id: waffle-jetson-arm64
 target:
   target_id: turtlebot3-waffle
   kind: sdv
-platform:
-  platform_id: jetson-nano
-  kind: edge
-  architecture: arm64
+hosts:
+  waffle:
+    role: native
+    architecture: arm64
+    baseline:
+      os: ubuntu-24.04
+      ros_distro: jazzy
+    devices: [opencr, lidar, camera, microphone]
+  orin:
+    role: edge
+    architecture: arm64
+    baseline:
+      os: ubuntu-24.04
+      ros_distro: jazzy
+      jetpack: "7.2.1"
+    devices: [nvidia-gpu]
+connections:
+  - [waffle, orin]
+orchestrator_provides:
+  action_clients:
+    /navigate_to_pose: {type: nav2_msgs/action/NavigateToPose}
+  publishes:
+    /initialpose: {type: geometry_msgs/msg/PoseWithCovarianceStamped}

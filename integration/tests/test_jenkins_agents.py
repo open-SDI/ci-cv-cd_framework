@@ -134,12 +134,12 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
     assert all("docker.sock" not in json.dumps(services[name]) for name in services)
 
 
-def test_domain_agents_use_their_descriptor_selected_fixture_image() -> None:
+def test_domain_agents_use_their_descriptor_selected_runtime_image() -> None:
     compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
     services = compose["services"]
     descriptor_for_agent = {
         "ci": (
-            "composition-fixture-v1.yaml",
+            "composition-v1.yaml",
             "${JENKINS_COMPOSITION_AGENT_IMAGE}",
         ),
         "image-build": (
@@ -158,7 +158,7 @@ def test_domain_agents_use_their_descriptor_selected_fixture_image() -> None:
     dockerfile = (JENKINS_ROOT / "agents" / "Dockerfile").read_text()
     assert "FROM ${RUNTIME_IMAGE} AS runtime" in dockerfile
     assert "FROM ${REMOTING_IMAGE} AS remoting" in dockerfile
-    assert "FROM runtime\n" in dockerfile
+    assert "FROM runtime\nLABEL org.sdi.project=ci-cv-cd_framework\n" in dockerfile
     assert "FROM ${UV_IMAGE} AS uv" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert "/etc/sdi/jenkins-agent-role" in dockerfile

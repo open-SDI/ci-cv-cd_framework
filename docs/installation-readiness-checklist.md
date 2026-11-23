@@ -43,7 +43,7 @@ and Jenkins volume.
 
 - [ ] Reconstruction began from the approved commit and absent controller volume
 - [ ] Stack and runner preflights passed
-- [ ] Controller has zero executors and the fixed job converged from tracked configuration
+- [ ] Controller has zero executors and both fixed jobs converged from tracked configuration
 - [ ] Exactly five expected agent identities and labels have one executor each
 - [ ] `exercise-live` proved clean isolated tmpfs and each installed role boundary twice
 - [ ] Handoff machine-user preflight passed without exposing its token

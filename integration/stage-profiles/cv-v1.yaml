@@ -4,8 +4,8 @@ stage: cv
 work_limit_seconds: 2700
 inputs:
   - slot: requirements_specification
-    path: requirements-specification.yaml
-    media_type: application/yaml
+    path: requirements-specification.md
+    media_type: text/markdown
     schema_version: sdi.mobility-requirements-specification/v1
   - slot: target_profile
     path: target-profile.yaml
@@ -28,7 +28,7 @@ outputs:
     path: outputs/validation-evidence.json
     media_type: application/json
     schema_version: sdi.validation-evidence/v1
-    required: true
+    role: domain_output
     max_bytes: 32768
 diagnostic:
   path: diagnostic.txt

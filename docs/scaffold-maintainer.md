@@ -91,11 +91,13 @@ not copied console output.
 
 ## Deferred Domain Capabilities
 
-The current four-Stage chain is explicitly a Fixture. The following remain
+Composition is implemented: a configured model proposes compositions over the
+supplied service descriptions, and the integration package checks and ranks them.
+The image-build, CV, and CD Stages are explicitly Fixtures. The following remain
 deferred and must not be claimed, inferred, or quietly added as maintenance:
 
-- real mobility-requirement analysis, service discovery, compatibility checking,
-  composition, and placement selection;
+- retrieval-based service discovery, requirement analysis beyond the declared
+  requirement IDs, and composition checked against running services;
 - real multi-architecture image builds and supply-chain publication;
 - real Gazebo or Isaac Sim scenario execution, oracles, measurements, Coverage
   Gap selection, Validation evidence, and regression verdicts;

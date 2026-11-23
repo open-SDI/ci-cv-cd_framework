@@ -18,23 +18,30 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from tests._fixture_inputs import (
+    FIXTURE_COMPOSITION_CONFIG,
+    SUPPLIED_INPUT_ARGUMENTS,
+    write_fixture_composition_descriptor,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
-RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-01-fixture.yaml"
+RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
 COMMITTED_FILES = (
     RUN_REQUEST_PATH,
-    "requirements/s-04/deliver-book-to-joe.yaml",
+    "requirements/s-04/deliver-book-to-joe.md",
     "profiles/s-04/waffle-native-arm64.yaml",
+    "profiles/s-04/waffle-jetson-arm64.yaml",
     "integration/stage-profiles/composition-v1.yaml",
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/composition-fixture-v1.yaml",
     "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
     "deployment/jenkins/adapters/cv-fixture-v1.yaml",
     "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    FIXTURE_COMPOSITION_CONFIG,
 )
 
 
@@ -65,6 +72,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         destination = repository / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         _ = destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
+    write_fixture_composition_descriptor(repository)
     _ = _git(repository, "add", ".")
     _ = _git(repository, "commit", "-m", "Add handoff Fixture inputs")
     return repository, _git(repository, "rev-parse", "HEAD")
@@ -87,6 +95,7 @@ def _valid_bundle(
             RUN_REQUEST_PATH,
             "--bundle-root",
             str(bundle_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
         ],
         check=False,
         capture_output=True,

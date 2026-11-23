@@ -1,4 +1,5 @@
 FROM docker.io/jenkins/jenkins:2.568.3-jdk21@sha256:68964c38dbb70c0bf6adff480d6dda2e1191d2d07e076c9fd2996345303eb999
+LABEL org.sdi.project=ci-cv-cd_framework
 
 COPY --chown=jenkins:jenkins controller/plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --latest=false --plugin-file /usr/share/jenkins/ref/plugins.txt

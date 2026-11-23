@@ -1,0 +1,149 @@
+{
+  "$defs": {
+    "DiscoverySettings": {
+      "additionalProperties": false,
+      "description": "Discovery settings every generator shares; no embeddings is lexical only.",
+      "properties": {
+        "embeddings": {
+          "$ref": "#/$defs/EmbeddingsConfig",
+          "title": "Embeddings"
+        }
+      },
+      "title": "DiscoverySettings",
+      "type": "object"
+    },
+    "EmbeddingsConfig": {
+      "additionalProperties": false,
+      "description": "The endpoint that embeds descriptions and queries for dense discovery.",
+      "properties": {
+        "api_key_env": {
+          "minLength": 1,
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url": {
+          "minLength": 1,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "on_unavailable": {
+          "default": "fail",
+          "enum": [
+            "fail",
+            "lexical"
+          ],
+          "title": "On Unavailable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "base_url",
+        "api_key_env"
+      ],
+      "title": "EmbeddingsConfig",
+      "type": "object"
+    },
+    "GeneratorConfig": {
+      "additionalProperties": false,
+      "description": "One generator's model, limits, context budget and endpoint.",
+      "properties": {
+        "api_key_env": {
+          "minLength": 1,
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url": {
+          "minLength": 1,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "max_context_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Context Bytes",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "title": "Reasoning Effort",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "reasoning_effort",
+        "max_output_tokens",
+        "timeout_seconds",
+        "max_context_bytes",
+        "base_url",
+        "api_key_env"
+      ],
+      "title": "GeneratorConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Every named generator, the default one and the shared discovery settings.",
+  "properties": {
+    "default_generator": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Default Generator",
+      "type": "string"
+    },
+    "discovery": {
+      "$ref": "#/$defs/DiscoverySettings"
+    },
+    "generators": {
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+          "$ref": "#/$defs/GeneratorConfig"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 63
+      },
+      "title": "Generators",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "sdi.composition-config/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "default_generator",
+    "generators",
+    "discovery"
+  ],
+  "title": "CompositionConfig",
+  "type": "object"
+}

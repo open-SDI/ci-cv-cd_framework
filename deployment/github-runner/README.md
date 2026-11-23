@@ -1,10 +1,12 @@
 # GitHub Handoff Runner
 
-This directory owns the host interface for the one self-hosted runner permitted
-to hand a Pipeline integration run to private Jenkins. The runner is pinned to
-GitHub Actions runner `2.337.0` for Linux x86_64 and the upstream archive's
-published SHA-256 digest. It is configured with automatic binary updates
-disabled so a reviewed pin cannot drift.
+This directory owns the host interface for the self-hosted runners permitted to
+hand a Pipeline integration run to private Jenkins: one per repository, each in
+its own account. `sdi-runner` serves upstream and `sdi-runner-fork` serves the
+fork; the interface derives every path from the account's `$HOME`. The runner is
+pinned to GitHub Actions runner `2.337.0` for Linux x86_64 and the upstream
+archive's published SHA-256 digest. It is configured with automatic binary
+updates disabled so a reviewed pin cannot drift.
 
 ## Account Boundary
 
@@ -58,6 +60,16 @@ deployment/github-runner/bin/runner install-service
 deployment/github-runner/bin/runner start
 deployment/github-runner/bin/runner status
 ```
+
+Register the fork's runner the same way from its own account, `sdi-runner-fork`,
+with `SDI_GITHUB_RUNNER_REPOSITORY=https://github.com/gurkhaman/ci-cv-cd_framework`
+and a distinct runner name such as `jenkins-handoff-host-fork`. Its repository's
+`pipeline-integration-jenkins` environment sets `SDI_JENKINS_JOB_PATH` to
+`pipeline-integration-fork`.
+
+`status` prints the registered repository URL and runner name from the
+runner's own `.runner` file, or states that the runner is not configured, before
+the user service status.
 
 The registration token is configuration-time input, not a service environment
 value. The runner receives only the custom label `sdi-jenkins-handoff`; default
@@ -113,7 +125,7 @@ remain independently manageable through this interface:
    `deployment/installation.env` and this interface as one change.
 3. From the candidate account, run preflight, then install, configure, and start
    the candidate with a distinct runner name and the same handoff-only label.
-4. Confirm exactly one online repository runner has only the
+4. Confirm exactly one online runner in that repository has only the
    `sdi-jenkins-handoff` label and remains low privilege; the old runner must
    remain offline.
 5. Run one protected-main Fixture through `Pipeline integration` and retain its
@@ -121,8 +133,8 @@ remain independently manageable through this interface:
 6. Only after validation succeeds, use the old account to unregister and remove
    its service and files, then retire that account through guided administration.
 
-Do not run old and new runners concurrently against the handoff label. There is
-no automatic update or credential-rotation mechanism.
+Do not run old and new runners for one repository concurrently against the
+handoff label. There is no automatic update or credential-rotation mechanism.
 
 The runner software must be reviewed and repinned within 30 days of a new
 GitHub Actions runner release. A critical security update can require an

@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
+    "openai==3.26.0",
     "pydantic==2.13.5",
     "requests==2.34.2",
     "ruamel-yaml==0.19.0",
@@ -18,6 +19,7 @@ dependencies = [
 [project.scripts]
 sdi-integration = "sdi_pipeline_integration._cli:main"
 sdi-fixture-adapter = "sdi_pipeline_integration._fixture_adapter:main"
+sdi-composition-adapter = "sdi_pipeline_integration._composition_adapter:main"
 
 [tool.hatch.build.targets.wheel.force-include]
 "fixtures/cases" = "sdi_pipeline_integration/_fixture_cases"

@@ -3,14 +3,20 @@ case_id: composition-malformed-response
 stage: composition
 match_inputs:
   - slot: run_request
-    byte_size: 316
-    sha256: 78d81e498c3155076c5d38db160e4d06ac5416b88b35ca3f90eb1519db2e7de4
+    byte_size: 314
+    sha256: cccff41e3149ef9622597962f47792b9487f2bbce74731271ff241fd1f9a743d
   - slot: requirements_specification
-    byte_size: 2260
-    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+    byte_size: 8550
+    sha256: 852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55
   - slot: target_profile
-    byte_size: 214
-    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+    byte_size: 203
+    sha256: 84dd69df5d85c1c952e7894903ac6d42a16d1c8ae793f719c63fbd07cb0aab46
+  - slot: service_repository
+    byte_size: 192
+    sha256: b19d11139b8172261548482e72aeec31d82fdbfd43500f80ef2ad20996533cb5
+  - slot: composition_settings
+    byte_size: 449
+    sha256: 352b1a9e903dcf32a95afcbe4a2edfeb93f6278fbf76f05137f9c1ffcd36fea5
 behavior: malformed_response
 execution_conclusion: failed
 domain_outcome: not_evaluated

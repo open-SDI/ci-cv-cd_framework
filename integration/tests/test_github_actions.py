@@ -12,23 +12,30 @@ from pathlib import Path
 import pytest
 from ruamel.yaml import YAML
 
+from tests._fixture_inputs import (
+    FIXTURE_COMPOSITION_CONFIG,
+    SUPPLIED_INPUT_ARGUMENTS,
+    write_fixture_composition_descriptor,
+)
+
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = SOURCE_ROOT / ".github/workflows/pipeline-integration.yml"
 RUNNER_SCRIPT = SOURCE_ROOT / "deployment/github-runner/bin/runner"
-RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-01-fixture.yaml"
+RUN_REQUEST_PATH = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
 COMMITTED_FILES = (
     RUN_REQUEST_PATH,
     "runs/conformance/composition-negative-domain.yaml",
-    "requirements/s-04/deliver-book-to-joe.yaml",
+    "requirements/s-04/deliver-book-to-joe.md",
     "profiles/s-04/waffle-native-arm64.yaml",
+    "profiles/s-04/waffle-jetson-arm64.yaml",
     "integration/stage-profiles/composition-v1.yaml",
     "integration/stage-profiles/image-build-v1.yaml",
     "integration/stage-profiles/cv-v1.yaml",
     "integration/stage-profiles/cd-v1.yaml",
-    "deployment/jenkins/adapters/composition-fixture-v1.yaml",
     "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
     "deployment/jenkins/adapters/cv-fixture-v1.yaml",
     "deployment/jenkins/adapters/cd-fixture-v1.yaml",
+    FIXTURE_COMPOSITION_CONFIG,
 )
 
 
@@ -59,6 +66,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         destination = repository / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
+    write_fixture_composition_descriptor(repository)
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Add GitHub presentation Fixture inputs")
     return repository, _git(repository, "rev-parse", "HEAD")
@@ -83,6 +91,7 @@ def _bundle(
             run_request_path,
             "--bundle-root",
             str(bundle_root),
+            *SUPPLIED_INPUT_ARGUMENTS,
         ],
         check=False,
         capture_output=True,
@@ -284,7 +293,7 @@ def test_completed_published_bundle_renders_status_first_summary(
     )
     assert "`bundle/pipeline-integration-result.json`" in completed.stdout
     assert "`handoff-receipt.json`" in completed.stdout
-    assert "- Combination: `C-01`" in completed.stdout
+    assert "- Combination: `C-05`" in completed.stdout
     assert "Supported combination" not in completed.stdout
     assert "KPI evaluation: `not evaluated`" in completed.stdout
     assert "Fixture warning" in completed.stdout
@@ -836,6 +845,8 @@ def test_host_runner_interface_is_pinned_user_managed_and_handoff_only() -> None
     assert "JENKINS_HOME" in script
     assert "/var/run/docker.sock" in script
     assert "sudo systemctl" not in script
+    assert "show_registration\n        systemctl --user status" in script
+    assert '"$RUNNER_HOME/.runner"' in script
     assert "sudo ./" not in script
     assert all(
         command in script

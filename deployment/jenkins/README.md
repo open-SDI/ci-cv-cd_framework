@@ -5,7 +5,8 @@ agents. The controller runs on supported Ubuntu LTS x86_64, has no executors,
 and is started only on demand. One dedicated `integration` agent performs only
 integration work; four independently replaceable agents provide the
 `composition`, `image-build`, `cv`, and `cd` scheduling labels. The root pipeline
-executes one submitted Fixture chain across those five agents.
+executes one submitted run across those five agents: implemented composition,
+then the image-build, CV, and CD Fixtures.
 
 The tracked authority is:
 
@@ -18,7 +19,9 @@ The tracked authority is:
   image without inherited volume metadata.
 - `casc/jenkins.yaml`: global security, zero-executor, five-node, retention, and
   Job DSL configuration.
-- `jobs/pipeline-integration.groovy`: the fixed parameterized Pipeline SCM job.
+- `jobs/pipeline-integration.groovy`: the two fixed parameterized Pipeline SCM
+  jobs, `pipeline-integration` for upstream and `pipeline-integration-fork` for
+  the fork.
 - `compose.yaml`: loopback-only controller publication, named controller state,
   five agent services, and a separate egress-capable network for each agent.
 - `Jenkinsfile`: the thin repository-owned scheduler over public integration CLI
@@ -83,34 +86,54 @@ those tasks.
 ## Local Configuration
 
 Copy `config/controller.env.example` to the ignored
-`config/local/controller.env` and set every value. The repository URL must be an
-uncredentialed HTTPS GitHub clone URL. `JENKINS_AGENT_CONTROLLER_URL` is
-exactly `http://controller:8080` for local Compose agents and an uncredentialed
-HTTPS URL for a relocated agent. Persisted container IPs and machine names are
-not configuration. The host port, user IDs, endpoint, repository identity, and
-secret locations are local deployment settings rather than tracked topology.
-The five `*_LIMIT_SECONDS` settings are trusted deployment overrides for the
-tracked 90-minute run and 10, 30, 45, and 15 minute Stage defaults. They must be
-positive integers no greater than one day; the run limit must leave at least two
-minutes for finalization. Workflow dispatch parameters cannot change them.
+`config/local/controller.env` and set every value. `JENKINS_REPOSITORY_URL`
+names the upstream repository and `JENKINS_FORK_REPOSITORY_URL` the fork; each
+must be a distinct uncredentialed HTTPS GitHub clone URL.
+`JENKINS_AGENT_CONTROLLER_URL` is exactly `http://controller:8080` for local
+Compose agents and an uncredentialed HTTPS URL for a relocated agent. Persisted
+container IPs and machine names are not configuration. The host port, user IDs,
+endpoint, repository identity, and secret locations are local deployment
+settings rather than tracked topology. The five `*_LIMIT_SECONDS` settings are
+trusted deployment overrides for the tracked 90-minute run and 10, 30, 45, and
+15 minute Stage defaults. They must be positive integers no greater than one
+day; the run limit must leave at least two minutes for finalization. Workflow
+dispatch parameters cannot change them.
 
-Create the administrator and machine-user password files outside the checkout.
-Each file must be nonempty, owned by the operator, and inaccessible to group and
-other users, for example mode `0600`. Compose mounts them through `/run/secrets`;
-secret values are never placed in tracked files or Compose environment values.
+Create the administrator and machine-user password files and the OpenAI API key
+file outside the checkout. Each file must be nonempty, owned by the operator, and
+inaccessible to group and other users, for example mode `0600`. Compose mounts
+them into the controller only, through `/run/secrets`; secret values are never
+placed in tracked files or Compose environment values.
 
 JCasC creates the two local identities from those bootstrap files. The
 administrator has `Overall/Administer`. The handoff machine user has only
-`Overall/Read` globally and `Job/Read`, `Job/Build`, and `Job/Cancel` on the fixed
-job. Anonymous users receive no permissions. The administrator must later issue
-the named machine-user API token and place it only in the protected
+`Overall/Read` globally and `Job/Read`, `Job/Build`, and `Job/Cancel` on both
+fixed jobs. Anonymous users receive no permissions. The administrator must later
+issue the named machine-user API token and place it only in the protected
 `pipeline-integration-jenkins` GitHub environment. Password authentication is
 not the GitHub-to-Jenkins contract.
 
-The dedicated GitHub runner uses the host interface under
+Each dedicated GitHub runner uses the host interface under
 `deployment/github-runner/`. It is a separate low-privilege user service with no
 Docker socket or Jenkins-state access. The service environment never persists
 this API token; GitHub releases it only to the protected handoff job.
+
+Jenkins serves two repositories through two otherwise identical jobs:
+`pipeline-integration` clones upstream and `pipeline-integration-fork` clones
+the fork. Fork-specific names carry the `-fork` suffix. The `Jenkinsfile`
+selects the repository by its job name and refuses any other job, so the
+protected-main ancestry check runs against the repository that submitted the
+run. Each repository has its own runner account, such as `sdi-runner` for
+upstream and `sdi-runner-fork` for the fork, and its own
+`pipeline-integration-jenkins` GitHub environment whose `SDI_JENKINS_JOB_PATH`
+names its job. Both jobs share the five agents, each with one executor, so
+overlapping runs queue or time out.
+
+The agent images bake the integration code of the checkout that ran
+`stack start`, normally fork `main`, while each run executes the workflow,
+handoff, and `Jenkinsfile` of its own repository. Dispatch on upstream only
+after a sync pull request has brought upstream `main` level with the fork
+`main` commit the images were built from.
 
 JCasC owns one reviewed script-sandbox approval: reading
 `FlowInterruptedException.getCauses()` lets the thin scheduler distinguish a
@@ -140,9 +163,25 @@ destroyed controller volume:
 
 Never copy one registration secret between nodes. Destroying `jenkins-home`
 invalidates the old files; remove them and repeat provisioning. The integration
-agent receives no Domain credential and has no Domain label. The four Fixture
-descriptors currently declare no Domain secret binding, so every agent container
-sees only its own registration file and no controller password.
+agent receives no Domain credential and has no Domain label. The three Fixture
+descriptors declare no Domain secret binding, and no agent container sees a
+controller password.
+
+The composition descriptor binds `OPENAI_API_KEY` and `VLLM_KEY`. The root
+pipeline reads `integration/composition-config.yaml` and passes no generator, so
+it composes with the default luna generator; the agents cannot reach the
+self-hosted qwen endpoint. It binds the Jenkins secret
+text credential `sdi-openai-api-key` as `OPENAI_API_KEY` around the composition
+Stage only. JCasC creates that credential from the file named by
+`JENKINS_OPENAI_API_KEY_FILE`, which holds only the key. JCasC reads that file
+only at controller startup and overwrites UI edits to the credential, so rotate
+the key while no build runs: rewrite the file, keep it mode `0600`, then run
+`bin/stack stop` and `bin/stack start`. Allow the `ci` agent
+HTTPS egress to `api.openai.com`, which serves both luna and the embeddings.
+Without a valid key or that egress, composition fails with
+`sdi.composition.dense-discovery-unavailable` and the build is red.
+The pipeline passes the checked-out `service-repository/` to every Stage
+command.
 
 Each image contains an immutable role and label identity under `/etc/sdi` on its
 read-only root filesystem. The supported Stage execution commands refuse every
@@ -173,7 +212,14 @@ all agents connect over WebSocket. `stop` removes all containers and networks
 but retains only the `jenkins-home` named volume. Agent workspaces are separate
 tmpfs mounts, have no shared or persistent filesystem, and disappear whenever
 their container is replaced. Their five separate networks allow GitHub checkout
-without making peer agents reachable.
+without making peer agents reachable. Every image the stack builds carries the
+label `org.sdi.project=ci-cv-cd_framework`.
+
+Agent images install the integration package when they are built, so a
+pipeline run checks out the submitted commit but runs the adapter code baked
+into its agent image. After merging any change under `integration/`, shut the
+stack down as in [Safe Shutdown](#safe-shutdown) and run `stack start`, which
+rebuilds the agent images, so the next run uses the merged code.
 
 The root pipeline deletes every allocated workspace before checkout and in a
 `finally` block. Each agent independently checks out and verifies the submitted
@@ -205,8 +251,8 @@ it must be retained.
 
 ## Safe Shutdown
 
-Prevent new protected-environment delivery and stop the dedicated GitHub runner
-before shutdown. Then quiesce Jenkins and stop the stack:
+Prevent new protected-environment delivery and stop every dedicated GitHub
+runner before shutdown. Then quiesce Jenkins and stop the stack:
 
 ```sh acceptance=stack-safe-shutdown
 deployment/jenkins/bin/stack quiesce
@@ -301,7 +347,7 @@ history:
 4. Run `stack start-controller`, provision the five fixed node registration
    secrets, and run `stack start`.
 5. Run `stack verify-live` and `stack exercise-live` against the reconstructed
-   installation. These prove the zero-executor controller, fixed job, five
+   installation. These prove the zero-executor controller, both fixed jobs, five
    identities and labels, one executor per agent, clean isolated workspaces,
    exact pins, and convergence. Run `stack smoke` separately for repository
    acceptance; it uses an isolated ephemeral project.
@@ -317,14 +363,14 @@ or firewall policy.
 
 ## Maintenance And Rotation
 
-Maintain one runner, Domain agent, or credential at a time while no run is queued
-or building. Use the order provision, validate, run one immediate protected-main
-Fixture, then revoke the predecessor. `reconcile-agent` enters Jenkins quiet
-mode, refuses replacement unless the fixed queue and job are idle, and resumes
-Jenkins after replacement or failure. Stop the GitHub runner first so no handoff
-is stranded in GitHub while Jenkins is quiet. A descriptor replacement is
-valid only by changing that descriptor's immutable image digest and then
-reconciling its one matching agent.
+Maintain one runner, Domain agent, or credential at a time while no run is
+queued or building. Use the order provision, validate, run one immediate
+protected-main Fixture, then revoke the predecessor. `reconcile-agent` enters
+Jenkins quiet mode, refuses replacement unless the queue and both fixed jobs are
+idle, and resumes Jenkins after replacement or failure. Stop the GitHub runner
+first so no handoff is stranded in GitHub while Jenkins is quiet. A descriptor
+replacement is valid only by changing that descriptor's immutable image digest
+and then reconciling its one matching agent.
 
 For administrator passwords and the handoff machine-user token, stage one
 successor outside the checkout, validate its least privilege and intended
@@ -373,21 +419,24 @@ deployment/jenkins/bin/stack smoke
 ```
 
 The smoke check uses an isolated Compose project, owner-only temporary bootstrap
-files, five distinct temporary registration secrets, a random loopback port,
-and a fresh named volume. It verifies the exact Jenkins, plugin, Remoting,
-Python, and `uv` inputs; native JCasC validation; controller and agent executor
-counts; labels and identities; WebSocket connectivity; the fixed job; and the
-handoff authorization boundary. Temporary jobs clean before and after each
-allocation and execute twice on every label to prove correct node allocation,
-clean workspaces, the integration/Domain role boundary, one-secret visibility,
-missing Docker access, and runtime network isolation. The checker also
-distinguishes missing labels, invalid mappings, incorrect executor counts,
-unavailable agents, and admissible busy agents.
+files, five distinct temporary registration secrets, a random loopback port, and
+a fresh named volume. It verifies the exact Jenkins, plugin, Remoting, Python,
+and `uv` inputs; native JCasC validation; controller and agent executor counts;
+labels and identities; WebSocket connectivity; both fixed jobs; and the handoff
+authorization boundary. Temporary jobs clean before and after each allocation
+and execute twice on every label to prove correct node allocation, clean
+workspaces, the integration/Domain role boundary, one-secret visibility, missing
+Docker access, and runtime network isolation. The checker also distinguishes
+missing labels, invalid mappings, incorrect executor counts, unavailable agents,
+and admissible busy agents.
 
 The smoke then mutates controller and node configuration, deletes one managed
-node and the fixed job, restarts all six containers while preserving the
+node and both fixed jobs, restarts all six containers while preserving the
 controller volume, and proves JCasC and Job DSL restore repository state. Agent
-tmpfs workspaces are recreated empty. Cleanup removes the isolated smoke volume.
+tmpfs workspaces are recreated empty. Cleanup removes the isolated smoke volume
+and prunes dangling images labelled `org.sdi.project=ci-cv-cd_framework`, such
+as superseded builds of the fixed image tags. Unlabelled images, base images,
+and the build cache are untouched.
 
 `integration/scripts/verify` includes this smoke check after the Python package
 checks. The smoke also replaces the controller passwords and Jenkins inbound
@@ -412,7 +461,7 @@ sources are the Jenkins LTS changelog, official Jenkins Docker image, Jenkins
 plugin index, Configuration as Code plugin, Job DSL plugin, and Matrix
 Authorization plugin.
 
-The agent build combines the descriptor-selected CPython 3.12.13 Fixture runtime
+The agent build combines the descriptor-selected CPython 3.12.13 runtime
 with the official Jenkins inbound-agent `3391.va_37fa_a_305d6d-2` JDK 21 image
 and official `uv` 0.12.1 image. The production integration package and its exact
 dependencies are installed from `integration/uv.lock` while the image has build
@@ -426,3 +475,6 @@ Compose environment configuration.
 
 Controller health and Fixture execution prove pipeline machinery only. They are
 not Domain success, Validation evidence, deployment evidence, or KPI evidence.
+The descriptor `image` selects each agent's runtime base; the runtime starts the
+descriptor's entry point from the agent's installed package rather than pulling
+that image per Stage.

@@ -1,0 +1,25 @@
+schema_version: sdi.composition-config/v1
+default_generator: luna
+generators:
+  luna:
+    model: gpt-6-luna
+    reasoning_effort: high
+    max_output_tokens: 32000
+    timeout_seconds: 300
+    max_context_bytes: 98304
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  # Self-hosted, to keep live tests cheap; never a product fallback.
+  qwen:
+    model: Qwen/Qwen3.8-27B
+    reasoning_effort: xhigh
+    max_output_tokens: 32000
+    timeout_seconds: 600
+    max_context_bytes: 98304
+    base_url: http://localhost:8000/v1
+    api_key_env: VLLM_KEY
+discovery:
+  embeddings:
+    model: text-embedding-3-small
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY

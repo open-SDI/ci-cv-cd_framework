@@ -74,6 +74,10 @@ ReasonCode = Annotated[
         max_length=127,
     ),
 ]
+EnvironmentName = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[A-Z][A-Z0-9_]*$", max_length=63),
+]
 ImageReference = Annotated[
     str,
     StringConstraints(
@@ -98,8 +102,8 @@ BASE_INPUT_GRANTS = {
         "sdi.pipeline-integration-run-request/v1",
     ),
     "requirements_specification": (
-        "requirements-specification.yaml",
-        "application/yaml",
+        "requirements-specification.md",
+        "text/markdown",
         "sdi.mobility-requirements-specification/v1",
     ),
     "target_profile": (
@@ -127,12 +131,27 @@ BASE_INPUT_GRANTS = {
         "application/json",
         "sdi.validation-evidence/v1",
     ),
+    "service_repository": (
+        "service-repository.json",
+        "application/json",
+        "sdi.service-repository-manifest/v1",
+    ),
+    "composition_settings": (
+        "composition-settings.json",
+        "application/json",
+        "sdi.composition-settings/v1",
+    ),
 }
+# Run-supplied inputs come from the operator's flags, not from committed run
+# inputs or an earlier Stage, so no result provenance names their source.
+SUPPLIED_INPUT_SLOTS = frozenset({"service_repository", "composition_settings"})
 EXPECTED_STAGE_INPUT_SLOTS: dict[StageName, tuple[str, ...]] = {
     "composition": (
         "run_request",
         "requirements_specification",
         "target_profile",
+        "service_repository",
+        "composition_settings",
     ),
     "image_build": (
         "target_profile",
@@ -188,6 +207,20 @@ EXPECTED_STAGE_OUTPUTS: dict[StageName, dict[str, tuple[str, str, str]]] = {
             "sdi.deployment-result/v1",
         ),
     },
+}
+# Optional evidence records how an implemented Stage reached its outcome. It is
+# never a Domain input to a later Stage.
+EXPECTED_STAGE_EVIDENCE: dict[StageName, dict[str, tuple[str, str, str]]] = {
+    "composition": {
+        "composition_evidence": (
+            "outputs/composition-evidence.json",
+            "application/json",
+            "sdi.composition-evidence/v1",
+        ),
+    },
+    "image_build": {},
+    "cv": {},
+    "cd": {},
 }
 MAX_ARTIFACT_PATH_BYTES = 512
 MAX_ARTIFACT_COMPONENT_BYTES = 255
@@ -357,7 +390,7 @@ class AdapterDescriptor(ContractModel):
     stage_profile_version: NonBlank
     stage_profile_sha256: Sha256
     agent_label: Slug
-    secret_bindings: list[Slug]
+    secret_bindings: list[EnvironmentName]
 
     @field_validator("stage_profile")
     @classmethod
@@ -397,7 +430,9 @@ class OutputGrant(ContractModel):
     path: RepositoryPath
     media_type: NonBlank
     schema_version: NonBlank
-    required: bool
+    # A Domain output is required whenever the Domain outcome is not failed;
+    # Stage evidence is optional and never a Domain input.
+    role: Literal["domain_output", "stage_evidence"]
     max_bytes: PositiveInt
 
     @field_validator("path")
@@ -452,24 +487,25 @@ class StageProfile(ContractModel):
             slot: BASE_INPUT_GRANTS[slot]
             for slot in EXPECTED_STAGE_INPUT_SLOTS[self.stage]
         }
-        expected_outputs = EXPECTED_STAGE_OUTPUTS[self.stage]
         actual_inputs = {
             item.slot: (item.path, item.media_type, item.schema_version)
             for item in self.inputs
         }
-        actual_outputs = {
-            item.slot: (item.path, item.media_type, item.schema_version)
-            for item in self.outputs
-        }
         if actual_inputs != expected_inputs:
             msg = f"{self.stage} input grants do not match the reviewed profile"
             raise ValueError(msg)
-        if actual_outputs != expected_outputs:
-            msg = f"{self.stage} output grants do not match the reviewed profile"
-            raise ValueError(msg)
-        if not all(output.required for output in self.outputs):
-            msg = f"every {self.stage} output is required"
-            raise ValueError(msg)
+        for role, expected_outputs in (
+            ("domain_output", EXPECTED_STAGE_OUTPUTS[self.stage]),
+            ("stage_evidence", EXPECTED_STAGE_EVIDENCE[self.stage]),
+        ):
+            actual_outputs = {
+                item.slot: (item.path, item.media_type, item.schema_version)
+                for item in self.outputs
+                if item.role == role
+            }
+            if actual_outputs != expected_outputs:
+                msg = f"{self.stage} output grants do not match the reviewed profile"
+                raise ValueError(msg)
         return self
 
 
@@ -589,6 +625,18 @@ class AcceptedDomainFile(ContractModel):
     sha256: Sha256
 
 
+class AcceptedEvidenceFile(ContractModel):
+    """One schema-valid record of how an implemented Stage reached its outcome."""
+
+    role: Literal["stage_evidence"]
+    slot: SlotName
+    path: RepositoryPath
+    media_type: NonBlank
+    schema_version: NonBlank
+    byte_size: NonNegativeInt
+    sha256: Sha256
+
+
 class AcceptedDiagnosticFile(ContractModel):
     """One bounded sanitized diagnostic accepted by the integration runtime."""
 
@@ -602,7 +650,8 @@ class AcceptedDiagnosticFile(ContractModel):
 
 
 type AcceptedFile = Annotated[
-    AcceptedDomainFile | AcceptedDiagnosticFile, Field(discriminator="role")
+    AcceptedDomainFile | AcceptedEvidenceFile | AcceptedDiagnosticFile,
+    Field(discriminator="role"),
 ]
 
 
@@ -830,9 +879,13 @@ class FixtureCase(ContractModel):
         if (
             self.behavior == "response"
             and self.execution_conclusion == "succeeded"
+            and self.domain_outcome != "failed"
             and not self.outputs
         ):
             msg = "a successful Fixture case must declare outputs"
+            raise ValueError(msg)
+        if self.domain_outcome == "failed" and self.outputs:
+            msg = "a negative Domain Fixture case cannot declare Domain output"
             raise ValueError(msg)
         if self.execution_conclusion not in {"succeeded", "failed"}:
             msg = "a Fixture adapter response may report only succeeded or failed"

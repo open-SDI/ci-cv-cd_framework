@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "CoverageClaim": {
+      "additionalProperties": false,
+      "description": "The model's claim for one requirement obligation.",
+      "properties": {
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "requirement_id": {
+          "minLength": 1,
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Services",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "status",
+        "services",
+        "reason"
+      ],
+      "title": "CoverageClaim",
+      "type": "object"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "supported",
+        "missing",
+        "uncertain",
+        "outside_composition"
+      ],
+      "type": "string"
+    },
+    "Proposal": {
+      "additionalProperties": false,
+      "description": "One joint services, artifacts and placement proposal.",
+      "properties": {
+        "coverage": {
+          "items": {
+            "$ref": "#/$defs/CoverageClaim"
+          },
+          "title": "Coverage",
+          "type": "array"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServicePlacement"
+          },
+          "minItems": 1,
+          "title": "Services",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rationale",
+        "services",
+        "coverage"
+      ],
+      "title": "Proposal",
+      "type": "object"
+    },
+    "ServicePlacement": {
+      "additionalProperties": false,
+      "description": "One chosen service, its artifact and its profile host.",
+      "properties": {
+        "artifact_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Artifact Id"
+        },
+        "capability": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[^/:]+$",
+          "title": "Capability",
+          "type": "string"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Host"
+        },
+        "service_id": {
+          "minLength": 1,
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "capability"
+      ],
+      "title": "ServicePlacement",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The model's alternatives, listed best-first.",
+  "properties": {
+    "proposals": {
+      "items": {
+        "$ref": "#/$defs/Proposal"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Proposals",
+      "type": "array"
+    }
+  },
+  "required": [
+    "proposals"
+  ],
+  "title": "CompositionProposals",
+  "type": "object"
+}

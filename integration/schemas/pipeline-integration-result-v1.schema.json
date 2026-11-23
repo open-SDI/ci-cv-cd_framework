@@ -175,17 +175,75 @@
       "title": "AcceptedDomainFile",
       "type": "object"
     },
+    "AcceptedEvidenceFile": {
+      "additionalProperties": false,
+      "description": "One schema-valid record of how an implemented Stage reached its outcome.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "const": "stage_evidence",
+          "title": "Role",
+          "type": "string"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "AcceptedEvidenceFile",
+      "type": "object"
+    },
     "AcceptedFile": {
       "discriminator": {
         "mapping": {
           "diagnostic": "#/$defs/AcceptedDiagnosticFile",
-          "domain_output": "#/$defs/AcceptedDomainFile"
+          "domain_output": "#/$defs/AcceptedDomainFile",
+          "stage_evidence": "#/$defs/AcceptedEvidenceFile"
         },
         "propertyName": "role"
       },
       "oneOf": [
         {
           "$ref": "#/$defs/AcceptedDomainFile"
+        },
+        {
+          "$ref": "#/$defs/AcceptedEvidenceFile"
         },
         {
           "$ref": "#/$defs/AcceptedDiagnosticFile"
@@ -238,13 +296,17 @@
       "discriminator": {
         "mapping": {
           "diagnostic": "#/$defs/BundleDiagnosticArtifact",
-          "domain_output": "#/$defs/BundleDomainArtifact"
+          "domain_output": "#/$defs/BundleDomainArtifact",
+          "stage_evidence": "#/$defs/BundleEvidenceArtifact"
         },
         "propertyName": "role"
       },
       "oneOf": [
         {
           "$ref": "#/$defs/BundleDomainArtifact"
+        },
+        {
+          "$ref": "#/$defs/BundleEvidenceArtifact"
         },
         {
           "$ref": "#/$defs/BundleDiagnosticArtifact"
@@ -256,7 +318,7 @@
       "description": "One bounded sanitized diagnostic included in the archive candidate.",
       "properties": {
         "byte_size": {
-          "maximum": 4096,
+          "maximum": 16384,
           "minimum": 0,
           "title": "Byte Size",
           "type": "integer"
@@ -365,6 +427,65 @@
         "sha256"
       ],
       "title": "BundleDomainArtifact",
+      "type": "object"
+    },
+    "BundleEvidenceArtifact": {
+      "additionalProperties": false,
+      "description": "One schema-valid Stage evidence record included in the archive candidate.",
+      "properties": {
+        "byte_size": {
+          "maximum": 262144,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)(?!.*[\\x00-\\x1f\\x7f]).*[^/]$",
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "const": "stage_evidence",
+          "title": "Role",
+          "type": "string"
+        },
+        "schema_version": {
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "title": "Slot",
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName"
+        }
+      },
+      "required": [
+        "role",
+        "stage",
+        "slot",
+        "path",
+        "media_type",
+        "schema_version",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "BundleEvidenceArtifact",
       "type": "object"
     },
     "Correlation": {
@@ -602,7 +723,7 @@
       "type": "string"
     },
     "fixture_notice": {
-      "const": "Deterministic pipeline-interface Fixtures may have simulated outcomes; no real Domain capability, Validation verdict, deployment outcome, or KPI was evaluated.",
+      "const": "Stages reported with implementation mode `fixture` are deterministic pipeline-interface Fixtures whose outcomes may be simulated and evaluate no real Domain capability; no Validation verdict, deployment outcome, or KPI was evaluated.",
       "title": "Fixture Notice",
       "type": "string"
     },

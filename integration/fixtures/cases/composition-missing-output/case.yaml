@@ -3,14 +3,20 @@ case_id: composition-missing-output
 stage: composition
 match_inputs:
   - slot: run_request
-    byte_size: 321
-    sha256: 0df1ae595b0a138b8eda5dc1995d2a3c848dffdd65884401ac17e9c67ba7c617
+    byte_size: 319
+    sha256: beed1b6ea7c953b50659ff61099a7f74eb242a3f860fa0d4de82000b028732d7
   - slot: requirements_specification
-    byte_size: 2260
-    sha256: 01b21a6bff3f18c12015a98e42c3140c0242c7945410f30bc4cee8fc010915e5
+    byte_size: 8550
+    sha256: 852e614e8eb9795c775ce61fe55ca507c39a2e40de40be897efe0e6ce1704b55
   - slot: target_profile
-    byte_size: 214
-    sha256: f5b84ae340f6a614780928aa8e5d5d4450236dc072e0672b494b1b84e99453f3
+    byte_size: 203
+    sha256: 84dd69df5d85c1c952e7894903ac6d42a16d1c8ae793f719c63fbd07cb0aab46
+  - slot: service_repository
+    byte_size: 192
+    sha256: b19d11139b8172261548482e72aeec31d82fdbfd43500f80ef2ad20996533cb5
+  - slot: composition_settings
+    byte_size: 449
+    sha256: 352b1a9e903dcf32a95afcbe4a2edfeb93f6278fbf76f05137f9c1ffcd36fea5
 behavior: missing_output
 execution_conclusion: failed
 domain_outcome: not_evaluated

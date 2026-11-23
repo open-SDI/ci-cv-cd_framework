@@ -85,9 +85,13 @@
           "title": "Path",
           "type": "string"
         },
-        "required": {
-          "title": "Required",
-          "type": "boolean"
+        "role": {
+          "enum": [
+            "domain_output",
+            "stage_evidence"
+          ],
+          "title": "Role",
+          "type": "string"
         },
         "schema_version": {
           "minLength": 1,
@@ -106,7 +110,7 @@
         "path",
         "media_type",
         "schema_version",
-        "required",
+        "role",
         "max_bytes"
       ],
       "title": "OutputGrant",

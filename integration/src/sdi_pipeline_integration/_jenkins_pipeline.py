@@ -15,11 +15,13 @@ from ._local_dispatch import DESCRIPTORS, assemble_bundle, validate_bundle
 from ._run_input import identify_committed_run
 from ._stage_runtime import (
     StageExecution,
+    check_key_bindings,
     committed_stage_sources,
     execute_identified_stage,
     load_stage_adapter,
     load_stage_execution,
     skipped_stage_execution,
+    supplied_stage_sources,
 )
 from ._yaml_input import InputError
 
@@ -88,14 +90,17 @@ def parse_build_started_at(build_started_at_millis: str) -> datetime:
     return started_at
 
 
-def _identify_submitted_run(
+def _identify_submitted_run(  # noqa: PLR0913
     *,
     repository_path: Path,
     requested_ref: str,
     resolved_commit: str,
     run_request_path: str,
     execution_id: str,
-) -> tuple[dict[str, Any], GitRepository]:
+    service_repository: Path,
+    composition_config: str,
+    generator: str | None,
+) -> tuple[dict[str, Any], GitRepository, dict[str, StageInputSource]]:
     identified = identify_committed_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
@@ -105,7 +110,15 @@ def _identify_submitted_run(
     )
     repository = GitRepository(repository_path, resolved_commit)
     repository.require_ref_commit(requested_ref)
-    return identified, repository
+    run_inputs = committed_stage_sources(
+        repository, identified
+    ) | supplied_stage_sources(
+        repository,
+        service_repository=service_repository,
+        composition_config=composition_config,
+        generator=generator,
+    )
+    return identified, repository, run_inputs
 
 
 def preflight_jenkins_run(  # noqa: PLR0913
@@ -120,6 +133,9 @@ def preflight_jenkins_run(  # noqa: PLR0913
     github_run_attempt: str,
     build_started_at_millis: str,
     resource_nodes: Mapping[str, str],
+    service_repository: Path,
+    composition_config: str,
+    generator: str | None,
 ) -> dict[str, Any]:
     """Revalidate one submitted run, every Stage, and allocated resources."""
     enforce_integration_execution_boundary()
@@ -132,12 +148,15 @@ def preflight_jenkins_run(  # noqa: PLR0913
     if dict(resource_nodes) != EXPECTED_RESOURCE_NODES:
         msg = "Jenkins resource mapping does not match the reviewed topology"
         raise InputError(msg)
-    identified, repository = _identify_submitted_run(
+    identified, repository, run_inputs = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
+        service_repository=service_repository,
+        composition_config=composition_config,
+        generator=generator,
     )
     for expected_stage, descriptor_path in DESCRIPTORS:
         descriptor, profile = load_stage_adapter(repository, descriptor_path)
@@ -149,7 +168,7 @@ def preflight_jenkins_run(  # noqa: PLR0913
         ):
             msg = f"{expected_stage} does not match its reviewed Jenkins Stage"
             raise InputError(msg)
-    committed_stage_sources(repository, identified)
+        check_key_bindings(descriptor, run_inputs)
     return identified
 
 
@@ -216,20 +235,25 @@ def execute_jenkins_stage(  # noqa: PLR0913
     prior_attempt_roots: Sequence[Path],
     work_limit_seconds: int,
     run_deadline_epoch_millis: str,
+    service_repository: Path,
+    composition_config: str,
+    generator: str | None,
 ) -> dict[str, Any]:
     """Execute the next Stage from validated committed and stashed inputs."""
-    identified, repository = _identify_submitted_run(
+    identified, repository, run_inputs = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
+        service_repository=service_repository,
+        composition_config=composition_config,
+        generator=generator,
     )
-    committed_inputs = committed_stage_sources(repository, identified)
     executions, available_inputs = _load_execution_prefix(
         prior_attempt_roots,
         execution_id,
-        committed_inputs,
+        run_inputs,
     )
     if executions and _blocks_downstream(executions[-1]):
         msg = "a blocking accepted attempt prevents further Stage execution"
@@ -293,21 +317,26 @@ def finalize_jenkins_run(  # noqa: PLR0913
     attempt_roots: Sequence[Path],
     run_deadline_expired: bool,
     bundle_root: Path,
+    service_repository: Path,
+    composition_config: str,
+    generator: str | None,
 ) -> dict[str, Any]:
     """Materialize skips and assemble one complete validated Jenkins result."""
     enforce_integration_execution_boundary()
-    identified, repository = _identify_submitted_run(
+    identified, repository, run_inputs = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
         run_request_path=run_request_path,
         execution_id=execution_id,
+        service_repository=service_repository,
+        composition_config=composition_config,
+        generator=generator,
     )
-    committed_inputs = committed_stage_sources(repository, identified)
     executions, _available_inputs = _load_execution_prefix(
         attempt_roots,
         execution_id,
-        committed_inputs,
+        run_inputs,
     )
     blocker = next((item for item in executions if _blocks_downstream(item)), None)
     if len(executions) < len(DESCRIPTORS) and blocker is None:

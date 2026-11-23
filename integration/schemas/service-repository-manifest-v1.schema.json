@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "ManifestFile": {
+      "additionalProperties": false,
+      "description": "One description file copied into a Stage's inputs.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "path": {
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*SDI\\.md$",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "byte_size",
+        "sha256"
+      ],
+      "title": "ManifestFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The exact description files a Stage receives from the service repository.",
+  "properties": {
+    "files": {
+      "items": {
+        "$ref": "#/$defs/ManifestFile"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "sdi.service-repository-manifest/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "files"
+  ],
+  "title": "ServiceRepositoryManifest",
+  "type": "object"
+}
