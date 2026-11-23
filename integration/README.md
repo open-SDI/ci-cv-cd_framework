@@ -10,13 +10,13 @@ environment.
 
 Tests marked `live` call a real model provider; tests marked `slow` wait out a
 real work limit or deadline. `scripts/verify` runs every test except the
-`cv_engine` tests: the non-`slow` tests in parallel, then the `slow` tests
+`cv_engine` and `k3s` tests: the non-`slow` tests in parallel, then the `slow` tests
 serially, because parallel load can push their timing past its bounds. For a
 fast check while developing, run from this directory:
 
 ```sh
 uv sync --frozen --all-groups
-uv run pytest -m "not live and not slow and not cv_engine" -n auto --dist worksteal
+uv run pytest -m "not live and not slow and not cv_engine and not k3s" -n auto --dist worksteal
 ```
 
 Tests marked `cv_engine` run real S-04 compositions in a Docker-in-Docker
@@ -30,6 +30,22 @@ uv run pytest -m cv_engine -v
 
 When those tests are selected and the engine or registry does not answer, the
 session stops with a non-zero exit before any test runs.
+
+Tests marked `k3s` run the CD adapter, `sdi-cd-adapter`, from the host against
+a K3s stand-in cluster built from the K3s services in
+`deployment/jenkins/compose.yaml`. They use the host `kubectl`, and they copy
+their images into the cluster's registry with `docker buildx imagetools`. Set
+`SDI_K3S_SERVER_URL` to the API server, `SDI_K3S_KUBECONFIG` to a kubeconfig
+for it, and `SDI_K3S_REGISTRY_URL` to the registry that the nodes see as
+`registry:5000`:
+
+```sh
+uv run pytest -m k3s -v
+```
+
+When those tests are selected and a variable is missing, or the API server or
+the registry does not answer, the session stops with a non-zero exit before
+any test runs.
 
 ## Identify A Committed Run
 
@@ -244,8 +260,7 @@ whose digest differs from the deployment schema's, and the placement limit is
 48. The builder, registry and arm64 checks run only when some placement is
 buildable, so a run with nothing to build never touches the builder. In Jenkins,
 a successful composition is followed by a real image build, after which CV runs
-the composition from the pushed images and the CD Fixture skips with
-`sdi.dependency.implemented-evidence`. A runtime hard timeout kills the adapter
+the composition from the pushed images and CD deploys it. A runtime hard timeout kills the adapter
 and its clients together and leaves its scratch directory on the agent's `/tmp`
 tmpfs until the agent restarts.
 
@@ -318,6 +333,51 @@ share the space that is left.
 Locally, CV never runs. After a successful composition it is blocked, and the
 Fixture chain's output makes it skip with `sdi.dependency.fixture-evidence`.
 
+## CD Adapter
+
+`sdi-cd-adapter` runs only in Jenkins, on the `cd` agent, against the stack's
+K3s stand-in cluster at `https://k3s-xycar:6443`. It reads the kubeconfig that
+the K3s server writes into the volume mounted at `/etc/sdi/k3s`. It deploys one
+composition in one attempt. A failed CV verdict skips CD, and a CV that did not
+evaluate the composition lets CD run.
+
+Before it contacts the cluster, the adapter checks every placement. For each
+placement it records the first of these reasons:
+
+1. The placement is unresolved: `unresolved-placement`.
+2. The image-build result records no built image: `image-not-built`.
+3. The built image has no platform for the profile host's architecture:
+   `no-image-for-architecture`.
+4. The host is not one of the cluster's nodes `burger`, `waffle`, `orin`, and
+   `xycar`: `host-not-in-cluster`.
+
+Any reason makes the deployment not evaluated, and every other placement is
+`blocked`.
+
+When every placement passes, the adapter renders one Deployment per placement,
+pinned to the per-platform digest for its host's architecture. It waits up to
+120 s for a Ready node for each host, creates the namespace
+`sdi-<execution id>`, applies the manifest, waits for each pod to run, and then
+waits a 60 s settle window. A placement is `deployed` when its pod runs on its
+host's node with the pinned digest and has not restarted. Otherwise the
+placement fails, and its `detail` gives the Kubernetes reason, such as
+`ImagePullBackOff` or `CrashLoopBackOff`. The adapter deletes the namespace on
+every path. Images for arm64 hosts run on the amd64 nodes under the host's
+QEMU emulation.
+
+| Outcome code | Execution | Domain outcome | Category | Published |
+| --- | --- | --- | --- | --- |
+| `sdi.cd.succeeded` | succeeded | succeeded | no reason | Deployment result |
+| `sdi.cd.failed` | succeeded | failed | domain | Deployment result |
+| `sdi.cd.not-evaluated` | succeeded | not evaluated | dependency | Deployment result |
+| `sdi.cd.nodes-not-ready` | failed | not evaluated | dependency | diagnostic |
+| `sdi.cd.cluster-error` | failed | not evaluated | dependency | diagnostic |
+
+A failed deployment turns the run red, and a deployment that is not evaluated
+leaves it green. The Deployment result records the applied manifest whenever
+the adapter applied one. Locally, CD runs its Fixture, which publishes no
+evidence.
+
 ## Dispatch A Local Run
 
 `dispatch-local` assigns one Execution ID, executes the reviewed composition,
@@ -354,7 +414,7 @@ six-combination verdict.
 
 ## Jenkins Pipeline Operations
 
-The root `Jenkinsfile` composes five public CLI operations rather than parsing or
+The root `Jenkinsfile` composes six public CLI operations rather than parsing or
 constructing contracts in Groovy:
 
 - `preflight-jenkins-run` takes `--integration-node` and
@@ -376,9 +436,15 @@ constructing contracts in Groovy:
 - `finalize-jenkins-run` creates typed downstream skips, assembles the exact
   archive, and validates it on the integration agent.
 - `bundle-conclusion` revalidates the bundle and derives the run's colour. The
-  run is red when Jenkins machinery failed or when CV failed the composition.
+  run is red when Jenkins machinery failed, when CV failed the composition, or
+  when CD failed to deploy it.
   Any other valid negative Domain outcome, and a composition that CV did not
   evaluate, keeps it green. `dispatch-local` exits with the same colour.
+- `deployment-manifest` runs after the bundle is archived. It validates the
+  bundle again and writes `deployment-manifest.yaml` from the CD Deployment
+  result's manifest, with the same YAML function the CD adapter applies. Jenkins
+  archives the file outside the bundle. When CD was not evaluated, skipped, or
+  failed as machinery, the command writes nothing.
 
 A digest mismatch exits with status 4 and the reason
 `sdi.agent.stale-image`, naming the stale agents, before any Stage work. When
@@ -466,15 +532,17 @@ window when possible.
 queue and build facts become known. It contains relative Jenkins references,
 never the private base URL or credentials. A `SUCCESS` build is accepted only
 after complete schema, Execution-ID, path, size, digest, and undeclared-file
-validation. A Jenkins `FAILURE` can still return a valid diagnostic bundle, but
-the handoff exits unsuccessfully. `ABORTED`, missing, malformed, mismatched, or
+validation. The one artifact allowed outside the bundle is
+`deployment-manifest.yaml`, at most 128 KiB, which the handoff writes beside the
+bundle root. Any other extra artifact fails the handoff. A Jenkins `FAILURE` can
+still return a valid diagnostic bundle, but the handoff exits unsuccessfully. `ABORTED`, missing, malformed, mismatched, or
 incomplete evidence likewise fails with the available partial receipt.
 
 The workflow captures the command's result record rather than printing it into
 live logs, so the visible handoff output remains the native sanitized phase
-sequence. Its always-run publication step uploads the validated bundle and
-available receipt as the sole 90-day artifact named
-`pipeline-integration-<execution_id>`.
+sequence. Its always-run publication step uploads the validated bundle, the
+available receipt, and `deployment-manifest.yaml` when the handoff wrote one, as
+the sole 90-day artifact named `pipeline-integration-<execution_id>`.
 
 After publication, `github-summary` independently validates the receipt and any
 returned bundle, incorporates GitHub's handoff and publication outcomes, renders
@@ -504,9 +572,9 @@ remains possible. Handled failures, crashes, deadline expiry, rejected candidate
 transactions, unavailable implementations, and blocked dependencies appear as
 typed attempts; skipped attempts never imply that a process ran. Adapter or
 deadline failures return status 1 after printing the result. A failed CV
-outcome also returns status 1, because CV found that the composition fails. Any
-other valid negative Domain outcome still returns status 0 because adapter
-execution succeeded.
+or CD outcome also returns status 1, because CV found that the composition
+fails or CD could not deploy it. Any other valid negative Domain outcome still
+returns status 0 because adapter execution succeeded.
 
 Candidate acceptance is transactional. A malformed, missing, changing, unsafe,
 undeclared, oversized, identity-mismatched, or schema-invalid candidate

@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 REPOSITORY_ROOT = Path(__file__).parents[2]
 VERIFY = REPOSITORY_ROOT / "integration" / "scripts" / "verify"
 ADAPTERS = REPOSITORY_ROOT / "deployment" / "jenkins" / "adapters"
+FAST_TESTS = (
+    "uv run --frozen pytest -m not slow and not cv_engine and not k3s "
+    "-n auto --dist worksteal"
+)
+SLOW_TESTS = "uv run --frozen pytest -m slow and not k3s"
 
 
 def _acceptance_checkout(tmp_path: Path) -> tuple[Path, Path]:
@@ -192,8 +197,8 @@ def test_verification_is_the_complete_fail_fast_acceptance_gate(tmp_path: Path) 
         "uv run --frozen ruff format --check .",
         "uv run --frozen ruff check .",
         "uv run --frozen basedpyright",
-        "uv run --frozen pytest -m not slow and not cv_engine -n auto --dist worksteal",
-        "uv run --frozen pytest -m slow",
+        FAST_TESTS,
+        SLOW_TESTS,
         "uv tree --frozen --all-groups",
         "stack smoke",
         "uv run --frozen sdi-integration stage-status --repository ..",
@@ -218,7 +223,7 @@ def test_verification_is_the_complete_fail_fast_acceptance_gate(tmp_path: Path) 
         "composition: implemented (jenkins), implemented (local)\n"
         "image-build: implemented (jenkins), fixture (local)\n"
         "cv: implemented (jenkins), implemented (local)\n"
-        "cd: fixture (jenkins), fixture (local)\n"
+        "cd: implemented (jenkins), fixture (local)\n"
     )
     assert completed.stdout.endswith(f"Repository acceptance passed.\n{stage_status}")
 
@@ -313,10 +318,8 @@ def test_fast_tier_skips_the_slow_tests_and_the_stack_smoke(tmp_path: Path) -> N
 
     assert completed.returncode == 0, completed.stderr
     commands = _commands(tmp_path)
-    assert commands[-1] == (
-        "uv run --frozen pytest -m not slow and not cv_engine -n auto --dist worksteal"
-    )
-    assert "uv run --frozen pytest -m slow" not in commands
+    assert commands[-1] == FAST_TESTS
+    assert SLOW_TESTS not in commands
     assert "stack smoke" not in commands
     assert completed.stdout.endswith(
         "fast tier passed; run integration/scripts/verify before opening a PR\n"
@@ -459,12 +462,12 @@ def test_verification_waits_while_another_process_holds_the_host_lock(
                 None,
             )
             assert waiting == f"verify: waiting for {tmp_path / 'host.lock'}\n"
-            assert "uv run --frozen pytest -m slow" not in _commands(tmp_path)
+            assert SLOW_TESTS not in _commands(tmp_path)
             fcntl.flock(held, fcntl.LOCK_UN)
             _, stderr = verifying.communicate()
     assert verifying.returncode == 0, stderr
     commands = _commands(tmp_path)
-    assert "uv run --frozen pytest -m slow" in commands
+    assert SLOW_TESTS in commands
     assert "stack smoke" in commands
 
 

@@ -31,6 +31,8 @@ HANDOFF_PARAMETERS = (
     "GITHUB_RUN_ATTEMPT",
 )
 HANDOFF_RECEIPT_PATH = "handoff-receipt.json"
+DEPLOYMENT_MANIFEST_PATH = "deployment-manifest.yaml"
+DEPLOYMENT_MANIFEST_MAX_BYTES = 128 * 1024
 
 type HandoffPhase = Literal[
     "validating",

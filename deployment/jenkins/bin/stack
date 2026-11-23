@@ -8,6 +8,7 @@ config=$root/config/local/controller.env
 project_name=${COMPOSE_PROJECT_NAME:-sdi-jenkins}
 prebuilt=
 cv_warm=true
+k3s_services='k3s-xycar k3s-burger k3s-waffle k3s-orin'
 
 fail() {
     printf 'stack: %s\n' "$1" >&2
@@ -195,6 +196,8 @@ case "$action" in
         export JENKINS_AGENT_NETWORK_INTERNAL
         case "$action" in
             stop)
+                compose rm --force --stop --volumes $k3s_services >/dev/null 2>&1 || \
+                    fail 'cannot remove the K3s stand-in cluster'
                 container_ids=$(compose ps --all --quiet 2>/dev/null) || \
                     fail 'cannot inspect the stack before shutdown'
                 compose stop --timeout 60 >/dev/null 2>&1 || \
@@ -850,7 +853,7 @@ case "$action" in
             build_controller
             agent_services='integration ci image-build cv cd'
         fi
-        compose pull --quiet --policy missing buildkitd registry cv-engine
+        compose pull --quiet --policy missing buildkitd registry cv-engine $k3s_services
         [ -z "$agent_services$runner_services" ] || \
             compose build $agent_services $runner_services $proxy_services
         for agent in $agent_services; do
@@ -865,6 +868,8 @@ case "$action" in
                 fail 'the CV engine has no simulation image, so start did not start the agents and runners; rerun: deployment/jenkins/bin/stack start'
         fi
         refuse_active_runner_job
+        compose rm --force --stop --volumes $k3s_services >/dev/null 2>&1 || \
+            fail 'cannot remove the previous K3s stand-in cluster'
         compose up --no-build --detach --wait --wait-timeout 240
         ;;
     register-runner)

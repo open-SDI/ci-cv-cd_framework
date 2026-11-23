@@ -322,6 +322,16 @@ def execute_jenkins_stage(  # noqa: PLR0913
         integration_code_digest(repository_path / "integration"),
         {definition.agent.node: baked_code_digest},
     )
+    minimum_seconds = definition.grant.minimum_work_limit_seconds
+    granted_seconds = definition.grant.work_limit_seconds
+    if work_limit_seconds is None:
+        work_limit_seconds = granted_seconds
+    elif not minimum_seconds <= work_limit_seconds <= granted_seconds:
+        msg = (
+            f"--work-limit-seconds must be between {minimum_seconds} and the"
+            f" {stage} Stage's granted {granted_seconds} seconds"
+        )
+        raise InputError(msg)
     identified, repository, committed = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
@@ -350,15 +360,6 @@ def execute_jenkins_stage(  # noqa: PLR0913
     expected = STAGE_ORDER[next_stage_index]
     if stage != expected:
         msg = f"next accepted attempt must execute the {expected} Stage"
-        raise InputError(msg)
-    granted_seconds = definition.grant.work_limit_seconds
-    if work_limit_seconds is None:
-        work_limit_seconds = granted_seconds
-    elif not 1 <= work_limit_seconds <= granted_seconds:
-        msg = (
-            f"--work-limit-seconds must be between 1 and the {stage} Stage's"
-            f" granted {granted_seconds} seconds"
-        )
         raise InputError(msg)
 
     if POSITIVE_DECIMAL.fullmatch(run_deadline_epoch_millis) is None:

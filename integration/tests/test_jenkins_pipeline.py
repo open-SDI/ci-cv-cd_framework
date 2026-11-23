@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
+from sdi_pipeline_integration._cd_deployment import manifest_yaml
 from sdi_pipeline_integration._integration_code import integration_code_digest
+from sdi_pipeline_integration._result_contracts import FIXTURE_NOTICE
 from sdi_pipeline_integration._stage_registry import AGENTS, INTEGRATION_AGENT, STAGES
+from tests import _cd_evidence as cd
 from tests._cv_evidence import (
     AMD64_DIGEST,
     FAILED,
@@ -91,14 +95,21 @@ def _repository(
     shutil.copytree(service_repository, repository / "service-repository")
     copy_baked_integration_code(repository)
     write_fixture_composition_descriptor(repository)
+    adapters = repository / "deployment/jenkins/adapters"
+    _run_the_cd_fixture_without_a_cluster(adapters)
     if fixture_image_build:
-        adapters = repository / "deployment/jenkins/adapters"
         (adapters / "image-build-v1.yaml").write_bytes(
             (adapters / "image-build-fixture-v1.yaml").read_bytes()
         )
     _git(repository, "add", ".")
     _git(repository, "commit", "-m", "Add distributed Fixture inputs")
     return repository, _git(repository, "rev-parse", "HEAD")
+
+
+def _run_the_cd_fixture_without_a_cluster(adapters: Path) -> None:
+    (adapters / "cd-v1.yaml").write_bytes(
+        (adapters / "cd-fixture-v1.yaml").read_bytes()
+    )
 
 
 def _common(repository: Path, commit_sha: str, request_path: str) -> list[str]:
@@ -410,6 +421,41 @@ def test_a_work_limit_outside_the_grant_claims_no_attempt(
         f" and the composition Stage's granted {COMPOSITION_GRANT_SECONDS} seconds\n"
     )
     assert not attempt.exists()
+
+
+CD_GRANT_SECONDS = STAGES["cd"].grant.work_limit_seconds
+
+
+def test_a_cd_work_limit_too_short_for_its_node_wait_claims_no_attempt(
+    tmp_path: Path,
+) -> None:
+    repository, commit_sha = _repository(tmp_path)
+    attempt = tmp_path / "attempt"
+
+    executed = _execute_stage(
+        repository, commit_sha, "cd", attempt, ("--work-limit-seconds", "219")
+    )
+
+    assert executed.returncode == 2
+    assert executed.stderr == (
+        "sdi-integration: --work-limit-seconds must be between 220"
+        f" and the cd Stage's granted {CD_GRANT_SECONDS} seconds\n"
+    )
+    assert not attempt.exists()
+
+
+def test_the_cd_minimum_work_limit_is_not_refused(tmp_path: Path) -> None:
+    repository, commit_sha = _repository(tmp_path)
+
+    executed = _execute_stage(
+        repository,
+        commit_sha,
+        "cd",
+        tmp_path / "attempt",
+        ("--work-limit-seconds", "220"),
+    )
+
+    assert "--work-limit-seconds" not in executed.stderr
 
 
 def test_a_stage_without_a_work_limit_gets_its_full_grant(tmp_path: Path) -> None:
@@ -801,11 +847,15 @@ CV_REASONS = {
 }
 
 
-def _implemented_cv_chain(
-    tmp_path: Path, domain_outcome: str, evidence: dict[str, Any] | None
-) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    repository = _implemented_upstream(tmp_path, CV_IMAGES, placements=CV_PLACEMENTS)
-    adapter = tmp_path / "implemented-cv-adapter"
+def _select_evidence_adapter(
+    repository: Path,
+    stage: Literal["cv", "cd"],
+    domain_outcome: str,
+    evidence: dict[str, Any] | None,
+    reason: dict[str, str] | None,
+) -> None:
+    (grant,) = STAGES[stage].grant.evidence
+    adapter = repository.parent / f"scripted-{stage}-adapter"
     write_scripted_adapter(
         adapter,
         f"""evidence = {evidence!r}
@@ -814,29 +864,36 @@ if evidence is not None:
         {{"slot": item["slot"], "sha256": item["sha256"]}} for item in request["inputs"]
     ]
     (output / "outputs").mkdir()
-    (output / "outputs/validation-evidence.json").write_text(json.dumps(evidence))
+    (output / "outputs/{grant.file_name}").write_text(json.dumps(evidence))
 response = {{
     "schema_version": "sdi.stage-adapter-response/v1",
     "correlation": request["correlation"],
     "execution_conclusion": "succeeded",
     "domain_outcome": {domain_outcome!r},
     "consumed_inputs": [item["slot"] for item in request["inputs"]],
-    "produced_outputs": [] if evidence is None else ["validation_evidence"],
+    "produced_outputs": [] if evidence is None else [{grant.name!r}],
     "diagnostic": {{"present": False, "truncated": False}},
 }}
-reason = {CV_REASONS[domain_outcome]!r}
+reason = {reason!r}
 if reason is not None:
     response["reason"] = reason
 (output / "response.json").write_text(json.dumps(response))
 """,
     )
-    descriptor = repository / STAGES["cv"].jenkins_descriptor
+    descriptor = repository / STAGES[stage].jenkins_descriptor
     committed = descriptor.read_text()
-    scripted = committed.replace("entrypoint: sdi-cv-adapter", f"entrypoint: {adapter}")
+    scripted = re.sub(r"entrypoint: .*", f"entrypoint: {adapter}", committed).replace(
+        "implementation_mode: fixture", "implementation_mode: implemented"
+    )
     assert scripted != committed
     descriptor.write_text(scripted)
+
+
+def _commit_and_execute(
+    tmp_path: Path, repository: Path
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select implemented upstream Stages and CV")
+    _git(repository, "commit", "-m", "Select scripted Stage adapters")
     return _execute_chain(
         repository,
         _git(repository, "rev-parse", "HEAD"),
@@ -844,6 +901,20 @@ if reason is not None:
         tmp_path / "run",
         str(int((time.time() - 1) * 1000)),
     )
+
+
+def _implemented_cv_chain(
+    tmp_path: Path, domain_outcome: str, evidence: dict[str, Any] | None
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    repository = _implemented_upstream(tmp_path, CV_IMAGES, placements=CV_PLACEMENTS)
+    _select_evidence_adapter(
+        repository,
+        "cv",
+        domain_outcome,
+        evidence,
+        CV_REASONS[domain_outcome],
+    )
+    return _commit_and_execute(tmp_path, repository)
 
 
 @pytest.mark.parametrize(
@@ -919,6 +990,345 @@ def test_cv_check_rejects_evidence_contradicting_a_failed_attempt(
     assert cv["adapter_response_accepted"] is False
     assert cv["reason"]["code"] == "sdi.adapter.candidate-rejected"
     assert conclusion.returncode == 1
+
+
+CD_IMAGES = {
+    service_id: {
+        "service_id": service_id,
+        "status": "built",
+        "repository": f"sdi/{service_id}",
+        "digest": cd.INDEX_DIGEST,
+        "platforms": [
+            {"architecture": "amd64", "digest": AMD64_DIGEST},
+            {"architecture": "arm64", "digest": cd.ARM64_DIGEST},
+        ],
+    }
+    for service_id in SERVICE_IDS
+}
+CD_REASONS = {
+    "succeeded": None,
+    "failed": {
+        "category": "domain",
+        "code": "sdi.cd.failed",
+        "summary": "fixture-navigation is in CrashLoopBackOff.",
+    },
+    "not_evaluated": {
+        "category": "dependency",
+        "code": "sdi.cd.not-evaluated",
+        "summary": "fixture-navigation has no image for arm64.",
+    },
+}
+
+
+def _implemented_cd_chain(
+    tmp_path: Path,
+    domain_outcome: str,
+    evidence: dict[str, Any] | None,
+    cv_evidence: dict[str, Any] = SUCCEEDED,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    repository = _implemented_upstream(tmp_path, CD_IMAGES, placements=CV_PLACEMENTS)
+    _select_evidence_adapter(
+        repository,
+        "cv",
+        cv_evidence["domain_outcome"],
+        cv_evidence,
+        CV_REASONS[cv_evidence["domain_outcome"]],
+    )
+    _select_evidence_adapter(
+        repository,
+        "cd",
+        domain_outcome,
+        evidence,
+        CD_REASONS[domain_outcome],
+    )
+    return _commit_and_execute(tmp_path, repository)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "run_conclusion"),
+    [(cd.SUCCEEDED, 0), (cd.FAILED, RED_RUN_EXIT), (cd.NOT_EVALUATED, 0)],
+    ids=["succeeded-green", "failed-red", "not-evaluated-green"],
+)
+def test_cd_outcome_sets_the_run_colour(
+    tmp_path: Path, evidence: dict[str, Any], run_conclusion: int
+) -> None:
+    conclusion, result = _implemented_cd_chain(
+        tmp_path, evidence["domain_outcome"], evidence
+    )
+
+    attempt = result["attempts"][3]
+    assert attempt["adapter_response_accepted"] is True, attempt.get("reason")
+    assert attempt["domain_outcome"] == evidence["domain_outcome"]
+    assert [
+        (artifact["slot"], artifact["path"])
+        for artifact in result["artifacts"]
+        if artifact["stage"] == "cd"
+    ] == [("deployment_result", "stages/cd/deployment-result.json")]
+    assert conclusion.returncode == run_conclusion, conclusion.stderr
+
+
+def test_cd_implemented_execution_must_publish_its_evidence(tmp_path: Path) -> None:
+    conclusion, result = _implemented_cd_chain(tmp_path, "succeeded", None)
+
+    attempt = result["attempts"][3]
+    assert attempt.get("reason", {}).get("code") == "sdi.adapter.output-missing"
+    assert attempt["adapter_response_accepted"] is False
+    assert conclusion.returncode == RED_RUN_EXIT
+
+
+def test_cd_fixture_is_accepted_without_evidence(tmp_path: Path) -> None:
+    repository, _ = _repository(tmp_path, fixture_image_build=True)
+    _select_evidence_adapter(
+        repository,
+        "cv",
+        "not_evaluated",
+        None,
+        {
+            "category": "fixture",
+            "code": "sdi.fixture.cv-executed",
+            "summary": "A scripted CV Fixture that lets the CD Fixture run.",
+        },
+    )
+    descriptor = repository / STAGES["cv"].jenkins_descriptor
+    descriptor.write_text(
+        descriptor.read_text().replace(
+            "implementation_mode: implemented", "implementation_mode: fixture"
+        )
+    )
+
+    _, result = _commit_and_execute(tmp_path, repository)
+
+    attempt = result["attempts"][3]
+    assert attempt["implementation_mode"] == "fixture"
+    assert attempt["adapter_response_accepted"] is True, attempt.get("reason")
+    assert attempt["domain_outcome"] == "not_evaluated"
+    assert attempt["reason"]["code"] == "sdi.fixture.cd-executed"
+    assert [
+        artifact["path"]
+        for artifact in result["artifacts"]
+        if artifact["stage"] == "cd"
+    ] == ["stages/cd/diagnostic.txt"]
+
+
+def _changed(document: dict[str, Any], **changes: object) -> dict[str, Any]:
+    return json.loads(json.dumps(document)) | changes
+
+
+def _with_placement(
+    document: dict[str, Any], index: int, **changes: object
+) -> dict[str, Any]:
+    placements = json.loads(json.dumps(document["placements"]))
+    placements[index] |= changes
+    return _changed(document, placements=placements)
+
+
+@pytest.mark.parametrize(
+    ("domain_outcome", "evidence"),
+    [
+        ("failed", cd.SUCCEEDED),
+        ("failed", _changed(cd.FAILED, placements=cd.FAILED["placements"][:2])),
+        ("failed", _with_placement(cd.FAILED, 1, host="orin", node="orin")),
+        ("failed", _changed(cd.FAILED, blueprint_id="s-04-tc-03-c-05-other")),
+        (
+            "failed",
+            _changed(cd.FAILED, deployment_schema_id="s-04-tc-03-c-05-other"),
+        ),
+        (
+            "failed",
+            _changed(cd.FAILED, image_build_result_id="s-04-tc-03-c-05-other"),
+        ),
+        (
+            "failed",
+            _with_placement(
+                cd.FAILED, 0, image=cd.image("fixture-localization", AMD64_DIGEST)
+            ),
+        ),
+        (
+            "failed",
+            _with_placement(
+                cd.FAILED, 0, image_id=cd.image("fixture-localization", AMD64_DIGEST)
+            ),
+        ),
+        (
+            "failed",
+            _with_placement(
+                cd.FAILED, 1, image=cd.image("fixture-navigation", cd.INDEX_DIGEST)
+            ),
+        ),
+        (
+            "not_evaluated",
+            _with_placement(cd.NOT_EVALUATED, 2, host="waffle"),
+        ),
+        ("not_evaluated", _changed(cd.NOT_EVALUATED, blueprint_id="other")),
+        ("succeeded", _changed(cd.SUCCEEDED, image_build_result_id="other")),
+    ],
+    ids=[
+        "other-outcome",
+        "fewer-placements",
+        "other-host",
+        "other-blueprint",
+        "other-deployment-schema",
+        "other-image-build-result",
+        "deployed-image-of-another-architecture",
+        "deployed-image-id-of-another-architecture",
+        "failed-image-pinned-to-the-index",
+        "not-evaluated-other-host",
+        "not-evaluated-other-blueprint",
+        "succeeded-other-image-build-result",
+    ],
+)
+def test_cd_check_rejects_a_result_contradicting_its_inputs(
+    tmp_path: Path, domain_outcome: str, evidence: dict[str, Any]
+) -> None:
+    conclusion, result = _implemented_cd_chain(tmp_path, domain_outcome, evidence)
+
+    attempt = result["attempts"][3]
+    assert attempt["adapter_response_accepted"] is False
+    assert attempt["reason"]["code"] == "sdi.adapter.candidate-rejected"
+    assert conclusion.returncode == RED_RUN_EXIT
+
+
+def _deployment_manifest(
+    bundle_root: Path, output: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "sdi-integration",
+            "deployment-manifest",
+            "--bundle-root",
+            str(bundle_root),
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence", [cd.SUCCEEDED, cd.FAILED], ids=["succeeded", "failed"]
+)
+def test_cd_manifest_command_writes_the_manifest_the_evidence_records(
+    tmp_path: Path, evidence: dict[str, Any]
+) -> None:
+    _implemented_cd_chain(tmp_path, evidence["domain_outcome"], evidence)
+    bundle_root = tmp_path / "run" / "bundle"
+    output = tmp_path / "deployment-manifest.yaml"
+
+    written = _deployment_manifest(bundle_root, output)
+
+    assert written.returncode == 0, written.stderr
+    recorded = json.loads(
+        (bundle_root / "stages/cd/deployment-result.json").read_text()
+    )
+    assert output.read_bytes() == manifest_yaml(recorded["manifest"])
+
+
+@pytest.mark.parametrize(
+    ("cv_evidence", "evidence", "cd_conclusion"),
+    [
+        (SUCCEEDED, cd.NOT_EVALUATED, "succeeded"),
+        (FAILED, cd.SUCCEEDED, "skipped"),
+        (SUCCEEDED, None, "failed"),
+    ],
+    ids=["not-evaluated", "skipped", "machinery-failed"],
+)
+def test_cd_manifest_command_writes_nothing_without_a_manifest(
+    tmp_path: Path,
+    cv_evidence: dict[str, Any],
+    evidence: dict[str, Any] | None,
+    cd_conclusion: str,
+) -> None:
+    _, result = _implemented_cd_chain(
+        tmp_path,
+        "succeeded" if evidence is None else evidence["domain_outcome"],
+        evidence,
+        cv_evidence,
+    )
+    attempt = result["attempts"][3]
+    assert attempt["execution_conclusion"] == cd_conclusion
+    output = tmp_path / "deployment-manifest.yaml"
+
+    written = _deployment_manifest(tmp_path / "run" / "bundle", output)
+
+    assert written.returncode == 0, written.stderr
+    assert not output.exists()
+
+
+def test_cd_manifest_command_reads_only_a_valid_bundle(tmp_path: Path) -> None:
+    _implemented_cd_chain(tmp_path, "succeeded", cd.SUCCEEDED)
+    bundle_root = tmp_path / "run" / "bundle"
+    evidence = bundle_root / "stages/cd/deployment-result.json"
+    evidence.write_text(evidence.read_text().replace("waffle", "burger"))
+    output = tmp_path / "deployment-manifest.yaml"
+
+    written = _deployment_manifest(bundle_root, output)
+
+    assert written.returncode == 2
+    assert "does not match its inventory" in written.stderr
+    assert not output.exists()
+
+
+def test_an_all_implemented_run_summary_has_no_fixture_warning(
+    tmp_path: Path,
+) -> None:
+    _, result = _implemented_cd_chain(tmp_path, "succeeded", cd.SUCCEEDED)
+    assert {attempt["implementation_mode"] for attempt in result["attempts"]} == {
+        "implemented"
+    }
+
+    summary = subprocess.run(
+        [
+            "sdi-integration",
+            "github-summary",
+            "--execution-id",
+            EXECUTION_ID,
+            "--github-run-id",
+            "1000",
+            "--github-run-attempt",
+            "1",
+            "--receipt-path",
+            str(tmp_path / "handoff-receipt.json"),
+            "--bundle-root",
+            str(tmp_path / "run" / "bundle"),
+            "--handoff-outcome",
+            "success",
+            "--publication-outcome",
+            "success",
+            "--artifact-name",
+            f"pipeline-integration-{EXECUTION_ID}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "- Result: `validated`" in summary.stdout, summary.stderr
+    assert "## Evidence limits" in summary.stdout
+    assert "KPI evaluation: `not evaluated`" in summary.stdout
+    assert "Fixture warning" not in summary.stdout
+
+
+def test_bundle_validation_rejects_a_fixture_notice_when_no_stage_is_a_fixture(
+    tmp_path: Path,
+) -> None:
+    _implemented_cd_chain(tmp_path, "succeeded", cd.SUCCEEDED)
+    bundle_root = tmp_path / "run" / "bundle"
+    result_path = bundle_root / "pipeline-integration-result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["fixture_notice"] = FIXTURE_NOTICE
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    validated = subprocess.run(
+        ["sdi-integration", "validate-bundle", "--bundle-root", str(bundle_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert validated.returncode == 2
+    assert "fixture_notice" in validated.stderr
 
 
 def test_preflight_rejects_a_key_the_composition_descriptor_does_not_bind(

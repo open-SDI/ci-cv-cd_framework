@@ -1,12 +1,73 @@
 {
   "$defs": {
-    "FixtureDeploymentRecord": {
+    "DeployedPlacement": {
       "additionalProperties": false,
-      "description": "One intended placement that was deliberately not applied.",
+      "description": "A placement whose pod ran its pinned image on its host's node and held.",
       "properties": {
-        "application_status": {
-          "const": "not_evaluated",
-          "title": "Application Status",
+        "host": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Host",
+          "type": "string"
+        },
+        "image": {
+          "pattern": "^registry:5000/sdi/[a-z][a-z0-9]*(?:-[a-z0-9]+)*@sha256:[0-9a-f]{64}$",
+          "title": "Image",
+          "type": "string"
+        },
+        "image_id": {
+          "pattern": "^(?:[\\x21-\\x3f\\x41-\\x7e]{1,255}@)?sha256:[0-9a-f]{64}$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "node": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Node",
+          "type": "string"
+        },
+        "phase": {
+          "const": "Running",
+          "title": "Phase",
+          "type": "string"
+        },
+        "restart_count": {
+          "const": 0,
+          "title": "Restart Count",
+          "type": "integer"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "deployed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "host",
+        "status",
+        "node",
+        "image",
+        "image_id",
+        "phase",
+        "restart_count"
+      ],
+      "title": "DeployedPlacement",
+      "type": "object"
+    },
+    "FailedPlacement": {
+      "additionalProperties": false,
+      "description": "A placement whose pod broke the pass rule, with Kubernetes' own reason.",
+      "properties": {
+        "detail": {
+          "pattern": "^[\\x20\\x21\\x23-\\x5b\\x5d-\\x7e]{1,256}$",
+          "title": "Detail",
           "type": "string"
         },
         "host": {
@@ -15,20 +76,60 @@
           "title": "Host",
           "type": "string"
         },
+        "image": {
+          "pattern": "^registry:5000/sdi/[a-z][a-z0-9]*(?:-[a-z0-9]+)*@sha256:[0-9a-f]{64}$",
+          "title": "Image",
+          "type": "string"
+        },
+        "image_id": {
+          "pattern": "^(?:[\\x21-\\x3f\\x41-\\x7e]{1,255}@)?sha256:[0-9a-f]{64}$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "node": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Node",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "Pending",
+            "Running",
+            "Succeeded",
+            "Failed",
+            "Unknown"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "restart_count": {
+          "minimum": 0,
+          "title": "Restart Count",
+          "type": "integer"
+        },
         "service_id": {
           "maxLength": 63,
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
           "title": "Service Id",
           "type": "string"
+        },
+        "status": {
+          "const": "failed",
+          "title": "Status",
+          "type": "string"
         }
       },
       "required": [
         "service_id",
-        "application_status"
+        "host",
+        "status",
+        "detail"
       ],
-      "title": "FixtureDeploymentRecord",
+      "title": "FailedPlacement",
       "type": "object"
     },
+    "JsonValue": {},
     "SourceInputDigest": {
       "additionalProperties": false,
       "description": "Stable exact-byte input correlation embedded in Domain outputs.",
@@ -51,34 +152,67 @@
       ],
       "title": "SourceInputDigest",
       "type": "object"
+    },
+    "UndeployedPlacement": {
+      "additionalProperties": false,
+      "description": "A placement that a pipeline gap kept off the cluster.",
+      "properties": {
+        "host": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Host",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "unresolved-placement",
+            "image-not-built",
+            "no-image-for-architecture",
+            "host-not-in-cluster",
+            "blocked"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "not_evaluated",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "status",
+        "reason"
+      ],
+      "title": "UndeployedPlacement",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "Fixture-qualified CD handoff that contains no deployment claim.",
+  "description": "How CD deployed one composition to the stand-in cluster.\n\nThe outcome is the attempt's domain outcome: not evaluated when a pipeline\ngap kept every placement off the cluster, failed when any placement broke\nthe pass rule, and succeeded otherwise. The manifest is the Kubernetes\nv1 List CD applied, recorded whenever it reached the cluster.",
   "properties": {
-    "application_status": {
-      "const": "not_evaluated",
-      "title": "Application Status",
-      "type": "string"
-    },
     "blueprint_id": {
       "maxLength": 63,
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
       "title": "Blueprint Id",
       "type": "string"
     },
+    "cluster_kind": {
+      "const": "stand_in",
+      "title": "Cluster Kind",
+      "type": "string"
+    },
     "combination_id": {
       "pattern": "^C-[0-9]{2}$",
       "title": "Combination Id",
       "type": "string"
-    },
-    "deployment_records": {
-      "items": {
-        "$ref": "#/$defs/FixtureDeploymentRecord"
-      },
-      "minItems": 1,
-      "title": "Deployment Records",
-      "type": "array"
     },
     "deployment_result_id": {
       "maxLength": 63,
@@ -93,12 +227,16 @@
       "type": "string"
     },
     "domain_outcome": {
-      "const": "not_evaluated",
+      "enum": [
+        "succeeded",
+        "failed",
+        "not_evaluated"
+      ],
       "title": "Domain Outcome",
       "type": "string"
     },
     "evidence_basis": {
-      "const": "fixture",
+      "const": "implemented",
       "title": "Evidence Basis",
       "type": "string"
     },
@@ -107,6 +245,39 @@
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
       "title": "Image Build Result Id",
       "type": "string"
+    },
+    "manifest": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Manifest",
+      "type": "object"
+    },
+    "placements": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "deployed": "#/$defs/DeployedPlacement",
+            "failed": "#/$defs/FailedPlacement",
+            "not_evaluated": "#/$defs/UndeployedPlacement"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/DeployedPlacement"
+          },
+          {
+            "$ref": "#/$defs/FailedPlacement"
+          },
+          {
+            "$ref": "#/$defs/UndeployedPlacement"
+          }
+        ]
+      },
+      "minItems": 1,
+      "title": "Placements",
+      "type": "array"
     },
     "profile_id": {
       "maxLength": 63,
@@ -202,8 +373,8 @@
     "profile_id",
     "source_inputs",
     "domain_outcome",
-    "application_status",
-    "deployment_records"
+    "cluster_kind",
+    "placements"
   ],
   "title": "DeploymentResult",
   "type": "object"

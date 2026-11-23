@@ -77,13 +77,6 @@ SLOTS = (
         "sdi.image-build-result/v1",
         "image_build",
     ),
-    Slot(
-        "deployment_result",
-        "deployment-result.json",
-        "application/json",
-        "sdi.deployment-result/v1",
-        "cd",
-    ),
 )
 SLOT_BY_NAME = {slot.name: slot for slot in SLOTS}
 SLOT_BY_SCHEMA = {slot.schema_version: slot for slot in SLOTS}
@@ -119,6 +112,7 @@ class StageGrant:
     domain_output_max_bytes: int
     diagnostic_max_bytes: int
     evidence: tuple[EvidenceGrant, ...] = ()
+    minimum_work_limit_seconds: int = 1
 
 
 @dataclass(frozen=True)
@@ -248,9 +242,23 @@ STAGES: dict[StageName, Stage] = {
             work_limit_seconds=15 * 60,
             domain_output_max_bytes=32768,
             diagnostic_max_bytes=4096,
+            evidence=(
+                EvidenceGrant(
+                    "deployment_result",
+                    "deployment-result.json",
+                    "application/json",
+                    "sdi.deployment-result/v1",
+                    max_bytes=65536,
+                    required=True,
+                ),
+            ),
+            # The CD adapter's teardown margin, longest node wait, and a full
+            # kubectl call each for create and apply.
+            minimum_work_limit_seconds=60 + 120 + 2 * 20,
         ),
         agent=Agent("cd", "cd"),
-        jenkins_descriptor="deployment/jenkins/adapters/cd-fixture-v1.yaml",
+        jenkins_descriptor="deployment/jenkins/adapters/cd-v1.yaml",
+        local_override="deployment/jenkins/adapters/cd-fixture-v1.yaml",
     ),
 }
 STAGE_ORDER: tuple[StageName, ...] = tuple(STAGES)

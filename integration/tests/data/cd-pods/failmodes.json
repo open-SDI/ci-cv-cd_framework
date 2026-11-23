@@ -1,0 +1,214 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "annotations": {
+          "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"annotations\":{},\"name\":\"badpull\",\"namespace\":\"sdi-failmodes\"},\"spec\":{\"containers\":[{\"image\":\"registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"name\":\"c\"}],\"nodeSelector\":{\"sdi/host\":\"burger\"}}}\n"
+        },
+        "creationTimestamp": "2026-10-24T12:08:43Z",
+        "generation": 1,
+        "name": "badpull",
+        "namespace": "sdi-failmodes"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "c",
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File"
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "burger",
+        "nodeSelector": {
+          "sdi/host": "burger"
+        },
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 30
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:50Z",
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "message": "containers with unready status: [c]",
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "message": "containers with unready status: [c]",
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imageID": "",
+            "lastState": {},
+            "name": "c",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "Back-off pulling image \"registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000\": ErrImagePull: rpc error: code = NotFound desc = failed to pull and unpack image \"registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000\": failed to resolve reference \"registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000\": registry:5000/sdi/probe@sha256:0000000000000000000000000000000000000000000000000000000000000000: not found",
+                "reason": "ImagePullBackOff"
+              }
+            }
+          }
+        ],
+        "phase": "Pending",
+        "qosClass": "BestEffort",
+        "startTime": "2026-10-24T12:08:43Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "annotations": {
+          "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"annotations\":{},\"name\":\"crash\",\"namespace\":\"sdi-failmodes\"},\"spec\":{\"containers\":[{\"command\":[\"false\"],\"image\":\"registry:5000/sdi/probe@sha256:d82c2ab94640ded77cf76514ce6a84870761105058a4a9e51b05a8a79be97a6c\",\"name\":\"c\"}],\"nodeSelector\":{\"sdi/host\":\"waffle\"}}}\n"
+        },
+        "creationTimestamp": "2026-10-24T12:08:43Z",
+        "generation": 1,
+        "name": "crash",
+        "namespace": "sdi-failmodes"
+      },
+      "spec": {
+        "containers": [
+          {
+            "command": [
+              "false"
+            ],
+            "image": "registry:5000/sdi/probe@sha256:d82c2ab94640ded77cf76514ce6a84870761105058a4a9e51b05a8a79be97a6c",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "c",
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File"
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "waffle",
+        "nodeSelector": {
+          "sdi/host": "waffle"
+        },
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 30
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:45Z",
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "message": "containers with unready status: [c]",
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "message": "containers with unready status: [c]",
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-10-24T12:08:43Z",
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://3a0776fbc64e8b40be8c8d3d8e294f6c0547ba503250e39ff34eab3abd922791",
+            "image": "sha256:ad4f11f7c85f87c0a6d6c0fe492ad53f9cdcff6e8c88b881360c70eff701c67b",
+            "imageID": "registry:5000/sdi/probe@sha256:d82c2ab94640ded77cf76514ce6a84870761105058a4a9e51b05a8a79be97a6c",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://c22c6ab31b30cf0797d0a6907b96b5887c08ae119c9d6f9c23d01b515096aa2d",
+                "exitCode": 1,
+                "finishedAt": "2026-10-24T12:09:02Z",
+                "reason": "Error",
+                "startedAt": "2026-10-24T12:09:02Z"
+              }
+            },
+            "name": "c",
+            "ready": false,
+            "restartCount": 3,
+            "started": false,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://3a0776fbc64e8b40be8c8d3d8e294f6c0547ba503250e39ff34eab3abd922791",
+                "exitCode": 1,
+                "finishedAt": "2026-10-24T12:09:32Z",
+                "reason": "Error",
+                "startedAt": "2026-10-24T12:09:32Z"
+              }
+            }
+          }
+        ],
+        "phase": "Running",
+        "qosClass": "BestEffort",
+        "startTime": "2026-10-24T12:08:43Z"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {}
+}

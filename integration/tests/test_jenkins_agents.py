@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from ruamel.yaml import YAML
 
+from sdi_pipeline_integration._cd_deployment import CLUSTER_HOSTS, HOST_LABEL
 from sdi_pipeline_integration._integration_code import BAKED_ROOTS
 from sdi_pipeline_integration._stage_registry import AGENTS, STAGES
 
@@ -23,6 +24,8 @@ JENKINS_ROOT = REPOSITORY_ROOT / "deployment" / "jenkins"
 AGENT_NAMES = {agent.node for agent in AGENTS}
 BUILDER_SERVICES = {"buildkitd", "registry"}
 CV_ENGINE = "cv-engine"
+K3S_SERVER = "k3s-xycar"
+K3S_NODES = {f"k3s-{host}" for host in CLUSTER_HOSTS}
 RUNNER_STACK_SERVICES = {
     "runner-upstream",
     "runner-fork",
@@ -30,11 +33,16 @@ RUNNER_STACK_SERVICES = {
     "runner-fork-proxy",
 }
 AGENT_LABELS = {agent.node: agent.label for agent in AGENTS}
-AGENT_TARGETS = dict.fromkeys(AGENT_NAMES, "agent") | {"image-build": "image-build"}
+AGENT_TARGETS = dict.fromkeys(AGENT_NAMES, "agent") | {
+    "image-build": "image-build",
+    "cd": "cd",
+}
 AGENT_NETWORKS = {name: [f"controller-{name}"] for name in AGENT_NAMES} | {
     "image-build": ["controller-image-build", "image-build-builder"],
     "cv": ["controller-cv", "cv-engine-agent"],
+    "cd": ["controller-cd", "k3s-cd"],
 }
+AGENT_VOLUMES = {"cd": ["k3s-kubeconfig:/etc/sdi/k3s:ro"]}
 FIXTURE_IMAGE = (
     "docker.io/library/python@"
     "sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36"
@@ -108,6 +116,7 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
         *AGENT_NAMES,
         *BUILDER_SERVICES,
         CV_ENGINE,
+        *K3S_NODES,
         *RUNNER_STACK_SERVICES,
     }
     assert "50000" not in (JENKINS_ROOT / "compose.yaml").read_text()
@@ -128,7 +137,7 @@ def test_compose_defines_five_isolated_websocket_agents() -> None:
         assert agent["environment"]["JENKINS_WEB_SOCKET"] == "true"
         assert agent["environment"]["JENKINS_AGENT_NAME"] == name
         assert agent["environment"]["JENKINS_URL"] == "${JENKINS_AGENT_CONTROLLER_URL}"
-        assert agent.get("volumes", []) == []
+        assert agent.get("volumes", []) == AGENT_VOLUMES.get(name, [])
         assert {entry.split(":", maxsplit=1)[0] for entry in agent["tmpfs"]} == {
             "/home/jenkins/agent",
             "/tmp",  # noqa: S108 - container mount point, not a host temp file.
@@ -183,9 +192,13 @@ def test_domain_agents_use_their_descriptor_selected_runtime_image() -> None:
         in dockerfile
     )
     assert "FROM ${BUILDKIT_IMAGE} AS buildkit" in dockerfile
+    assert "FROM ${KUBECTL_IMAGE} AS kubectl" in dockerfile
     assert dockerfile.endswith(
         "FROM agent AS image-build\n"
         "COPY --from=buildkit /usr/bin/buildctl /usr/bin/buildctl\n"
+        "\n"
+        "FROM agent AS cd\n"
+        "COPY --from=kubectl /bin/kubectl /usr/bin/kubectl\n"
     )
     assert "FROM ${UV_IMAGE} AS uv" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
@@ -217,7 +230,11 @@ def test_builder_and_registry_are_reachable_only_from_the_image_build_agent() ->
         "/etc/buildkit/buildkitd.toml",
     ]
     assert buildkitd["networks"] == ["image-build-builder", "builder-egress"]
-    assert registry["networks"] == ["image-build-builder", "cv-engine-registry"]
+    assert registry["networks"] == [
+        "image-build-builder",
+        "cv-engine-registry",
+        "k3s-registry",
+    ]
     assert registry["read_only"] is True
     assert registry["cap_drop"] == ["ALL"]
     assert registry["security_opt"] == ["no-new-privileges:true"]
@@ -295,6 +312,95 @@ def test_cv_engine_is_reachable_only_from_the_cv_agent() -> None:
     assert {name for name, nets in members.items() if "cv-engine-registry" in nets} == {
         CV_ENGINE,
         "registry",
+    }
+
+
+def test_cluster_hosts_are_the_compose_k3s_node_hosts() -> None:
+    services = _load_yaml(JENKINS_ROOT / "compose.yaml")["services"]
+    host_flag = f"--node-label={HOST_LABEL}="
+
+    compose_hosts = sorted(
+        argument.removeprefix(host_flag)
+        for service in services.values()
+        if "/rancher/k3s:" in service.get("image", "")
+        for argument in service["command"]
+        if argument.startswith(host_flag)
+    )
+
+    assert compose_hosts == sorted(CLUSTER_HOSTS)
+
+
+def test_k3s_nodes_reach_only_the_registry_and_their_api_only_the_cd_agent() -> None:
+    compose = _load_yaml(JENKINS_ROOT / "compose.yaml")
+    services = compose["services"]
+    networks = compose["networks"]
+    server = services[K3S_SERVER]
+    token = server["environment"]["K3S_TOKEN"]
+
+    for name in K3S_NODES:
+        node = services[name]
+        host = name.removeprefix("k3s-")
+        assert node["image"] == _installation_pins()["SDI_K3S_IMAGE"]
+        assert node["platform"] == "linux/amd64"
+        assert node["restart"] == "no"
+        assert node["privileged"] is True
+        assert node["tmpfs"] == ["/run", "/var/run"]
+        assert "ports" not in node
+        assert "build" not in node
+        assert node["command"][1:3] == [
+            f"--node-name={host}",
+            f"--node-label=sdi/host={host}",
+        ]
+        assert node["environment"]["K3S_TOKEN"] == token
+        assert node["volumes"][0] == (
+            "./k3s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro"
+        )
+    assert server["command"] == [
+        "server",
+        "--node-name=xycar",
+        "--node-label=sdi/host=xycar",
+        "--disable=traefik,servicelb,metrics-server,local-storage",
+        f"--tls-san={K3S_SERVER}",
+    ]
+    assert server["environment"]["K3S_KUBECONFIG_OUTPUT"] == (
+        "/etc/sdi/k3s/kubeconfig.yaml"
+    )
+    assert server["environment"]["K3S_KUBECONFIG_MODE"] == "644"
+    for name in K3S_NODES - {K3S_SERVER}:
+        assert services[name]["command"][0] == "agent"
+        assert services[name]["environment"]["K3S_URL"] == f"https://{K3S_SERVER}:6443"
+
+    mirror = _load_yaml(JENKINS_ROOT / "k3s" / "registries.yaml")
+    assert mirror == {
+        "mirrors": {"registry:5000": {"endpoint": ["http://registry:5000"]}}
+    }
+
+    assert networks["k3s-cd"]["internal"] is True
+    assert networks["k3s-registry"]["internal"] is True
+    assert networks["k3s-egress"] is None
+    members = {
+        name: set(service.get("networks", [])) for name, service in services.items()
+    }
+    assert {name for name, nets in members.items() if "k3s-cd" in nets} == {
+        "cd",
+        K3S_SERVER,
+    }
+    assert {name for name, nets in members.items() if "k3s-registry" in nets} == {
+        *K3S_NODES,
+        "registry",
+    }
+    assert {name for name, nets in members.items() if "k3s-egress" in nets} == (
+        K3S_NODES
+    )
+    kubeconfig_mounts = {
+        name: volume
+        for name, service in services.items()
+        for volume in service.get("volumes", [])
+        if volume.startswith("k3s-kubeconfig:")
+    }
+    assert kubeconfig_mounts == {
+        K3S_SERVER: "k3s-kubeconfig:/etc/sdi/k3s",
+        "cd": "k3s-kubeconfig:/etc/sdi/k3s:ro",
     }
 
 

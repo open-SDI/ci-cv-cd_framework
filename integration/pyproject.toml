@@ -25,6 +25,7 @@ sdi-composition-adapter = "sdi_pipeline_integration._composition_adapter:main"
 sdi-image-build-adapter = "sdi_pipeline_integration._image_build_adapter:main"
 sdi-cv-adapter = "sdi_pipeline_integration._cv_adapter:main"
 sdi-cv-warm = "sdi_pipeline_integration._cv_adapter:warm"
+sdi-cd-adapter = "sdi_pipeline_integration._cd_adapter:main"
 
 [tool.hatch.build.targets.wheel.force-include]
 "fixtures/cases" = "sdi_pipeline_integration/_fixture_cases"
@@ -47,6 +48,7 @@ markers = [
     "live: calls a real model provider over the network",
     "slow: waits out a real work limit or deadline",
     "cv_engine: runs real S-04 compositions in the CV engine pair that SDI_CV_ENGINE_URL and SDI_CV_REGISTRY_URL name",
+    "k3s: runs the CD adapter against the K3s stand-in cluster that SDI_K3S_SERVER_URL, SDI_K3S_KUBECONFIG, and SDI_K3S_REGISTRY_URL name",
 ]
 testpaths = ["tests"]
 

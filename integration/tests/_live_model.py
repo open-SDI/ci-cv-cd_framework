@@ -8,6 +8,7 @@ so a qwen run still needs the OpenAI key.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.request
@@ -61,7 +62,7 @@ def _serves(generator: dict[str, str]) -> bool:
     try:
         with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
             models = cast("dict[str, object]", json.load(response))
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         return False
     data = models.get("data")
     return isinstance(data, list) and any(

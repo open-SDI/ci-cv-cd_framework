@@ -1,0 +1,9 @@
+schema_version: sdi.adapter-descriptor/v1
+stage: cd
+implementation_mode: implemented
+image: docker.io/library/python@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
+entrypoint: sdi-cd-adapter
+process_contract_version: sdi.stage-adapter-process/v1
+stage_profile: integration/stage-profiles/cd-v1.yaml
+stage_profile_version: sdi.cd-stage-profile/v1
+secret_bindings: []

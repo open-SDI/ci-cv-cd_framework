@@ -20,6 +20,10 @@ import pytest
 import requests
 from urllib3.connectionpool import HTTPConnectionPool
 
+from sdi_pipeline_integration._handoff_contracts import (
+    DEPLOYMENT_MANIFEST_MAX_BYTES,
+    DEPLOYMENT_MANIFEST_PATH,
+)
 from sdi_pipeline_integration._jenkins_handoff import (
     HandoffError,
     _JenkinsClient,  # pyright: ignore[reportPrivateUsage]
@@ -845,6 +849,81 @@ def test_handoff_rejects_incomplete_or_invalid_exact_build_artifacts(
     terminal = cast("dict[str, object]", receipt["terminal"])
     assert terminal["code"] == code
     assert not (tmp_path / "returned/bundle").exists()
+
+
+MANIFEST = b"apiVersion: v1\nkind: List\nitems: []\n"
+
+
+@pytest.mark.parametrize("manifest", [None, MANIFEST], ids=["absent", "present"])
+def test_cd_handoff_accepts_an_optional_deployment_manifest_beside_the_bundle(
+    tmp_path: Path, valid_run: ValidRun, manifest: bytes | None
+) -> None:
+    repository, commit_sha, execution_id, bundle = valid_run
+    archived = dict(bundle)
+    if manifest is not None:
+        archived[DEPLOYMENT_MANIFEST_PATH] = manifest
+    fake = FakeJenkins(archived)
+
+    with _serve(fake):
+        completed = _handoff(
+            repository, commit_sha, execution_id, tmp_path / "returned", fake
+        )
+
+    assert completed.returncode == 0, completed.stderr
+    returned = tmp_path / "returned/bundle"
+    assert {
+        path.relative_to(returned).as_posix(): path.read_bytes()
+        for path in returned.rglob("*")
+        if path.is_file()
+    } == bundle
+    beside = tmp_path / "returned" / DEPLOYMENT_MANIFEST_PATH
+    assert (beside.read_bytes() if beside.exists() else None) == manifest
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"other.yaml": MANIFEST},
+        {f"stages/cd/{DEPLOYMENT_MANIFEST_PATH}": MANIFEST},
+        {DEPLOYMENT_MANIFEST_PATH: MANIFEST, "other.yaml": MANIFEST},
+        {DEPLOYMENT_MANIFEST_PATH: b"#" * (DEPLOYMENT_MANIFEST_MAX_BYTES + 1)},
+    ],
+    ids=["other-file", "manifest-inside-the-bundle", "manifest-and-other", "oversized"],
+)
+def test_cd_handoff_rejects_any_other_extra_artifact(
+    tmp_path: Path, valid_run: ValidRun, extra: dict[str, bytes]
+) -> None:
+    repository, commit_sha, execution_id, bundle = valid_run
+    fake = FakeJenkins(dict(bundle) | extra)
+
+    with _serve(fake):
+        completed = _handoff(
+            repository, commit_sha, execution_id, tmp_path / "returned", fake
+        )
+
+    assert completed.returncode == 1
+    receipt = json.loads((tmp_path / "returned/handoff-receipt.json").read_text())
+    assert receipt["terminal"]["code"] == "invalid_artifact"
+    assert not (tmp_path / "returned/bundle").exists()
+    assert not (tmp_path / "returned" / DEPLOYMENT_MANIFEST_PATH).exists()
+
+
+def test_cd_handoff_refuses_an_existing_manifest_before_submitting(
+    tmp_path: Path, valid_run: ValidRun
+) -> None:
+    repository, commit_sha, execution_id, bundle = valid_run
+    (tmp_path / "returned").mkdir()
+    (tmp_path / "returned" / DEPLOYMENT_MANIFEST_PATH).write_bytes(MANIFEST)
+    fake = FakeJenkins(dict(bundle) | {DEPLOYMENT_MANIFEST_PATH: MANIFEST})
+
+    with _serve(fake):
+        completed = _handoff(
+            repository, commit_sha, execution_id, tmp_path / "returned", fake
+        )
+
+    assert completed.returncode == 2
+    assert "must not already exist" in completed.stderr
+    assert fake.submitted_parameters == {}
 
 
 @pytest.mark.parametrize(

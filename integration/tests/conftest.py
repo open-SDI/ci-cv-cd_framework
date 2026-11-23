@@ -1,12 +1,18 @@
-"""Fail a session that selects cv_engine tests without a reachable CV engine pair."""
+"""Fail a session that selects cluster-backed tests without their cluster."""
 
 from __future__ import annotations
 
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 import requests
+
+from ._cd_cluster import cluster_problem
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _engine_problem() -> str | None:
@@ -28,12 +34,19 @@ def _engine_problem() -> str | None:
     return None
 
 
+PROBLEMS: dict[str, Callable[[], str | None]] = {
+    "cv_engine": _engine_problem,
+    "k3s": cluster_problem,
+}
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    if not any(item.get_closest_marker("cv_engine") for item in items):
-        return
-    problem = _engine_problem()
-    if problem is not None:
-        message = f"cv_engine tests are selected, but {problem}"
-        sys.stderr.write(f"{message}\n")
-        pytest.exit(message, returncode=pytest.ExitCode.USAGE_ERROR)
+    for marker, find_problem in PROBLEMS.items():
+        if not any(item.get_closest_marker(marker) for item in items):
+            continue
+        problem = find_problem()
+        if problem is not None:
+            message = f"{marker} tests are selected, but {problem}"
+            sys.stderr.write(f"{message}\n")
+            pytest.exit(message, returncode=pytest.ExitCode.USAGE_ERROR)

@@ -723,9 +723,16 @@
       "type": "string"
     },
     "fixture_notice": {
-      "const": "Stages reported with implementation mode `fixture` are deterministic pipeline-interface Fixtures whose outcomes may be simulated and evaluate no real Domain capability; no Validation verdict, deployment outcome, or KPI was evaluated.",
-      "title": "Fixture Notice",
-      "type": "string"
+      "anyOf": [
+        {
+          "const": "Stages reported with implementation mode `fixture` are deterministic pipeline-interface Fixtures whose outcomes may be simulated and evaluate no real Domain capability; no Validation verdict, deployment outcome, or KPI was evaluated.",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fixture Notice"
     },
     "input_provenance": {
       "items": {
@@ -799,7 +806,6 @@
     "input_provenance",
     "attempts",
     "artifacts",
-    "fixture_notice",
     "kpi_evaluation"
   ],
   "title": "PipelineIntegrationResult",

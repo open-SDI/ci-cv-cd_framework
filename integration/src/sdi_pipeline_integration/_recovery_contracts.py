@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,11 @@ PinnedImage = Annotated[
 ]
 
 
+def _kubernetes_minor(image: str) -> str | None:
+    match = re.search(r":v(\d+\.\d+)\.\d+", image)
+    return match.group(1) if match else None
+
+
 class InstallationPins(ContractModel):
     """Exact reconstructable software and workflow inputs."""
 
@@ -50,6 +56,8 @@ class InstallationPins(ContractModel):
     buildkit_image: PinnedImage
     registry_image: PinnedImage
     cv_engine_image: PinnedImage
+    k3s_image: PinnedImage
+    kubectl_image: PinnedImage
     composition_adapter_image: PinnedImage
     image_build_adapter_image: PinnedImage
     cv_adapter_image: PinnedImage
@@ -60,6 +68,14 @@ class InstallationPins(ContractModel):
     github_runner_sha256: Sha256
     checkout_action_commit: GitCommit
     upload_artifact_action_commit: GitCommit
+
+    @model_validator(mode="after")
+    def validate_kubectl_minor(self) -> Self:
+        minor = _kubernetes_minor(self.k3s_image)
+        if minor is None or _kubernetes_minor(self.kubectl_image) != minor:
+            msg = "kubectl image pin must match the K3s image pin's Kubernetes minor"
+            raise ValueError(msg)
+        return self
 
     def adapter_image(self, stage: StageName) -> str:
         """Return the runtime image every descriptor of one Stage must name."""
@@ -149,6 +165,8 @@ _EXPECTED_KEYS = {
     "SDI_BUILDKIT_IMAGE",
     "SDI_REGISTRY_IMAGE",
     "SDI_CV_ENGINE_IMAGE",
+    "SDI_K3S_IMAGE",
+    "SDI_KUBECTL_IMAGE",
     "SDI_COMPOSITION_ADAPTER_IMAGE",
     "SDI_IMAGE_BUILD_ADAPTER_IMAGE",
     "SDI_CV_ADAPTER_IMAGE",
@@ -213,6 +231,8 @@ def load_installation_authority(path: Path) -> InstallationAuthority:
             buildkit_image=values["SDI_BUILDKIT_IMAGE"],
             registry_image=values["SDI_REGISTRY_IMAGE"],
             cv_engine_image=values["SDI_CV_ENGINE_IMAGE"],
+            k3s_image=values["SDI_K3S_IMAGE"],
+            kubectl_image=values["SDI_KUBECTL_IMAGE"],
             composition_adapter_image=values["SDI_COMPOSITION_ADAPTER_IMAGE"],
             image_build_adapter_image=values["SDI_IMAGE_BUILD_ADAPTER_IMAGE"],
             cv_adapter_image=values["SDI_CV_ADAPTER_IMAGE"],
@@ -301,6 +321,7 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
             ("uv image pin", "UV_IMAGE", pins.uv_image),
             ("Jenkins Remoting pin", "REMOTING_IMAGE", pins.jenkins_remoting_image),
             ("BuildKit pin", "BUILDKIT_IMAGE", pins.buildkit_image),
+            ("kubectl pin", "KUBECTL_IMAGE", pins.kubectl_image),
         ),
     )
     from_directives = _docker_instructions(agents, "FROM")
@@ -309,9 +330,11 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
         "${UV_IMAGE} AS uv",
         "${REMOTING_IMAGE} AS remoting",
         "${BUILDKIT_IMAGE} AS buildkit",
+        "${KUBECTL_IMAGE} AS kubectl",
         "runtime AS tooling",
         "runtime AS agent",
         "agent AS image-build",
+        "agent AS cd",
     ]:
         msg = "agent build stages do not consume the reviewed image pins"
         raise ValueError(msg)
@@ -344,6 +367,10 @@ def _validate_agent_pins(repository: Path, pins: InstallationPins) -> None:
         ("buildkitd", pins.buildkit_image),
         ("registry", pins.registry_image),
         ("cv-engine", pins.cv_engine_image),
+        ("k3s-xycar", pins.k3s_image),
+        ("k3s-burger", pins.k3s_image),
+        ("k3s-waffle", pins.k3s_image),
+        ("k3s-orin", pins.k3s_image),
     ):
         service = _mapping(
             services.get(service_name), label=f"Compose {service_name} service"

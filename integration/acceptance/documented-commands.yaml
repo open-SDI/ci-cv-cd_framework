@@ -24,6 +24,10 @@ commands:
     document: docs/pipeline-integration-trigger.md
     mode: automated
     evidence: tests/test_local_dispatch.py::test_dispatches_a_contract_valid_deterministic_four_stage_fixture
+  - id: deployment-manifest
+    document: docs/pipeline-integration-trigger.md
+    mode: automated
+    evidence: tests/test_jenkins_pipeline.py::test_cd_manifest_command_writes_the_manifest_the_evidence_records
   - id: github-cancel
     document: docs/pipeline-integration-trigger.md
     mode: controlled_fake

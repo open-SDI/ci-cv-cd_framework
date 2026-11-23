@@ -11,7 +11,7 @@ outputs are the slots it originates, so a new output slot needs no other edit;
 a new input also joins the receiving Stage's grant.
 
 Stage profiles enforce the least-required graph: composition outputs feed image
-build; composition and image-build outputs feed CV and CD. CV publishes no
+build; composition and image-build outputs feed CV and CD. CV and CD publish no
 Domain output. Initial requirements and target-profile inputs are granted only
 where the reviewed graph requires them.
 
@@ -23,6 +23,8 @@ so they can read each service's description and recipes. Composition receives
 that manifest, the composition settings resolved from the composition config,
 and may publish optional `composition-evidence.json`. An implemented CV attempt
 whose execution succeeded must publish `validation-evidence.json` with its
-verdict, on every outcome. A CV error publishes none. Evidence records how the
+verdict, on every outcome. A CV error publishes none. An implemented CD
+attempt whose execution succeeded must publish `deployment-result.json` with
+its outcome in the same way, and the CD Fixture publishes none. Evidence records how the
 Stage reached its outcome and never feeds a later Stage. A negative Domain
 outcome publishes no Domain output.

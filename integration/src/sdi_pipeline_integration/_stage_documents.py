@@ -10,11 +10,14 @@ from ._domain_contracts import (
     BuiltImageRecord,
     CompositionBlueprint,
     CompositionEvidence,
+    DeployedPlacement,
     DeploymentResult,
     DeploymentSchema,
     FailedImageRecord,
     ImageBuildResult,
+    UndeployedPlacement,
     ValidationEvidence,
+    image_digest,
 )
 from ._stage_registry import STAGES, StageName
 from ._yaml_input import InputError
@@ -110,7 +113,7 @@ def _composition_documents(
 
 def _image_build_documents(
     documents: StageDocuments,
-) -> tuple[CompositionBlueprint, DeploymentSchema, ImageBuildResult]:
+) -> tuple[CompositionBlueprint, DeploymentSchema, ImageBuildResult, dict[str, Host]]:
     blueprint, deployment, hosts = _composition_documents(documents)
     image_build = documents.outputs.get("image_build_result") or documents.inputs.get(
         "image_build_result"
@@ -134,7 +137,7 @@ def _image_build_documents(
         deployment,
         {service_id: host.architecture for service_id, host in hosts.items()},
     )
-    return blueprint, deployment, image_build
+    return blueprint, deployment, image_build, hosts
 
 
 def _check_composition(documents: StageDocuments) -> None:
@@ -162,7 +165,7 @@ def _check_cv(documents: StageDocuments) -> None:
     )
     if validation is None:
         return
-    blueprint, deployment, image_build = _image_build_documents(documents)
+    blueprint, deployment, image_build, _ = _image_build_documents(documents)
     if validation.domain_outcome != documents.domain_outcome:
         msg = "Validation evidence outcome does not match the attempt outcome"
         raise InputError(msg)
@@ -202,25 +205,50 @@ def _check_cv(documents: StageDocuments) -> None:
 
 
 def _check_cd(documents: StageDocuments) -> None:
-    if documents.domain_outcome == "failed":
+    result = next(
+        (item for item in documents.evidence if isinstance(item, DeploymentResult)),
+        None,
+    )
+    if result is None:
         return
-    blueprint, deployment, image_build = _image_build_documents(documents)
-    deployment_result = documents.outputs.get("deployment_result")
-    if not isinstance(deployment_result, DeploymentResult):
-        msg = "CD candidate must contain its deployment result"
+    blueprint, deployment, image_build, hosts = _image_build_documents(documents)
+    if result.domain_outcome != documents.domain_outcome:
+        msg = "deployment result outcome does not match the attempt outcome"
         raise InputError(msg)
     if (
-        deployment_result.blueprint_id != blueprint.blueprint_id
-        or deployment_result.deployment_schema_id != deployment.deployment_schema_id
-        or deployment_result.image_build_result_id != image_build.image_build_result_id
+        result.blueprint_id != blueprint.blueprint_id
+        or result.deployment_schema_id != deployment.deployment_schema_id
+        or result.image_build_result_id != image_build.image_build_result_id
     ):
         msg = "deployment result does not reference accepted prior outputs"
         raise InputError(msg)
-    if {
-        (item.service_id, item.host) for item in deployment_result.deployment_records
-    } != {(item.service_id, item.host) for item in deployment.placements}:
+    if {(item.service_id, item.host) for item in result.placements} != {
+        (item.service_id, item.host) for item in deployment.placements
+    }:
         msg = "deployment result does not cover every intended placement"
         raise InputError(msg)
+    platform_digests = {
+        (record.service_id, platform.architecture): platform.digest
+        for record in image_build.images
+        if isinstance(record, BuiltImageRecord)
+        for platform in record.platforms
+    }
+    for item in result.placements:
+        host = hosts.get(item.service_id)
+        if isinstance(item, UndeployedPlacement) or host is None:
+            continue
+        built = platform_digests.get((item.service_id, host.architecture))
+        images = (
+            (item.image, item.image_id)
+            if isinstance(item, DeployedPlacement)
+            else (item.image,)
+        )
+        if any(image is not None and image_digest(image) != built for image in images):
+            msg = (
+                "deployment result names an image other than the one built "
+                "for its host's architecture"
+            )
+            raise InputError(msg)
 
 
 def _stage_check(stage: StageName) -> StageCheck:

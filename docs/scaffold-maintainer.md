@@ -98,8 +98,8 @@ not copied console output.
 Composition is implemented: a configured model proposes compositions over the
 supplied service descriptions, and the integration package checks and ranks them.
 On Jenkins, image build pushes each composition's images and CV runs them in one
-headless Gazebo scenario. Locally, image build is a Fixture, and the CD Stage is
-explicitly a Fixture everywhere. The following remain
+headless Gazebo scenario, and CD deploys it to the stack's K3s stand-in cluster.
+Locally, image build and CD are Fixtures. The following remain
 deferred and must not be claimed, inferred, or quietly added as maintenance:
 
 - retrieval-based service discovery, requirement analysis beyond the declared
@@ -107,13 +107,13 @@ deferred and must not be claimed, inferred, or quietly added as maintenance:
 - real multi-architecture image builds and supply-chain publication;
 - Isaac Sim scenarios, Gazebo scenarios beyond the one S-04 mission, KPI
   measurements, Coverage Gap selection, and regression verdicts;
-- real distributed CD placement, deployment, rollout, health checking, rollback,
-  state migration, and degraded-network behavior;
+- CD on real devices: placement, deployment, rollout, health checking,
+  rollback, state migration, and degraded-network behavior;
 - an agreed KPI-7 formula or proof of any project KPI;
 - a production result store, dashboard, service catalog, performance database,
   runtime monitoring, anomaly detection, recomposition, autoscaling, or adaptive
   replacement;
-- Kubernetes integration and physical mobility-device confirmation;
+- Kubernetes on the mobility devices and physical mobility-device confirmation;
 - backup scheduling, automatic recovery, a maintenance database, high
   availability, availability targets, RPO, RTO, broad infrastructure as code,
   or automated security/account administration.

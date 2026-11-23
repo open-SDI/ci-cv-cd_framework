@@ -104,6 +104,7 @@ jobs:
           path: |
             ${{ steps.identify.outputs.output_root }}/bundle
             ${{ steps.identify.outputs.output_root }}/handoff-receipt.json
+            ${{ steps.identify.outputs.output_root }}/deployment-manifest.yaml
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

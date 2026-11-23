@@ -6,11 +6,12 @@ existing installation's Jenkins state or credentials. Select an approved commit
 from the upstream protected `main` branch after merge and record that exact SHA
 during acceptance.
 
-The installed system runs real composition, image-build, and Continuous
-Validation (CV) Stages, and a deterministic CD Fixture. It proves the
-GitHub-to-Jenkins pipeline interface, model-backed composition, image
-publication to the stack-local registry, and one CV verdict per run. It does not
-prove deployment or KPI results.
+The installed system runs real composition, image-build, Continuous Validation
+(CV), and Continuous Deployment (CD) Stages. It proves the GitHub-to-Jenkins
+pipeline interface, model-backed composition, image publication to the
+stack-local registry, one CV verdict per run, and one deployment per run to the
+K3s stand-in cluster inside the stack. It does not prove deployment to real
+devices or KPI results.
 
 ## Responsibilities
 
@@ -35,7 +36,12 @@ Use Ubuntu LTS 24.04 or 26.04 on x86_64 with:
   `tar`;
 - the GitHub CLI `gh`, to pipe a runner registration token into the stack;
 - outbound HTTPS access to every URL listed in
-  `deployment/installation.env`;
+  `deployment/installation.env`, including Docker Hub for the K3s stand-in
+  nodes, which pull their pause and CoreDNS images at every `stack start`;
+- the arm64 user-mode emulator registered in the kernel's binfmt_misc with the
+  fix-binary (`F`) flag, for example by Ubuntu's `qemu-user-static` package, so
+  that the builder can build `linux/arm64` images and the K3s stand-in nodes
+  can run them;
 - an unused loopback port for Jenkins and sufficient local container storage.
 
 Install these through ETRI's approved package and account-management process.

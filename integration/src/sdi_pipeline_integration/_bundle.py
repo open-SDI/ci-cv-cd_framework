@@ -9,10 +9,12 @@ import stat
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
+from ._cd_deployment import manifest_yaml
+from ._domain_contracts import DeploymentResult
 from ._json_input import canonical_json, parse_json
 from ._result_contracts import (
     FIXTURE_NOTICE,
@@ -37,7 +39,7 @@ from ._stage_runtime import (
 from ._yaml_input import InputError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 MAX_RESULT_BYTES = 1024 * 1024
 
@@ -126,17 +128,28 @@ def parse_pipeline_result(content: bytes) -> PipelineIntegrationResult:
 
 def validate_bundle(bundle_root: Path) -> PipelineIntegrationResult:
     """Validate the complete archive candidate against its authoritative result."""
-    result, _ = validate_bundle_documents(bundle_root)
-    return result
+    return validate_bundle_documents(bundle_root).result
+
+
+def deployment_manifest(bundle_root: Path) -> bytes | None:
+    evidence = validate_bundle_documents(bundle_root).succeeded_stage_evidence["cd"]
+    result = next(
+        (item for item in evidence if isinstance(item, DeploymentResult)), None
+    )
+    if result is None or result.manifest is None:
+        return None
+    return manifest_yaml(result.manifest)
+
+
+class ValidatedBundle(NamedTuple):
+    result: PipelineIntegrationResult
+    succeeded_domain_outputs: Mapping[str, BaseModel]
+    succeeded_stage_evidence: Mapping[StageName, Sequence[BaseModel]]
 
 
 def validate_bundle_documents(  # noqa: C901, PLR0912, PLR0915
     bundle_root: Path,
-) -> tuple[PipelineIntegrationResult, Mapping[str, BaseModel]]:
-    """Validate an archive candidate and return its cross-checked Domain outputs.
-
-    Only outputs of succeeded Stages are returned, keyed by slot.
-    """
+) -> ValidatedBundle:
     if not bundle_root.is_dir() or bundle_root.is_symlink():
         msg = "archive candidate root must be a directory"
         raise InputError(msg)
@@ -209,6 +222,9 @@ def validate_bundle_documents(  # noqa: C901, PLR0912, PLR0915
                 msg = f"archive diagnostic contains sensitive material: {artifact.path}"
                 raise InputError(msg)
     available_documents: dict[str, BaseModel] = {}
+    accepted_evidence: dict[StageName, list[BaseModel]] = {
+        stage: [] for stage in STAGES
+    }
     identity = (
         result.scenario_id,
         result.testcase_id,
@@ -244,11 +260,12 @@ def validate_bundle_documents(  # noqa: C901, PLR0912, PLR0915
             evidence=evidence_documents[stage],
         )
         available_documents.update(domain_documents[stage])
+        accepted_evidence[stage] = evidence_documents[stage]
     second_paths, second_capture = capture_tree(bundle_root, root_identity, grants)
     if second_paths != paths or second_capture != captured:
         msg = "archive candidate changed after validation"
         raise InputError(msg)
-    return result, available_documents
+    return ValidatedBundle(result, available_documents, accepted_evidence)
 
 
 def assemble_bundle_staging(
@@ -290,7 +307,14 @@ def assemble_bundle_staging(
                 for item in executions
             ],
             "artifacts": artifact_records,
-            "fixture_notice": FIXTURE_NOTICE,
+            "fixture_notice": (
+                FIXTURE_NOTICE
+                if any(
+                    item.envelope.implementation_mode == "fixture"
+                    for item in executions
+                )
+                else None
+            ),
             "kpi_evaluation": "not_evaluated",
         },
         strict=True,

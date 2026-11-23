@@ -22,7 +22,6 @@ DOMAIN_PAYLOADS = (
     "composition-s-04-tc-03-c-05/composition-blueprint.json",
     "composition-s-04-tc-03-c-05/deployment-schema.json",
     "image-build-s-04-tc-03-c-05/image-build-result.json",
-    "cd-s-04-tc-03-c-05/deployment-result.json",
 )
 
 

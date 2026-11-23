@@ -73,7 +73,7 @@ INITIAL_SKIP_CODES = frozenset(
         "sdi.run.deadline-exceeded",
     }
 )
-RED_DOMAIN_FAILURE_STAGES: frozenset[StageName] = frozenset({"cv"})
+RED_DOMAIN_FAILURE_STAGES: frozenset[StageName] = frozenset({"cv", "cd"})
 RED_REASON_CODES = frozenset(
     {
         "sdi.stage.not-implemented",
@@ -190,12 +190,15 @@ class PipelineIntegrationResult(ContractModel):
         list[AcceptedAttemptEnvelope], Field(min_length=4, max_length=4)
     ]
     artifacts: list[BundleArtifact]
-    fixture_notice: Literal[
-        "Stages reported with implementation mode `fixture` are deterministic "
-        "pipeline-interface Fixtures whose outcomes may be simulated and evaluate no "
-        "real Domain capability; no Validation verdict, deployment outcome, or KPI "
-        "was evaluated."
-    ]
+    fixture_notice: (
+        Literal[
+            "Stages reported with implementation mode `fixture` are deterministic "
+            "pipeline-interface Fixtures whose outcomes may be simulated and evaluate "
+            "no real Domain capability; no Validation verdict, deployment outcome, or "
+            "KPI was evaluated."
+        ]
+        | None
+    ) = None
     kpi_evaluation: Literal["not_evaluated"]
 
     @field_validator("started_at", "finished_at", mode="before")
@@ -215,6 +218,12 @@ class PipelineIntegrationResult(ContractModel):
             for attempt in self.attempts
         ):
             msg = "result attempts must share identity and be terminal first attempts"
+            raise ValueError(msg)
+        has_fixture = any(
+            attempt.implementation_mode == "fixture" for attempt in self.attempts
+        )
+        if has_fixture != (self.fixture_notice is not None):
+            msg = "fixture_notice must be present exactly when a Stage is a Fixture"
             raise ValueError(msg)
         if self.finished_at < self.started_at:
             msg = "result timestamps are not monotonic"

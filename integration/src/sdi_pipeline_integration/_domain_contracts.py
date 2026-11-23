@@ -494,12 +494,90 @@ class ValidationEvidence(ContractModel):
         return self
 
 
-class FixtureDeploymentRecord(ContractModel):
-    """One intended placement that was deliberately not applied."""
+KubernetesImageId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=r"^(?:[\x21-\x3f\x41-\x7e]{1,255}@)?sha256:[0-9a-f]{64}$"
+    ),
+]
+PinnedImage = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^registry:5000/sdi/[a-z][a-z0-9]*(?:-[a-z0-9]+)*@sha256:[0-9a-f]{64}$",
+    ),
+]
+PodPhase = Literal["Pending", "Running", "Succeeded", "Failed", "Unknown"]
+DeploymentGap = Literal[
+    "unresolved-placement",
+    "image-not-built",
+    "no-image-for-architecture",
+    "host-not-in-cluster",
+    "blocked",
+]
+
+
+def image_digest(image: str) -> str:
+    return image.rpartition("@")[2]
+
+
+def _require_pinned_to_service(service_id: str, image: str | None) -> None:
+    if image is not None and not image.startswith(f"registry:5000/sdi/{service_id}@"):
+        msg = "a placement image must be registry:5000/sdi/<service_id>@<digest>"
+        raise ValueError(msg)
+
+
+class DeployedPlacement(ContractModel):
+    """A placement whose pod ran its pinned image on its host's node and held."""
+
+    service_id: Slug
+    host: Slug
+    status: Literal["deployed"]
+    node: Slug
+    image: PinnedImage
+    image_id: KubernetesImageId
+    phase: Literal["Running"]
+    restart_count: Literal[0]
+
+    @model_validator(mode="after")
+    def validate_image(self) -> Self:
+        _require_pinned_to_service(self.service_id, self.image)
+        return self
+
+
+class FailedPlacement(ContractModel):
+    """A placement whose pod broke the pass rule, with Kubernetes' own reason."""
+
+    service_id: Slug
+    host: Slug
+    status: Literal["failed"]
+    detail: FailureDetail
+    node: Slug | SkipJsonSchema[None] = None
+    image: PinnedImage | SkipJsonSchema[None] = None
+    image_id: KubernetesImageId | SkipJsonSchema[None] = None
+    phase: PodPhase | SkipJsonSchema[None] = None
+    restart_count: NonNegativeInt | SkipJsonSchema[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_unknowns(cls, data: object) -> object:
+        return reject_explicit_nulls(
+            data, ("node", "image", "image_id", "phase", "restart_count")
+        )
+
+    @model_validator(mode="after")
+    def validate_image(self) -> Self:
+        _require_pinned_to_service(self.service_id, self.image)
+        return self
+
+
+class UndeployedPlacement(ContractModel):
+    """A placement that a pipeline gap kept off the cluster."""
 
     service_id: Slug
     host: Slug | SkipJsonSchema[None] = None
-    application_status: Literal["not_evaluated"]
+    status: Literal["not_evaluated"]
+    reason: DeploymentGap
 
     @model_validator(mode="before")
     @classmethod
@@ -508,11 +586,34 @@ class FixtureDeploymentRecord(ContractModel):
         return reject_explicit_nulls(data, ("host",))
 
 
+PlacementRecord = Annotated[
+    DeployedPlacement | FailedPlacement | UndeployedPlacement,
+    Field(discriminator="status"),
+]
+
+
+def deployment_outcome(
+    placements: Sequence[PlacementRecord],
+) -> Literal["succeeded", "failed", "not_evaluated"]:
+    statuses = {item.status for item in placements}
+    if "not_evaluated" in statuses:
+        return "not_evaluated"
+    if "failed" in statuses:
+        return "failed"
+    return "succeeded"
+
+
 class DeploymentResult(ContractModel):
-    """Fixture-qualified CD handoff that contains no deployment claim."""
+    """How CD deployed one composition to the stand-in cluster.
+
+    The outcome is the attempt's domain outcome: not evaluated when a pipeline
+    gap kept every placement off the cluster, failed when any placement broke
+    the pass rule, and succeeded otherwise. The manifest is the Kubernetes
+    v1 List CD applied, recorded whenever it reached the cluster.
+    """
 
     schema_version: Literal["sdi.deployment-result/v1"]
-    evidence_basis: Literal["fixture"]
+    evidence_basis: Literal["implemented"]
     deployment_result_id: Slug
     blueprint_id: Slug
     deployment_schema_id: Slug
@@ -522,16 +623,38 @@ class DeploymentResult(ContractModel):
     combination_id: CombinationId
     profile_id: Slug
     source_inputs: Annotated[list[SourceInputDigest], ProducerInputs("cd")]
-    domain_outcome: Literal["not_evaluated"]
-    application_status: Literal["not_evaluated"]
-    deployment_records: Annotated[list[FixtureDeploymentRecord], Field(min_length=1)]
+    domain_outcome: Literal["succeeded", "failed", "not_evaluated"]
+    cluster_kind: Literal["stand_in"]
+    placements: Annotated[list[PlacementRecord], Field(min_length=1)]
+    manifest: dict[str, JsonValue] | SkipJsonSchema[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_unknowns(cls, data: object) -> object:
+        return reject_explicit_nulls(data, ("manifest",))
 
     @model_validator(mode="after")
-    def validate_records(self) -> Self:
-        _require_unique(
-            [item.service_id for item in self.deployment_records],
-            "deployment service_id",
-        )
+    def validate_outcome(self) -> Self:
+        _require_unique([item.service_id for item in self.placements], "service_id")
+        undeployed = [
+            item for item in self.placements if isinstance(item, UndeployedPlacement)
+        ]
+        if undeployed and (
+            len(undeployed) != len(self.placements)
+            or all(item.reason == "blocked" for item in undeployed)
+        ):
+            msg = (
+                "a pipeline gap leaves every placement not_evaluated, "
+                "with at least one cause besides blocked"
+            )
+            raise ValueError(msg)
+        if bool(undeployed) == (self.manifest is not None):
+            msg = "a result holds a manifest exactly when it was evaluated"
+            raise ValueError(msg)
+        outcome = deployment_outcome(self.placements)
+        if self.domain_outcome != outcome:
+            msg = f"placements make the domain outcome {outcome}"
+            raise ValueError(msg)
         return self
 
 

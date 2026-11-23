@@ -14,8 +14,9 @@
 > Stage generates and assesses service compositions with a configured model. On
 > Jenkins, the image-build Stage builds and pushes each composition's images, and
 > the CV Stage runs them in one headless Gazebo scenario and records one verdict.
-> The CD Stage runs a deterministic Fixture and does not implement or prove
-> deployment or KPI results.
+> The CD Stage deploys them to a K3s stand-in cluster inside the Jenkins stack
+> and records whether each service runs. It does not prove deployment to real
+> devices or KPI results.
 
 
 ## 1. Introduction
@@ -62,10 +63,13 @@ over the supplied `service-repository/`, checks and ranks them, and publishes th
 preferred blueprint and deployment schema with evidence. On Jenkins, the
 image-build Stage pushes one image per placement to the stack-local pipeline
 registry. The CV Stage then runs the composition from those images in one
-headless Gazebo scenario and publishes its verdict as Validation evidence.
-`dispatch-local` keeps the image-build Fixture, so a local run with a
-successful composition ends with image build skipped and CV and CD blocked. CD
-remains a Fixture. Fixture output is not Validation evidence, Domain success,
+headless Gazebo scenario and publishes its verdict as Validation evidence. The
+CD Stage deploys the composition to the stack's K3s stand-in cluster and
+publishes a Deployment result, and Jenkins archives the applied Kubernetes
+manifest as `deployment-manifest.yaml`.
+`dispatch-local` keeps the image-build and CD Fixtures, so a local run with a
+successful composition ends with image build skipped and CV and CD blocked.
+Fixture output is not Validation evidence, Domain success,
 KPI evidence, or proof that a real build, simulation, or deployment capability
 exists.
 

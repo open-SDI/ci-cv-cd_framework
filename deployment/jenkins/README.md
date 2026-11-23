@@ -6,10 +6,11 @@ and is started only on demand. One dedicated `integration` agent performs only
 integration work; four independently replaceable agents provide the
 `composition`, `image-build`, `cv`, and `cd` scheduling labels. The root pipeline
 executes one submitted run across those five agents: implemented composition,
-image build and CV, then the CD Fixture. The image-build adapter uses a BuildKit
+image build, CV, and CD. The image-build adapter uses a BuildKit
 builder and a pipeline registry, reachable only from the `image-build` agent.
 The CV adapter uses a `docker:dind` CV engine, reachable only from the `cv`
-agent. Optional GitHub self-hosted runner
+agent. A four-node K3s stand-in cluster for CD runs beside them, and its API
+server is reachable only from the `cd` agent. Optional GitHub self-hosted runner
 services, one per repository, pick up the protected handoff job, reach the
 controller over an internal network, and reach GitHub only through their own
 allowlisting proxy.
@@ -23,9 +24,12 @@ The tracked authority is:
 - `agents/Dockerfile`: the exact Jenkins Remoting, Python 3.12.13, `uv`, and
   locked production integration package used to construct each minimal agent
   image without inherited volume metadata. Its `image-build` target adds the
-  `buildctl` client copied from the pinned BuildKit image.
+  `buildctl` client copied from the pinned BuildKit image, and its `cd` target
+  adds the `kubectl` client copied from the pinned kubectl image.
 - `buildkit/buildkitd.toml`: the read-only builder configuration, see
   [Builder And Pipeline Registry](#builder-and-pipeline-registry).
+- `k3s/registries.yaml`: the read-only registry mirror of the K3s nodes, see
+  [K3s Stand-In Cluster](#k3s-stand-in-cluster).
 - `runner/Dockerfile`: the GitHub Actions runner `2.337.0` image for the
   handoff runners, with the same Python runtime and locked production
   integration package as the agents.
@@ -40,8 +44,8 @@ The tracked authority is:
 - `compose.yaml`: loopback-only controller publication, named controller state,
   five agent services, a separate egress-capable network for each agent, the
   `buildkitd` builder and `registry` services with their named volumes, the
-  `cv-engine` service with its named volume, the
-  two optional runner services `runner-upstream` and `runner-fork`, and each
+  `cv-engine` service with its named volume, the four K3s node services with
+  the kubeconfig volume, the two optional runner services `runner-upstream` and `runner-fork`, and each
   runner's proxy service `runner-upstream-proxy` or `runner-fork-proxy`.
 - `Jenkinsfile`: the thin repository-owned scheduler over public integration CLI
   operations.
@@ -64,8 +68,8 @@ but they are not configuration authority.
   without privilege escalation.
 - Python 3 for the isolated smoke-check client.
 - `uv` for strict adapter-descriptor validation and runtime-image selection.
-- Outbound HTTPS access to Docker Hub, GHCR, the Jenkins update service during a
-  clean image build, PyPI during a clean agent or runner build, and GitHub for
+- Outbound HTTPS access to Docker Hub, GHCR, `registry.k8s.io`, the Jenkins
+  update service during a clean image build, PyPI during a clean agent or runner build, and GitHub for
   the runner release download and each agent's independent immutable checkout.
 
 Supported releases and minimum tool majors are explicit in
@@ -235,11 +239,12 @@ deployment/jenkins/bin/stack exercise-live
 deployment/jenkins/bin/stack stop
 ```
 
-`start` pulls the pinned builder, registry, and CV engine images when they are missing,
+`start` pulls the pinned builder, registry, CV engine, and K3s images when they are missing,
 builds the exact
 controller and five agent images and the runner and proxy images of every
 runner configured in `GITHUB_RUNNERS`, starts the controller, all five agents,
-the builder, the registry, the CV engine, and those runners with their proxies, rejects an
+the builder, the registry, the CV engine, a new K3s stand-in cluster, and those
+runners with their proxies, rejects an
 agent image that declares any volume, and waits for process health. It refuses
 a configured runner that is not registered and refuses while a runner executes
 a job. Before it starts the agents and runners, `start` builds the CV
@@ -249,8 +254,9 @@ at
 `http://127.0.0.1:<configured-port>`. No inbound-agent TCP port is published;
 all agents connect over WebSocket. `stop` removes all containers and networks
 but retains every named volume: `jenkins-home`, the runner state volumes, and
-the builder's `buildkit-state` and `pipeline-registry`, and the CV engine's
-`cv-engine-state`. Agent workspaces are
+the builder's `buildkit-state` and `pipeline-registry`, the CV engine's
+`cv-engine-state`, and the K3s server's `k3s-kubeconfig`. Before it stops
+anything else, `stop` removes the K3s nodes and their anonymous volumes. Agent workspaces are
 separate tmpfs mounts, have no shared or persistent filesystem, and disappear
 whenever their container is replaced. Their five separate networks allow GitHub
 checkout without making peer agents reachable. `stop`, `status`, `logs`, and `destroy`
@@ -272,8 +278,9 @@ run `build` again. Runner and proxy images are still built.
 
 ### Builder And Pipeline Registry
 
-The always-on stack has nine containers: the controller, the five agents,
-`buildkitd`, `registry`, and `cv-engine` (see [CV Engine](#cv-engine)). Both
+The always-on stack has 13 containers: the controller, the five agents,
+`buildkitd`, `registry`, `cv-engine` (see [CV Engine](#cv-engine)), and the
+four K3s nodes (see [K3s Stand-In Cluster](#k3s-stand-in-cluster)). Both
 builder images are pinned by digest in
 `deployment/installation.env` as `SDI_BUILDKIT_IMAGE` and `SDI_REGISTRY_IMAGE`.
 
@@ -330,6 +337,38 @@ by digest in `deployment/installation.env` as `SDI_CV_ENGINE_IMAGE`.
   turn the run red.
 - The smoke check pings the engine through the SDK from the `cv` agent and
   checks that no other agent resolves `cv-engine`.
+
+### K3s Stand-In Cluster
+
+CD's stand-in cluster is four K3s nodes from `rancher/k3s`, pinned by digest in
+`deployment/installation.env` as `SDI_K3S_IMAGE`.
+
+- `k3s-xycar` is the server and also the node for the host `xycar`.
+  `k3s-burger`, `k3s-waffle`, and `k3s-orin` are agents that join it with a
+  fixed token. Each node is named after its host and labelled
+  `sdi/host=<host>`. The server disables traefik, servicelb, metrics-server,
+  and local-storage.
+- All four nodes are amd64. Images for arm64 hosts run on them under the host's
+  arm64 emulator. The nodes run privileged.
+- The nodes pull `registry:5000` images over plain HTTP through the mirror in
+  `k3s/registries.yaml`. The internal `k3s-registry` network joins only the
+  nodes and `registry`. Only the nodes join the unrestricted `k3s-egress`
+  network, because each new cluster pulls its pause and CoreDNS images from
+  Docker Hub.
+- The server writes its kubeconfig with mode 644 into the `k3s-kubeconfig`
+  named volume. The `cd` agent mounts that volume read-only at `/etc/sdi/k3s`.
+  The internal `k3s-cd` network joins only the `cd` agent and `k3s-xycar`, and
+  the server certificate names `k3s-xycar`. The kubeconfig names
+  `https://127.0.0.1:6443`, so a client on the `cd` agent passes
+  `--server https://k3s-xycar:6443`. The `cd` agent image has `kubectl` at the
+  K3s minor version, pinned as `SDI_KUBECTL_IMAGE`.
+- The cluster keeps no state. Every certificate is new after each `start`.
+  `start` removes the K3s nodes with their anonymous volumes, creates them
+  again, and does not wait for them, because the image has no healthcheck.
+  All four nodes are Ready about 22 seconds later. A namespace that a crashed
+  run leaves behind therefore disappears at the next `start`.
+- A manual `docker compose down`, or a `stop` that fails partway, can leave the
+  nodes' anonymous volumes behind, about 3 GB per cluster.
 
 ### GitHub Handoff Runners
 
@@ -459,12 +498,14 @@ controller's Pipeline-script checkout keeps its repository between builds and
 fetches only new commits. Accepted envelopes and their declared bounded files are
 the only cross-agent Stage data, transferred through Execution-ID-qualified
 Jenkins stashes. The integration agent validates the complete bundle before
-archiving all and only its declared files from the current build.
+archiving all and only its declared files from the current build. When CD
+applied a manifest, the agent then writes `deployment-manifest.yaml` from the
+validated bundle and archives it outside the bundle.
 
 The pipeline uses the Stage registry's 10, 30, 45, and 15 minute Stage work
 limits, a 90-minute Jenkins run limit, and a two-minute finalization limit. A
-handled machinery failure or a CV `failed` verdict archives its structured
-result before Jenkins ends in `FAILURE`; any other contract-valid negative Domain
+handled machinery failure, a CV `failed` verdict, or a CD `failed` outcome
+archives its structured result before Jenkins ends in `FAILURE`; any other contract-valid negative Domain
 outcome can remain `SUCCESS`.
 External cancellation propagates immediately, cleans active workspaces and
 process trees, ends as `ABORTED`, and does not manufacture a result.

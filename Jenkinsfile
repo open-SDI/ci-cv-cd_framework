@@ -319,6 +319,16 @@ sdi-integration bundle-conclusion \
                                 defaultExcludes: false,
                             )
                         }
+                        sh '''set -eu
+sdi-integration deployment-manifest \
+  --bundle-root bundle \
+  --output deployment-manifest.yaml
+'''
+                        archiveArtifacts(
+                            artifacts: 'deployment-manifest.yaml',
+                            allowEmptyArchive: true,
+                            defaultExcludes: false,
+                        )
                         if (conclusion == 1) {
                             error('Pipeline integration machinery or validation verdict failed; structured result archived')
                         }

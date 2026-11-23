@@ -596,7 +596,8 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
     builder_cleanup = operations.index(
         f"docker volume rm --force {staging_project}_buildkit-state "
         f"{staging_project}_pipeline-registry "
-        f"{staging_project}_cv-engine-state"
+        f"{staging_project}_cv-engine-state "
+        f"{staging_project}_k3s-kubeconfig"
     )
     assert staging_stop < builder_cleanup
     runner_configs = Path(f"{restore_log}.runners").read_text().splitlines()
@@ -731,6 +732,18 @@ def test_restore_verifies_before_writing_an_empty_volume(tmp_path: Path) -> None
             "cv-engine image pin does not match",
         ),
         (
+            "deployment/jenkins/compose.yaml",
+            "image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:f",
+            "image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:e",
+            "k3s-xycar image pin does not match",
+        ),
+        (
+            "deployment/jenkins/agents/Dockerfile",
+            "ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.33.5@sha256:1",
+            "ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.33.5@sha256:2",
+            "kubectl pin does not match",
+        ),
+        (
             "deployment/jenkins/adapters/image-build-fixture-v1.yaml",
             "image: docker.io/library/python@sha256:2",
             "image: docker.io/library/python@sha256:3",
@@ -767,6 +780,34 @@ def test_authority_rejects_a_deployment_image_that_drifts_from_the_pins(
 
     assert completed.returncode == 2
     assert message in completed.stderr
+
+
+def test_authority_rejects_a_kubectl_pin_off_the_k3s_minor(tmp_path: Path) -> None:
+    _copy_pinned_sources(tmp_path)
+    authority = tmp_path / "installation.env"
+    authority.write_text(
+        INSTALLATION.read_text(encoding="utf-8").replace(
+            "registry.k8s.io/kubectl:v1.33.5@", "registry.k8s.io/kubectl:v1.34.1@"
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "sdi-integration",
+            "validate-installation",
+            "--repository",
+            tmp_path,
+            "--installation",
+            authority,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "kubectl image pin must match the K3s image pin" in completed.stderr
 
 
 def test_quiesce_refuses_an_active_run_and_cancels_quiet_mode(tmp_path: Path) -> None:

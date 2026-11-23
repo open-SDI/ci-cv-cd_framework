@@ -549,6 +549,7 @@ def test_start_builds_and_starts_only_the_configured_runners(
     ]
     assert stack.profiles(
         "pull --quiet --policy missing buildkitd registry cv-engine"
+        " k3s-xycar k3s-burger k3s-waffle k3s-orin"
     ) == [profiles]
     log = stack.log()
     pull = next(i for i, line in enumerate(log) if "pull --quiet" in line)

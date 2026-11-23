@@ -156,7 +156,6 @@ SLOT_MODELS: dict[str, type[BaseModel]] = {
         CompositionBlueprint,
         DeploymentSchema,
         ImageBuildResult,
-        DeploymentResult,
     )
 }
 INPUT_MODELS: dict[str, type[BaseModel]] = {
@@ -170,6 +169,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     },
     _schema_version(CompositionEvidence): CompositionEvidence,
     _schema_version(ValidationEvidence): ValidationEvidence,
+    _schema_version(DeploymentResult): DeploymentResult,
 }
 
 

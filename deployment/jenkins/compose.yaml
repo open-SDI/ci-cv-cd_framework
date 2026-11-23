@@ -192,7 +192,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/jenkins/agents/Dockerfile
-      target: agent
+      target: cd
       args:
         RUNTIME_IMAGE: ${JENKINS_CD_AGENT_IMAGE}
         SDI_JENKINS_AGENT_LABEL: cd
@@ -211,7 +211,9 @@ services:
     tmpfs:
       - /home/jenkins/agent:rw,nosuid,nodev,mode=0700,uid=1000,gid=1000
       - /tmp:rw,nosuid,nodev,mode=1777
-    networks: [controller-cd]
+    volumes:
+      - k3s-kubeconfig:/etc/sdi/k3s:ro
+    networks: [controller-cd, k3s-cd]
     depends_on:
       controller:
         condition: service_healthy
@@ -281,7 +283,7 @@ services:
       - /tmp:rw,nosuid,nodev,mode=1777
     volumes:
       - pipeline-registry:/var/lib/registry
-    networks: [image-build-builder, cv-engine-registry]
+    networks: [image-build-builder, cv-engine-registry, k3s-registry]
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:5000/v2/"]
       interval: 5s
@@ -289,6 +291,81 @@ services:
       retries: 12
       start_period: 30s
       start_interval: 1s
+
+  k3s-xycar:
+    image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:fd4740667b7033055c27d424d0d2d660bf66cedbdb225d68e0eab6dd48aa0fd2
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    command:
+      - server
+      - --node-name=xycar
+      - --node-label=sdi/host=xycar
+      - --disable=traefik,servicelb,metrics-server,local-storage
+      - --tls-san=k3s-xycar
+    environment:
+      K3S_TOKEN: sdi-stand-in
+      K3S_KUBECONFIG_OUTPUT: /etc/sdi/k3s/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: "644"
+    tmpfs: [/run, /var/run]
+    ulimits:
+      nproc: 65535
+      nofile: {soft: 65535, hard: 65535}
+    volumes:
+      - ./k3s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro
+      - k3s-kubeconfig:/etc/sdi/k3s
+    networks: [k3s-cd, k3s-registry, k3s-egress]
+
+  k3s-burger:
+    image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:fd4740667b7033055c27d424d0d2d660bf66cedbdb225d68e0eab6dd48aa0fd2
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    command: [agent, --node-name=burger, --node-label=sdi/host=burger]
+    environment:
+      K3S_URL: https://k3s-xycar:6443
+      K3S_TOKEN: sdi-stand-in
+    tmpfs: [/run, /var/run]
+    ulimits:
+      nproc: 65535
+      nofile: {soft: 65535, hard: 65535}
+    volumes:
+      - ./k3s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro
+    networks: [k3s-registry, k3s-egress]
+
+  k3s-waffle:
+    image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:fd4740667b7033055c27d424d0d2d660bf66cedbdb225d68e0eab6dd48aa0fd2
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    command: [agent, --node-name=waffle, --node-label=sdi/host=waffle]
+    environment:
+      K3S_URL: https://k3s-xycar:6443
+      K3S_TOKEN: sdi-stand-in
+    tmpfs: [/run, /var/run]
+    ulimits:
+      nproc: 65535
+      nofile: {soft: 65535, hard: 65535}
+    volumes:
+      - ./k3s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro
+    networks: [k3s-registry, k3s-egress]
+
+  k3s-orin:
+    image: docker.io/rancher/k3s:v1.33.5-k3s1@sha256:fd4740667b7033055c27d424d0d2d660bf66cedbdb225d68e0eab6dd48aa0fd2
+    platform: linux/amd64
+    restart: "no"
+    privileged: true
+    command: [agent, --node-name=orin, --node-label=sdi/host=orin]
+    environment:
+      K3S_URL: https://k3s-xycar:6443
+      K3S_TOKEN: sdi-stand-in
+    tmpfs: [/run, /var/run]
+    ulimits:
+      nproc: 65535
+      nofile: {soft: 65535, hard: 65535}
+    volumes:
+      - ./k3s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro
+    networks: [k3s-registry, k3s-egress]
 
   runner-upstream:
     profiles: [runner-upstream]
@@ -427,6 +504,7 @@ volumes:
   buildkit-state:
   pipeline-registry:
   cv-engine-state:
+  k3s-kubeconfig:
 
 networks:
   controller-integration:
@@ -454,6 +532,11 @@ networks:
   cv-engine-registry:
     internal: true
   cv-engine-egress:
+  k3s-cd:
+    internal: true
+  k3s-registry:
+    internal: true
+  k3s-egress:
 
 secrets:
   jenkins-admin-password:

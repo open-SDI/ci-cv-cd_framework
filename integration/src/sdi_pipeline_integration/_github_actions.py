@@ -239,12 +239,13 @@ def render_github_summary(  # noqa: C901, PLR0912, PLR0913, PLR0915
     result_state = "not returned"
     if bundle_root.exists() or bundle_root.is_symlink():
         try:
-            candidate, candidate_documents = validate_bundle_documents(bundle_root)
+            candidate = validate_bundle_documents(bundle_root)
         except (InputError, OSError, ValidationError):
             result_state = "rejected"
         else:
-            if candidate.execution_id == execution_id:
-                result, documents = candidate, candidate_documents
+            if candidate.result.execution_id == execution_id:
+                result = candidate.result
+                documents = candidate.succeeded_domain_outputs
                 result_state = "validated"
             else:
                 result_state = "identity mismatch"
@@ -353,9 +354,15 @@ def render_github_summary(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 f"- {_code(f'bundle/{PIPELINE_RESULT_PATH}')}",
                 "",
                 "## Evidence limits",
-                "",
-                f"Fixture warning: {html.escape(result.fixture_notice, quote=True)}",
             ]
         )
+        if result.fixture_notice is not None:
+            fixture_stages = ", ".join(
+                _code(attempt.correlation.stage.replace("_", "-"))
+                for attempt in result.attempts
+                if attempt.implementation_mode == "fixture"
+            )
+            notice = html.escape(result.fixture_notice, quote=True)
+            lines.extend(["", f"Fixture warning for {fixture_stages}: {notice}"])
     lines.extend(["", "KPI evaluation: `not evaluated`", ""])
     return "\n".join(lines), succeeded

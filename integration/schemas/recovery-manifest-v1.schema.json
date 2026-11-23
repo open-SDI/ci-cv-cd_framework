@@ -91,6 +91,16 @@
           "title": "Jenkins Remoting Image",
           "type": "string"
         },
+        "k3s_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "K3S Image",
+          "type": "string"
+        },
+        "kubectl_image": {
+          "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
+          "title": "Kubectl Image",
+          "type": "string"
+        },
         "python_runtime_image": {
           "pattern": "^[a-z0-9./_-]+(?::[A-Za-z0-9_.-]+)?@sha256:[0-9a-f]{64}$",
           "title": "Python Runtime Image",
@@ -132,6 +142,8 @@
         "buildkit_image",
         "registry_image",
         "cv_engine_image",
+        "k3s_image",
+        "kubectl_image",
         "composition_adapter_image",
         "image_build_adapter_image",
         "cv_adapter_image",

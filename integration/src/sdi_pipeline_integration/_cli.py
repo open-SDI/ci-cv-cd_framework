@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import ValidationError
 
 from ._assessment import assess_proposal_files, load_assessment_inputs
-from ._bundle import validate_bundle
+from ._bundle import deployment_manifest, validate_bundle
 from ._composition_config import (
     DEFAULT_COMPOSITION_CONFIG,
     resolve_composition_settings,
@@ -249,6 +249,12 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     )
     conclusion.add_argument("--bundle-root", type=Path, required=True)
     conclusion.add_argument("--execution-id", required=True)
+    manifest = commands.add_parser(
+        "deployment-manifest",
+        help="write the Kubernetes manifest CD applied in a valid bundle",
+    )
+    manifest.add_argument("--bundle-root", type=Path, required=True)
+    manifest.add_argument("--output", type=Path, required=True)
     dispatch = commands.add_parser(
         "dispatch-local",
         help="execute and assemble one local four-Stage run",
@@ -758,6 +764,16 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
         return 1 if red else 0
+    if arguments.command == "deployment-manifest":
+        try:
+            content = deployment_manifest(arguments.bundle_root)
+            if content is not None:
+                with arguments.output.open("xb") as stream:
+                    stream.write(content)
+        except (InputError, OSError, ValidationError) as error:
+            sys.stderr.write(f"sdi-integration: {error}\n")
+            return 2
+        return 0
     if arguments.command == "dispatch-local":
         bundle_existed = arguments.bundle_root.exists() or (
             arguments.bundle_root.is_symlink()

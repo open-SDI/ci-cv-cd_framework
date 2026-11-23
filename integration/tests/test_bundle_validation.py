@@ -168,6 +168,29 @@ def test_bundle_validation_rejects_reordered_or_unknown_input_provenance(
         assert "not the identified input set" in validated.stderr
 
 
+def test_bundle_validation_rejects_a_fixture_run_without_its_fixture_notice(
+    tmp_path: Path,
+) -> None:
+    repository, commit_sha = commit_fixture_repository(tmp_path)
+    bundle_root = tmp_path / "bundle"
+    dispatched = dispatch_local_cli(repository, commit_sha, bundle_root)
+    assert dispatched.returncode == RED_RUN_EXIT, dispatched.stderr
+    result_path = bundle_root / "pipeline-integration-result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    del result["fixture_notice"]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    validated = subprocess.run(
+        ["sdi-integration", "validate-bundle", "--bundle-root", str(bundle_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert validated.returncode == 2
+    assert "fixture_notice" in validated.stderr
+
+
 @pytest.mark.parametrize(
     "repository_identity",
     ["jenkins.internal/repository", "buildhost/repository"],

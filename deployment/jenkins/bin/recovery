@@ -276,7 +276,8 @@ case "$operation" in
             if [ -n "$staging_project" ]; then
                 docker volume rm --force "${staging_project}_buildkit-state" \
                     "${staging_project}_pipeline-registry" \
-                    "${staging_project}_cv-engine-state" >/dev/null 2>&1 || {
+                    "${staging_project}_cv-engine-state" \
+                    "${staging_project}_k3s-kubeconfig" >/dev/null 2>&1 || {
                     [ "$operation_status" -ne 0 ] || operation_status=1
                 }
             fi

@@ -68,7 +68,7 @@ def test_check_names_the_payload_whose_source_inputs_are_stale(
     tmp_path: Path,
 ) -> None:
     root = _copy_inputs(tmp_path)
-    payload = root / CASES / "cd-s-04-tc-03-c-05/deployment-result.json"
+    payload = root / CASES / "image-build-s-04-tc-03-c-05/image-build-result.json"
     document = json.loads(payload.read_text(encoding="utf-8"))
     document["source_inputs"][0]["sha256"] = "0" * 64
     payload.write_text(
@@ -80,7 +80,7 @@ def test_check_names_the_payload_whose_source_inputs_are_stale(
     assert completed.returncode == 2
     assert completed.stderr == (
         "regenerate-fixtures: Fixture cases are stale: "
-        f"['{CASES}/cd-s-04-tc-03-c-05/deployment-result.json']\n"
+        f"['{CASES}/image-build-s-04-tc-03-c-05/image-build-result.json']\n"
     )
 
 
@@ -114,7 +114,6 @@ def test_write_carries_a_config_change_through_every_stage(tmp_path: Path) -> No
             "composition-s-04-tc-03-c-05/composition-blueprint.json",
             "composition-s-04-tc-03-c-05/deployment-schema.json",
             "image-build-s-04-tc-03-c-05/image-build-result.json",
-            "cd-s-04-tc-03-c-05/deployment-result.json",
         ]
     )
 
