@@ -4,20 +4,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import signal
 import subprocess
 import time
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from sdi_pipeline_integration._cd_deployment import manifest_yaml
-from sdi_pipeline_integration._integration_code import integration_code_digest
 from sdi_pipeline_integration._result_contracts import FIXTURE_NOTICE
-from sdi_pipeline_integration._stage_registry import AGENTS, INTEGRATION_AGENT, STAGES
+from sdi_pipeline_integration._stage_registry import STAGES
 from tests import _cd_evidence as cd
 from tests._cv_evidence import (
     AMD64_DIGEST,
@@ -28,266 +25,45 @@ from tests._cv_evidence import (
 )
 from tests._cv_stage import description
 from tests._fixture_inputs import (
-    FIXTURE_COMPOSITION_CONFIG,
     FIXTURE_SERVICE_REPOSITORY,
     RED_RUN_EXIT,
-    STAGE_DESCRIPTORS,
-    copy_baked_integration_code,
     write_fixture_composition_descriptor,
     write_scripted_adapter,
 )
-
-SOURCE_ROOT = Path(__file__).resolve().parents[2]
-EXECUTION_ID = "12345678-1234-4234-9234-123456789abc"
-SUCCESS_REQUEST = "runs/s-04/s-04-tc-03-c-05-fixture.yaml"
-COMPOSITION_CONFIG_ARGUMENTS = ("--composition-config", FIXTURE_COMPOSITION_CONFIG)
-COMMITTED_FILES = (
+from tests._scripted_stages import (
+    CD_IMAGES,
+    CD_REASONS,
+    COMPOSITION_CONFIG_ARGUMENTS,
+    CV_IMAGES,
+    CV_PLACEMENTS,
+    CV_REASONS,
+    DIGEST,
+    EXECUTION_ID,
+    SOURCE_ROOT,
     SUCCESS_REQUEST,
-    "requirements/s-04/deliver-book-to-joe.md",
-    "profiles/s-04/waffle-native-arm64.yaml",
-    "profiles/s-04/waffle-jetson-arm64.yaml",
-    "integration/stage-profiles/composition-v1.yaml",
-    "integration/stage-profiles/image-build-v1.yaml",
-    "integration/stage-profiles/cv-v1.yaml",
-    "integration/stage-profiles/cd-v1.yaml",
-    *STAGE_DESCRIPTORS,
-    "runs/conformance/composition-negative-domain.yaml",
-    "runs/conformance/composition-handled-failure.yaml",
-    "runs/conformance/composition-malformed-response.yaml",
-    "runs/conformance/composition-timeout.yaml",
-    FIXTURE_COMPOSITION_CONFIG,
+    baked_code_digest,
+    common_arguments,
+    execute_chain,
+    fresh_image,
+    git,
+    implemented_upstream,
+    jenkins_repository,
+    run_preflight,
+    select_evidence_adapter,
+    write_response_adapter,
 )
 
-
-def _git(repository: Path, *arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout.strip()
-
-
-def _repository(
-    tmp_path: Path,
-    *,
-    fixture_image_build: bool = False,
-    service_repository: Path = FIXTURE_SERVICE_REPOSITORY,
-) -> tuple[Path, str]:
-    """Commit the Stage inputs; a Fixture image-build completes the chain."""
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    _git(repository, "init", "--initial-branch=main")
-    _git(repository, "config", "user.name", "Test Operator")
-    _git(repository, "config", "user.email", "operator@example.test")
-    _git(
-        repository,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/example/sdi-fixture.git",
-    )
-    for relative_path in COMMITTED_FILES:
-        destination = repository / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes((SOURCE_ROOT / relative_path).read_bytes())
-    shutil.copytree(service_repository, repository / "service-repository")
-    copy_baked_integration_code(repository)
-    write_fixture_composition_descriptor(repository)
-    adapters = repository / "deployment/jenkins/adapters"
-    _run_the_cd_fixture_without_a_cluster(adapters)
-    if fixture_image_build:
-        (adapters / "image-build-v1.yaml").write_bytes(
-            (adapters / "image-build-fixture-v1.yaml").read_bytes()
-        )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Add distributed Fixture inputs")
-    return repository, _git(repository, "rev-parse", "HEAD")
-
-
-def _run_the_cd_fixture_without_a_cluster(adapters: Path) -> None:
-    (adapters / "cd-v1.yaml").write_bytes(
-        (adapters / "cd-fixture-v1.yaml").read_bytes()
-    )
-
-
-def _common(repository: Path, commit_sha: str, request_path: str) -> list[str]:
-    return [
-        "--repository",
-        str(repository),
-        "--requested-ref",
-        "refs/heads/main",
-        "--resolved-commit",
-        commit_sha,
-        "--run-request-path",
-        request_path,
-        "--execution-id",
-        EXECUTION_ID,
-    ]
-
-
-def _baked_code_digest(repository: Path) -> str:
-    """Record the checkout's integration code as a freshly built image would."""
-    return integration_code_digest(repository / "integration")
-
-
-def _fresh_image(repository: Path) -> tuple[str, str]:
-    return ("--baked-code-digest", _baked_code_digest(repository))
-
-
-def _preflight(
-    repository: Path,
-    commit_sha: str,
-    request_path: str,
-    started_millis: str,
-    *,
-    baked: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess[str]:
-    fresh = _baked_code_digest(repository)
-    recorded = dict.fromkeys((agent.node for agent in AGENTS), fresh) | (baked or {})
-    return subprocess.run(
-        [
-            "sdi-integration",
-            "preflight-jenkins-run",
-            *_common(repository, commit_sha, request_path),
-            "--composition-config",
-            FIXTURE_COMPOSITION_CONFIG,
-            "--handoff-contract-version",
-            "sdi.github-jenkins-handoff/v1",
-            "--github-run-id",
-            "1000",
-            "--github-run-attempt",
-            "1",
-            "--build-started-at-millis",
-            started_millis,
-            "--integration-node",
-            INTEGRATION_AGENT.node,
-            "--integration-baked-code-digest",
-            recorded[INTEGRATION_AGENT.node],
-            *(
-                argument
-                for name, stage in STAGES.items()
-                for argument in (
-                    "--stage-node",
-                    f"{name}={stage.agent.node}",
-                    "--stage-baked-code-digest",
-                    f"{name}={recorded[stage.agent.node]}",
-                )
-            ),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _execute_chain(  # noqa: PLR0913, PLR0917
-    repository: Path,
-    commit_sha: str,
-    request_path: str,
-    root: Path,
-    started_millis: str,
-    run_limit_seconds: int = 60,
-    work_limits: dict[str, str] | None = None,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    """Run every Stage, each given the supplied inputs it is granted."""
-    preflight = _preflight(repository, commit_sha, request_path, started_millis)
-    assert preflight.returncode == 0, preflight.stderr
-    assert json.loads(preflight.stdout)["execution_id"] == EXECUTION_ID
-
-    attempts: list[Path] = []
-    work_limits = work_limits or {}
-    deadline = str(int((time.time() + run_limit_seconds) * 1000))
-    for stage in STAGES:
-        attempt_root = root / "transfers" / stage
-        command = [
-            "sdi-integration",
-            "execute-jenkins-stage",
-            *_common(repository, commit_sha, request_path),
-            *_fresh_image(repository),
-            *(COMPOSITION_CONFIG_ARGUMENTS if stage == "composition" else ()),
-            "--stage",
-            stage,
-            "--attempt-root",
-            str(attempt_root),
-            "--run-deadline-epoch-millis",
-            deadline,
-        ]
-        if stage in work_limits:
-            command.extend(("--work-limit-seconds", work_limits[stage]))
-        for prior in attempts:
-            command.extend(("--prior-attempt-root", str(prior)))
-        executed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert executed.returncode == 0, executed.stderr
-        attempts.append(attempt_root)
-        continuation = subprocess.run(
-            [
-                "sdi-integration",
-                "attempt-allows-continuation",
-                "--attempt-root",
-                str(attempt_root),
-                "--execution-id",
-                EXECUTION_ID,
-                "--stage",
-                stage,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert continuation.returncode in {0, 1}, continuation.stderr
-        if continuation.returncode == 1:
-            break
-
-    bundle_root = root / "bundle"
-    command = [
-        "sdi-integration",
-        "finalize-jenkins-run",
-        *_common(repository, commit_sha, request_path),
-        "--build-started-at-millis",
-        started_millis,
-        "--bundle-root",
-        str(bundle_root),
-    ]
-    for attempt in attempts:
-        command.extend(("--attempt-root", str(attempt)))
-    finalized = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert finalized.returncode == 0, finalized.stderr
-    result = json.loads(finalized.stdout)
-    conclusion = subprocess.run(
-        [
-            "sdi-integration",
-            "bundle-conclusion",
-            "--bundle-root",
-            str(bundle_root),
-            "--execution-id",
-            EXECUTION_ID,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return conclusion, result
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_distributed_fixture_chain_preserves_identity_and_exact_archive(
     tmp_path: Path,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path, fixture_image_build=True)
+    repository, commit_sha = jenkins_repository(tmp_path, fixture_image_build=True)
     started_millis = str(int((time.time() - 1) * 1000))
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -317,9 +93,9 @@ def test_distributed_fixture_chain_preserves_identity_and_exact_archive(
 
 
 def test_implemented_image_build_skips_fixture_composition(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -342,8 +118,8 @@ def _execute_stage(
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
-            *_fresh_image(repository),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
+            *fresh_image(repository),
             *supplied,
             "--stage",
             stage,
@@ -361,7 +137,7 @@ def _execute_stage(
 def test_composition_without_a_checked_out_service_repository_claims_no_attempt(
     tmp_path: Path,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     shutil.rmtree(repository / "service-repository")
     attempt = tmp_path / "attempt"
 
@@ -387,8 +163,8 @@ def _execute_composition(
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
-            *_fresh_image(repository),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
+            *fresh_image(repository),
             *COMPOSITION_CONFIG_ARGUMENTS,
             "--stage",
             "composition",
@@ -408,7 +184,7 @@ def _execute_composition(
 def test_a_work_limit_outside_the_grant_claims_no_attempt(
     tmp_path: Path, work_limit: str
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     attempt = tmp_path / "attempt"
 
     executed = _execute_composition(
@@ -429,7 +205,7 @@ CD_GRANT_SECONDS = STAGES["cd"].grant.work_limit_seconds
 def test_a_cd_work_limit_too_short_for_its_node_wait_claims_no_attempt(
     tmp_path: Path,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     attempt = tmp_path / "attempt"
 
     executed = _execute_stage(
@@ -445,7 +221,7 @@ def test_a_cd_work_limit_too_short_for_its_node_wait_claims_no_attempt(
 
 
 def test_the_cd_minimum_work_limit_is_not_refused(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
 
     executed = _execute_stage(
         repository,
@@ -459,7 +235,7 @@ def test_the_cd_minimum_work_limit_is_not_refused(tmp_path: Path) -> None:
 
 
 def test_a_stage_without_a_work_limit_gets_its_full_grant(tmp_path: Path) -> None:
-    repository, _ = _repository(tmp_path)
+    repository, _ = jenkins_repository(tmp_path)
     recorded = tmp_path / "work-limit"
     adapter = tmp_path / "recording-composition-adapter"
     write_scripted_adapter(
@@ -469,11 +245,11 @@ def test_a_stage_without_a_work_limit_gets_its_full_grant(tmp_path: Path) -> Non
     write_fixture_composition_descriptor(
         repository, entrypoint=adapter, mode="implemented"
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select a recording composition adapter")
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Select a recording composition adapter")
 
     executed = _execute_composition(
-        repository, _git(repository, "rev-parse", "HEAD"), tmp_path / "attempt"
+        repository, git(repository, "rev-parse", "HEAD"), tmp_path / "attempt"
     )
 
     assert executed.returncode == 0, executed.stderr
@@ -500,7 +276,7 @@ def test_stages_not_granted_supplied_inputs_reject_them(
     supplied: tuple[str, ...],
     label: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     attempt = tmp_path / "attempt"
 
     executed = _execute_stage(repository, commit_sha, stage, attempt, supplied)
@@ -513,12 +289,12 @@ def test_stages_not_granted_supplied_inputs_reject_them(
 def test_implemented_composition_runs_the_image_build_adapter(
     tmp_path: Path,
 ) -> None:
-    repository, _commit_sha = _repository(
+    repository, _commit_sha = jenkins_repository(
         tmp_path, service_repository=_described_fixture_services(tmp_path)
     )
     case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
     adapter = tmp_path / "implemented-composition-adapter"
-    _write_response_adapter(
+    write_response_adapter(
         adapter,
         {
             name: json.dumps(
@@ -532,11 +308,11 @@ def test_implemented_composition_runs_the_image_build_adapter(
     write_fixture_composition_descriptor(
         repository, entrypoint=adapter, mode="implemented"
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select implemented composition adapter")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Select implemented composition adapter")
+    commit_sha = git(repository, "rev-parse", "HEAD")
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -585,23 +361,6 @@ def _described_fixture_services(tmp_path: Path) -> Path:
     return repository
 
 
-# Both profile hosts are arm64; mission control stays unresolved yet keeps a host.
-PLACEMENTS = [
-    {
-        "service_id": "fixture-localization",
-        "status": "resolved",
-        "artifact_id": "debs",
-        "host": "orin",
-    },
-    {
-        "service_id": "fixture-navigation",
-        "status": "resolved",
-        "artifact_id": "debs",
-        "host": "waffle",
-    },
-    {"service_id": "fixture-mission-control", "status": "unresolved", "host": "orin"},
-]
-DIGEST = f"sha256:{'a' * 64}"
 IMAGES = {
     "fixture-localization": {
         "service_id": "fixture-localization",
@@ -625,101 +384,15 @@ IMAGES = {
 }
 
 
-def _write_response_adapter(
-    path: Path, documents: dict[str, str], domain_outcome: str
-) -> None:
-    """Write an adapter that publishes fixed documents, naming its inputs."""
-    write_scripted_adapter(
-        path,
-        f"""(output / "outputs").mkdir()
-sources = [
-    {{"slot": item["slot"], "sha256": item["sha256"]}} for item in request["inputs"]
-]
-for name, document in {documents!r}.items():
-    payload = json.loads(document)
-    payload["source_inputs"] = sources
-    (output / "outputs" / name).write_text(json.dumps(payload))
-response = {{
-    "schema_version": "sdi.stage-adapter-response/v1",
-    "correlation": request["correlation"],
-    "execution_conclusion": "succeeded",
-    "domain_outcome": {domain_outcome!r},
-    "consumed_inputs": [item["slot"] for item in request["inputs"]],
-    "produced_outputs": [item["slot"] for item in request["outputs"]
-        if item["role"] == "domain_output"],
-    "diagnostic": {{"present": False, "truncated": False}},
-}}
-(output / "response.json").write_text(json.dumps(response))
-""",
-    )
-
-
-def _implemented_upstream(
-    tmp_path: Path,
-    images: dict[str, dict[str, Any]] | None,
-    service_repository: Path = FIXTURE_SERVICE_REPOSITORY,
-    placements: list[dict[str, str]] = PLACEMENTS,
-) -> Path:
-    repository, _commit_sha = _repository(
-        tmp_path, service_repository=service_repository
-    )
-    case = SOURCE_ROOT / "integration/fixtures/cases/composition-s-04-tc-03-c-05"
-    blueprint = json.loads((case / "composition-blueprint.json").read_text())
-    deployment = json.loads((case / "deployment-schema.json").read_text())
-    composition = tmp_path / "implemented-composition-adapter"
-    _write_response_adapter(
-        composition,
-        {
-            "composition-blueprint.json": json.dumps(
-                blueprint | {"evidence_basis": "implemented"}
-            ),
-            "deployment-schema.json": json.dumps(
-                deployment | {"evidence_basis": "implemented", "placements": placements}
-            ),
-        },
-        "succeeded",
-    )
-    write_fixture_composition_descriptor(
-        repository, entrypoint=composition, mode="implemented"
-    )
-    image_build = tmp_path / "implemented-image-build-adapter"
-    result = {
-        "schema_version": "sdi.image-build-result/v1",
-        "evidence_basis": "implemented",
-        "image_build_result_id": "s-04-tc-03-c-05-image-build",
-        "blueprint_id": blueprint["blueprint_id"],
-        "deployment_schema_id": deployment["deployment_schema_id"],
-        "scenario_id": "S-04",
-        "testcase_id": "TC-03",
-        "combination_id": "C-05",
-        "profile_id": "waffle-jetson-arm64",
-        "source_inputs": [],
-        "registry": "registry:5000",
-        "images": list((images or {}).values()),
-    }
-    _write_response_adapter(
-        image_build, {"image-build-result.json": json.dumps(result)}, "succeeded"
-    )
-    descriptor = repository / STAGES["image_build"].jenkins_descriptor
-    committed = descriptor.read_text()
-    scripted = committed.replace(
-        "entrypoint: sdi-image-build-adapter", f"entrypoint: {image_build}"
-    )
-    assert scripted != committed
-    if images is not None:
-        descriptor.write_text(scripted)
-    return repository
-
-
 def _implemented_image_build(
     tmp_path: Path,
     images: dict[str, dict[str, Any]] | None,
     service_repository: Path = FIXTURE_SERVICE_REPOSITORY,
 ) -> dict[str, Any]:
-    repository = _implemented_upstream(tmp_path, images, service_repository)
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select implemented composition and image-build")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
+    repository = implemented_upstream(tmp_path, images, service_repository)
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Select implemented composition and image-build")
+    commit_sha = git(repository, "rev-parse", "HEAD")
 
     composed = tmp_path / "transfers" / "composition"
     executed = _execute_stage(
@@ -815,88 +488,14 @@ def test_implemented_image_build_records_must_match_their_placements(
     assert attempt["reason"]["code"] == "sdi.adapter.candidate-rejected"
 
 
-CV_PLACEMENTS = [
-    placement | {"status": "resolved", "artifact_id": "debs"}
-    for placement in PLACEMENTS
-]
-CV_IMAGES = {
-    service_id: {
-        "service_id": service_id,
-        "status": "built",
-        "repository": f"sdi/{service_id}",
-        "digest": DIGEST,
-        "platforms": [
-            {"architecture": "amd64", "digest": AMD64_DIGEST},
-            {"architecture": "arm64", "digest": DIGEST},
-        ],
-    }
-    for service_id in SERVICE_IDS
-}
-CV_REASONS = {
-    "succeeded": None,
-    "failed": {
-        "category": "domain",
-        "code": "sdi.cv.failed",
-        "summary": "fixture-navigation did not participate.",
-    },
-    "not_evaluated": {
-        "category": "dependency",
-        "code": "sdi.cv.not-evaluated",
-        "summary": "fixture-mission-control has an unsupported command.",
-    },
-}
-
-
-def _select_evidence_adapter(
-    repository: Path,
-    stage: Literal["cv", "cd"],
-    domain_outcome: str,
-    evidence: dict[str, Any] | None,
-    reason: dict[str, str] | None,
-) -> None:
-    (grant,) = STAGES[stage].grant.evidence
-    adapter = repository.parent / f"scripted-{stage}-adapter"
-    write_scripted_adapter(
-        adapter,
-        f"""evidence = {evidence!r}
-if evidence is not None:
-    evidence["source_inputs"] = [
-        {{"slot": item["slot"], "sha256": item["sha256"]}} for item in request["inputs"]
-    ]
-    (output / "outputs").mkdir()
-    (output / "outputs/{grant.file_name}").write_text(json.dumps(evidence))
-response = {{
-    "schema_version": "sdi.stage-adapter-response/v1",
-    "correlation": request["correlation"],
-    "execution_conclusion": "succeeded",
-    "domain_outcome": {domain_outcome!r},
-    "consumed_inputs": [item["slot"] for item in request["inputs"]],
-    "produced_outputs": [] if evidence is None else [{grant.name!r}],
-    "diagnostic": {{"present": False, "truncated": False}},
-}}
-reason = {reason!r}
-if reason is not None:
-    response["reason"] = reason
-(output / "response.json").write_text(json.dumps(response))
-""",
-    )
-    descriptor = repository / STAGES[stage].jenkins_descriptor
-    committed = descriptor.read_text()
-    scripted = re.sub(r"entrypoint: .*", f"entrypoint: {adapter}", committed).replace(
-        "implementation_mode: fixture", "implementation_mode: implemented"
-    )
-    assert scripted != committed
-    descriptor.write_text(scripted)
-
-
 def _commit_and_execute(
     tmp_path: Path, repository: Path
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select scripted Stage adapters")
-    return _execute_chain(
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Select scripted Stage adapters")
+    return execute_chain(
         repository,
-        _git(repository, "rev-parse", "HEAD"),
+        git(repository, "rev-parse", "HEAD"),
         SUCCESS_REQUEST,
         tmp_path / "run",
         str(int((time.time() - 1) * 1000)),
@@ -904,15 +503,19 @@ def _commit_and_execute(
 
 
 def _implemented_cv_chain(
-    tmp_path: Path, domain_outcome: str, evidence: dict[str, Any] | None
+    tmp_path: Path,
+    domain_outcome: str,
+    evidence: dict[str, Any] | None,
+    attachment: bytes | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    repository = _implemented_upstream(tmp_path, CV_IMAGES, placements=CV_PLACEMENTS)
-    _select_evidence_adapter(
+    repository = implemented_upstream(tmp_path, CV_IMAGES, placements=CV_PLACEMENTS)
+    select_evidence_adapter(
         repository,
         "cv",
         domain_outcome,
         evidence,
         CV_REASONS[domain_outcome],
+        attachment,
     )
     return _commit_and_execute(tmp_path, repository)
 
@@ -938,6 +541,58 @@ def test_cv_verdict_sets_the_run_colour(
         if artifact["stage"] == "cv"
     ] == ["validation_evidence"]
     assert conclusion.returncode == run_conclusion, conclusion.stderr
+
+
+# Not a playable video: the runtime and the bundle never parse an attachment.
+RECORDING = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 4
+
+
+@pytest.mark.parametrize(
+    ("evidence", "run_conclusion"),
+    [(SUCCEEDED, 0), (FAILED, 1)],
+    ids=["succeeded-green", "failed-red"],
+)
+def test_cv_recording_reaches_the_bundle_unparsed(
+    tmp_path: Path, evidence: dict[str, Any], run_conclusion: int
+) -> None:
+    conclusion, result = _implemented_cv_chain(
+        tmp_path, evidence["domain_outcome"], evidence, RECORDING
+    )
+
+    assert conclusion.returncode == run_conclusion, conclusion.stderr
+    cv = result["attempts"][2]
+    assert cv["adapter_response_accepted"] is True, cv.get("reason")
+    (recording,) = [
+        artifact
+        for artifact in result["artifacts"]
+        if artifact["stage"] == "cv" and artifact["role"] == "stage_attachment"
+    ]
+    assert recording["slot"] == "sim_recording"
+    assert recording["path"] == "stages/cv/sim-recording.mp4"
+    assert recording["media_type"] == "video/mp4"
+    assert recording["byte_size"] == len(RECORDING)
+    bundle_root = tmp_path / "run" / "bundle"
+    assert (bundle_root / recording["path"]).read_bytes() == RECORDING
+    validated = subprocess.run(
+        ["sdi-integration", "validate-bundle", "--bundle-root", str(bundle_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert validated.returncode == 0, validated.stderr
+
+
+def test_cv_recording_without_evidence_is_rejected(tmp_path: Path) -> None:
+    conclusion, result = _implemented_cv_chain(tmp_path, "succeeded", None, RECORDING)
+
+    cv = result["attempts"][2]
+    assert cv["adapter_response_accepted"] is False
+    assert cv.get("reason", {}).get("code") == "sdi.adapter.output-missing", cv
+    assert all(
+        artifact["stage"] != "cv" or artifact["role"] == "diagnostic"
+        for artifact in result["artifacts"]
+    )
+    assert conclusion.returncode == 1
 
 
 def test_cv_implemented_execution_must_publish_its_evidence(tmp_path: Path) -> None:
@@ -992,49 +647,21 @@ def test_cv_check_rejects_evidence_contradicting_a_failed_attempt(
     assert conclusion.returncode == 1
 
 
-CD_IMAGES = {
-    service_id: {
-        "service_id": service_id,
-        "status": "built",
-        "repository": f"sdi/{service_id}",
-        "digest": cd.INDEX_DIGEST,
-        "platforms": [
-            {"architecture": "amd64", "digest": AMD64_DIGEST},
-            {"architecture": "arm64", "digest": cd.ARM64_DIGEST},
-        ],
-    }
-    for service_id in SERVICE_IDS
-}
-CD_REASONS = {
-    "succeeded": None,
-    "failed": {
-        "category": "domain",
-        "code": "sdi.cd.failed",
-        "summary": "fixture-navigation is in CrashLoopBackOff.",
-    },
-    "not_evaluated": {
-        "category": "dependency",
-        "code": "sdi.cd.not-evaluated",
-        "summary": "fixture-navigation has no image for arm64.",
-    },
-}
-
-
 def _implemented_cd_chain(
     tmp_path: Path,
     domain_outcome: str,
     evidence: dict[str, Any] | None,
     cv_evidence: dict[str, Any] = SUCCEEDED,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    repository = _implemented_upstream(tmp_path, CD_IMAGES, placements=CV_PLACEMENTS)
-    _select_evidence_adapter(
+    repository = implemented_upstream(tmp_path, CD_IMAGES, placements=CV_PLACEMENTS)
+    select_evidence_adapter(
         repository,
         "cv",
         cv_evidence["domain_outcome"],
         cv_evidence,
         CV_REASONS[cv_evidence["domain_outcome"]],
     )
-    _select_evidence_adapter(
+    select_evidence_adapter(
         repository,
         "cd",
         domain_outcome,
@@ -1077,8 +704,8 @@ def test_cd_implemented_execution_must_publish_its_evidence(tmp_path: Path) -> N
 
 
 def test_cd_fixture_is_accepted_without_evidence(tmp_path: Path) -> None:
-    repository, _ = _repository(tmp_path, fixture_image_build=True)
-    _select_evidence_adapter(
+    repository, _ = jenkins_repository(tmp_path, fixture_image_build=True)
+    select_evidence_adapter(
         repository,
         "cv",
         "not_evaluated",
@@ -1334,7 +961,7 @@ def test_bundle_validation_rejects_a_fixture_notice_when_no_stage_is_a_fixture(
 def test_preflight_rejects_a_key_the_composition_descriptor_does_not_bind(
     tmp_path: Path,
 ) -> None:
-    repository, _commit_sha = _repository(tmp_path)
+    repository, _commit_sha = jenkins_repository(tmp_path)
     write_fixture_composition_descriptor(repository, mode="implemented")
     descriptor = repository / STAGES["composition"].jenkins_descriptor
     descriptor.write_text(
@@ -1342,12 +969,12 @@ def test_preflight_rejects_a_key_the_composition_descriptor_does_not_bind(
             "secret_bindings: []", "secret_bindings: [OTHER_KEY]"
         )
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Bind a key the config does not name")
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Bind a key the config does not name")
 
-    preflight = _preflight(
+    preflight = run_preflight(
         repository,
-        _git(repository, "rev-parse", "HEAD"),
+        git(repository, "rev-parse", "HEAD"),
         SUCCESS_REQUEST,
         str(int((time.time() - 1) * 1000)),
     )
@@ -1359,18 +986,18 @@ def test_preflight_rejects_a_key_the_composition_descriptor_does_not_bind(
 def _commit_integration_change(repository: Path) -> str:
     source = repository / "integration/src/sdi_pipeline_integration/_cli.py"
     _ = source.write_text(f"{source.read_text()}# merged after the image build\n")
-    _git(repository, "commit", "-am", "Change the baked integration code")
-    return _git(repository, "rev-parse", "HEAD")
+    git(repository, "commit", "-am", "Change the baked integration code")
+    return git(repository, "rev-parse", "HEAD")
 
 
 def test_preflight_names_every_stale_agent_before_any_stage_work(
     tmp_path: Path,
 ) -> None:
-    repository, _commit_sha = _repository(tmp_path)
-    built = _baked_code_digest(repository)
+    repository, _commit_sha = jenkins_repository(tmp_path)
+    built = baked_code_digest(repository)
     commit_sha = _commit_integration_change(repository)
 
-    preflight = _preflight(
+    preflight = run_preflight(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -1387,11 +1014,11 @@ def test_preflight_names_every_stale_agent_before_any_stage_work(
 
 
 def test_a_stale_integration_agent_judges_no_other_agent(tmp_path: Path) -> None:
-    repository, _commit_sha = _repository(tmp_path)
-    built = _baked_code_digest(repository)
+    repository, _commit_sha = jenkins_repository(tmp_path)
+    built = baked_code_digest(repository)
     commit_sha = _commit_integration_change(repository)
 
-    preflight = _preflight(
+    preflight = run_preflight(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -1408,8 +1035,8 @@ def test_a_stale_integration_agent_judges_no_other_agent(tmp_path: Path) -> None
 def test_stale_stage_agent_refuses_its_stage_without_an_attempt(
     tmp_path: Path,
 ) -> None:
-    repository, _commit_sha = _repository(tmp_path)
-    built = _baked_code_digest(repository)
+    repository, _commit_sha = jenkins_repository(tmp_path)
+    built = baked_code_digest(repository)
     commit_sha = _commit_integration_change(repository)
     attempt = tmp_path / "attempt"
 
@@ -1417,7 +1044,7 @@ def test_stale_stage_agent_refuses_its_stage_without_an_attempt(
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
             "--baked-code-digest",
             built,
             *COMPOSITION_CONFIG_ARGUMENTS,
@@ -1439,10 +1066,10 @@ def test_stale_stage_agent_refuses_its_stage_without_an_attempt(
 
 
 def test_malformed_final_bundle_is_rejected_by_public_cli(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path, fixture_image_build=True)
+    repository, commit_sha = jenkins_repository(tmp_path, fixture_image_build=True)
     root = tmp_path / "run"
 
-    conclusion, _result = _execute_chain(
+    conclusion, _result = execute_chain(
         repository,
         commit_sha,
         SUCCESS_REQUEST,
@@ -1484,9 +1111,9 @@ def test_distributed_failures_finalize_typed_skips_and_machinery_conclusion(
     expected_conclusion: int,
     first_outcome: str,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         request_path,
@@ -1504,9 +1131,9 @@ def test_distributed_failures_finalize_typed_skips_and_machinery_conclusion(
 
 @pytest.mark.slow
 def test_distributed_timeout_records_one_attempt_and_skips(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         "runs/conformance/composition-timeout.yaml",
@@ -1526,9 +1153,9 @@ def test_distributed_timeout_records_one_attempt_and_skips(tmp_path: Path) -> No
 
 @pytest.mark.slow
 def test_trusted_stage_work_limit_overrides_profile_default(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
 
-    conclusion, result = _execute_chain(
+    conclusion, result = execute_chain(
         repository,
         commit_sha,
         "runs/conformance/composition-timeout.yaml",
@@ -1543,15 +1170,15 @@ def test_trusted_stage_work_limit_overrides_profile_default(tmp_path: Path) -> N
 
 
 def test_expired_run_deadline_does_not_launch_stage(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     attempt = tmp_path / "attempt"
 
     completed = subprocess.run(
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
-            *_fresh_image(repository),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
+            *fresh_image(repository),
             *COMPOSITION_CONFIG_ARGUMENTS,
             "--stage",
             "composition",
@@ -1574,13 +1201,13 @@ def test_expired_run_deadline_does_not_launch_stage(tmp_path: Path) -> None:
 def test_run_deadline_before_stage_work_materializes_typed_skips(
     tmp_path: Path,
 ) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     bundle_root = tmp_path / "bundle"
     finalized = subprocess.run(
         [
             "sdi-integration",
             "finalize-jenkins-run",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
             "--build-started-at-millis",
             str(int((time.time() - 1) * 1000)),
             "--run-deadline-expired",
@@ -1613,11 +1240,13 @@ def test_run_deadline_before_stage_work_materializes_typed_skips(
 
 
 def test_tampered_attempt_transfer_is_rejected(tmp_path: Path) -> None:
-    repository, commit_sha = _repository(tmp_path)
+    repository, commit_sha = jenkins_repository(tmp_path)
     root = tmp_path / "run"
     started_millis = str(int((time.time() - 1) * 1000))
     assert (
-        _preflight(repository, commit_sha, SUCCESS_REQUEST, started_millis).returncode
+        run_preflight(
+            repository, commit_sha, SUCCESS_REQUEST, started_millis
+        ).returncode
         == 0
     )
     attempt = root / "composition"
@@ -1625,8 +1254,8 @@ def test_tampered_attempt_transfer_is_rejected(tmp_path: Path) -> None:
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
-            *_fresh_image(repository),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
+            *fresh_image(repository),
             *COMPOSITION_CONFIG_ARGUMENTS,
             "--stage",
             "composition",
@@ -1663,7 +1292,7 @@ def test_tampered_attempt_transfer_is_rejected(tmp_path: Path) -> None:
 
 
 def test_external_cancellation_publishes_no_attempt(tmp_path: Path) -> None:
-    repository, _commit_sha = _repository(tmp_path)
+    repository, _commit_sha = jenkins_repository(tmp_path)
     adapter = tmp_path / "cancellable-adapter"
     ready = tmp_path / "ready"
     adapter.write_text(
@@ -1686,16 +1315,16 @@ def test_external_cancellation_publishes_no_attempt(tmp_path: Path) -> None:
             "entrypoint: sdi-fixture-adapter", f"entrypoint: {adapter}"
         )
     )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "-m", "Select cancellable adapter")
-    commit_sha = _git(repository, "rev-parse", "HEAD")
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", "Select cancellable adapter")
+    commit_sha = git(repository, "rev-parse", "HEAD")
     attempt = tmp_path / "attempt"
     process = subprocess.Popen(
         [
             "sdi-integration",
             "execute-jenkins-stage",
-            *_common(repository, commit_sha, SUCCESS_REQUEST),
-            *_fresh_image(repository),
+            *common_arguments(repository, commit_sha, SUCCESS_REQUEST),
+            *fresh_image(repository),
             *COMPOSITION_CONFIG_ARGUMENTS,
             "--stage",
             "composition",

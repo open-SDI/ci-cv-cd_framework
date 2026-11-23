@@ -108,6 +108,22 @@ def test_cd_result_omits_the_host_of_an_unresolved_placement() -> None:
 
 
 @pytest.mark.parametrize(
+    "reason",
+    ["CrashLoopBackOff", "ErrImagePull", "ImagePullBackOff", "Unschedulable", "other"],
+)
+def test_cd_result_names_each_kubernetes_reason(reason: str) -> None:
+    failed = _validate(_with_placement(FAILED, 1, CRASH | {"k8s_reason": reason}))
+
+    assert getattr(failed.placements[1], "k8s_reason", None) == reason
+
+
+def test_cd_result_written_before_the_kubernetes_reason_still_validates() -> None:
+    failed = _validate(_with_placement(FAILED, 1, _without(CRASH, "k8s_reason")))
+
+    assert getattr(failed.placements[1], "k8s_reason", None) is None
+
+
+@pytest.mark.parametrize(
     ("document", "rule"),
     [
         (
@@ -166,6 +182,20 @@ def test_cd_result_omits_the_host_of_an_unresolved_placement() -> None:
         (
             _with_placement(FAILED, 1, CRASH | {"image_id": None}),
             "image_id must be omitted when unknown",
+        ),
+        (
+            _with_placement(FAILED, 1, CRASH | {"k8s_reason": None}),
+            "k8s_reason must be omitted when unknown",
+        ),
+        (
+            _with_placement(FAILED, 1, CRASH | {"k8s_reason": "OOMKilled"}),
+            "k8s_reason",
+        ),
+        (
+            _with_placement(
+                SUCCEEDED, 1, deployed("fixture-navigation") | {"k8s_reason": "other"}
+            ),
+            "Extra inputs are not permitted",
         ),
         (
             NOT_EVALUATED | {"manifest": None},
@@ -272,6 +302,9 @@ def test_cd_result_omits_the_host_of_an_unresolved_placement() -> None:
         "failed-without-detail",
         "null-node",
         "null-image-id",
+        "null-k8s-reason",
+        "k8s-reason-outside-the-closed-set",
+        "deployed-with-k8s-reason",
         "null-manifest",
         "null-host",
         "deployed-without-image-id",

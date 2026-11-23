@@ -1,0 +1,17 @@
+# G18. The adapter's output is rejected, pinned to Image build. Spec 9.2,
+# G18. Representative: sdi.adapter.schema-mismatch.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+composition checking-output [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [S P P P] -
+image_build stage-started [S R P P] -
+image_build adapter-running [S R P P] -
+image_build checking-output [S R P P] -
+image_build publishing [S R P P] -
+image_build stage-finished [S F K K] sdi.adapter.schema-mismatch
+RUN run-finished final [S F K K] sdi.adapter.schema-mismatch

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from tests._event_console import Console, assert_conforms
 from tests._fixture_inputs import STAGE_DESCRIPTORS
 from tests._live_model import (
     COMPOSITION_CONFIG,
@@ -25,6 +26,7 @@ from tests._live_model import (
     live_keys,
     openai_key,
 )
+from tests._pipeline_events import golden
 from tests._proposals import COMPLETE
 from tests._stub_provider import (
     BODIES,
@@ -334,6 +336,9 @@ def test_publishes_the_preferred_stubbed_proposal(tmp_path: Path) -> None:
     completed = _dispatch_stub(tmp_path, proposals_body([COMPLETE]))
 
     assert completed.returncode == 0, completed.stderr
+    console = Console()
+    console.add(completed.stdout, completed.stderr)
+    assert_conforms(console, golden("g15b"))
     result = json.loads(completed.stdout)
     composition, image_build, *_ = result["attempts"]
     assert composition["execution_conclusion"] == "succeeded"

@@ -1,0 +1,13 @@
+# G19. dispatch-local with an expired deadline, pinned to Composition.
+# Spec 9.2, G19: the Stage starts and times out at once.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+    message == "Composition work started (limit 1 min)"
+composition run-deadline-reached [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [F K K K] sdi.run.deadline-exceeded
+RUN run-finished final [F K K K] sdi.run.deadline-exceeded

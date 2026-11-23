@@ -30,9 +30,11 @@ import requests
 from ._adapter_kit import Outcome, Verdict, serve
 from ._contracts import TargetExecutionProfile
 from ._domain_contracts import (
+    REGISTRY,
     CompositionBlueprint,
     DeploymentSchema,
     ImageBuildResult,
+    image_tag,
 )
 from ._image_build_redaction import failure_detail, log_tail
 from ._json_input import parse_json
@@ -50,7 +52,6 @@ if TYPE_CHECKING:
     from ._service_descriptions import Artifact
 
 BUILDKIT_ADDRESS = "tcp://buildkitd:1234"
-REGISTRY = "registry:5000"
 REGISTRY_URL = f"http://{REGISTRY}"
 # More placements than this could exceed the 32 KiB result limit.
 MAX_PLACEMENTS = 48
@@ -257,8 +258,10 @@ class Builder:
         return Running(build, process, log, metadata)
 
     def _command(self, build: Build, metadata: Path) -> list[str]:
-        name = (
-            f"{REGISTRY}/sdi/{build.service_id}:{build.artifact_id}-{self.execution_id}"
+        name = image_tag(
+            service_id=build.service_id,
+            artifact_id=build.artifact_id,
+            execution_id=self.execution_id,
         )
         platforms = ",".join(f"linux/{item}" for item in build.architectures)
         # The service folder is the build context; the recipe may sit below it.

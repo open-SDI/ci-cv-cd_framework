@@ -28,3 +28,11 @@ attempt whose execution succeeded must publish `deployment-result.json` with
 its outcome in the same way, and the CD Fixture publishes none. Evidence records how the
 Stage reached its outcome and never feeds a later Stage. A negative Domain
 outcome publishes no Domain output.
+
+A `stage_attachment` output is a file for people, which no check parses and no
+later Stage reads. It is always optional, and only an attempt whose execution
+succeeded may publish one. Beside its evidence, CV attaches
+`sim-recording.mp4`, a 640x480, 10 fps H.264 video of the S-04 run from a fixed
+overview camera. The bundle keeps it at `stages/cv/sim-recording.mp4`. When
+the recording fails, CV publishes its verdict without it, and `diagnostic.txt`
+names the cause on its `recording:` line.

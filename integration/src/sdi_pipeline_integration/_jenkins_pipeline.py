@@ -14,6 +14,7 @@ from ._git_input import GitRepository
 from ._handoff_contracts import HANDOFF_CONTRACT_VERSION
 from ._integration_code import integration_code_digest, require_fresh_agent_images
 from ._jenkins_agent_boundary import enforce_integration_execution_boundary
+from ._pipeline_event_printer import RUN_ACCEPTED, RUN_FINISHED, EventPrinter
 from ._result_contracts import run_is_red
 from ._run_input import identify_committed_run
 from ._service_descriptions import SERVICE_REPOSITORY_ROOT
@@ -227,7 +228,7 @@ def preflight_jenkins_run(  # noqa: PLR0913
         github_run_attempt=github_run_attempt,
     )
     parse_build_started_at(build_started_at_millis)
-    identified, repository, _committed = _identify_submitted_run(
+    identified, repository, committed = _identify_submitted_run(
         repository_path=repository_path,
         requested_ref=requested_ref,
         resolved_commit=resolved_commit,
@@ -241,6 +242,7 @@ def preflight_jenkins_run(  # noqa: PLR0913
             msg = f"{expected_stage} does not match its reviewed Jenkins Stage"
             raise InputError(msg)
         check_key_bindings(descriptor, key_names)
+    EventPrinter.for_run(identified, committed, scope="run").emit(RUN_ACCEPTED)
     return identified
 
 
@@ -377,6 +379,9 @@ def execute_jenkins_stage(  # noqa: PLR0913
         descriptor_path=definition.jenkins_descriptor,
         attempt_root=attempt_root,
         available_inputs=granted | outputs,
+        events=EventPrinter.for_run(
+            identified, committed, scope="run", executions=executions
+        ),
         work_limit_seconds=work_limit_seconds,
         deadline_monotonic=time.monotonic() + remaining_seconds,
     )
@@ -461,12 +466,16 @@ def finalize_jenkins_run(  # noqa: PLR0913
                 ),
             )
         )
-    return assemble_bundle(
+    result = assemble_bundle(
         identified=identified,
         run_started_at=parse_build_started_at(build_started_at_millis),
         executions=executions,
         bundle_root=bundle_root,
     )
+    EventPrinter.for_run(
+        identified, committed, scope="run", executions=executions
+    ).emit(RUN_FINISHED)
+    return result
 
 
 def bundle_is_red(bundle_root: Path, *, execution_id: str) -> bool:

@@ -360,7 +360,7 @@ def _cut(
         return record
     return FailedPlacement.model_validate(
         record.model_dump(mode="json", exclude_none=True)
-        | {"status": "failed", "detail": WORK_LIMIT_DETAIL}
+        | {"status": "failed", "detail": WORK_LIMIT_DETAIL, "k8s_reason": "other"}
     )
 
 

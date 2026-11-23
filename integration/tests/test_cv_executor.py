@@ -28,6 +28,8 @@ from sdi_pipeline_integration._cv_run import (
     FailedToStart,
     Finished,
     Placement,
+    Recording,
+    RecordingFailed,
     RunRequest,
     run_composition,
 )
@@ -208,13 +210,16 @@ def _placement(
     return Placement(service_id, digest)
 
 
-def _request(*placements: Placement, wait_s: float = 60) -> RunRequest:
+def _request(
+    *placements: Placement, wait_s: float = 60, recording_max_bytes: int | None = None
+) -> RunRequest:
     return RunRequest(
         execution_id=str(uuid.uuid4()),
         robot="waffle_pi",
         placements=placements,
         counting=COUNTING,
         deadline_monotonic=time.monotonic() + run.TEARDOWN_RESERVE_SECONDS + wait_s,
+        recording_max_bytes=recording_max_bytes,
     )
 
 
@@ -381,6 +386,83 @@ def test_cv_executor_reports_an_invalid_result(
 
     assert isinstance(outcome, Errored)
     assert outcome.error == "invalid-result"
+
+
+# The fake sim "records" its CV_RECORDING value, so the bytes read back show
+# which value the executor passed.
+RECORDING_SIM = (
+    'mkdir -p /cv/recording && printf %s "$CV_RECORDING"'
+    " > /cv/recording/sim-recording.mp4 && " + SIM_UP
+)
+RECORDER_SUMMARY = "subscribed True frames 3 skipped 0 ffmpeg exit 0"
+
+
+def test_cv_executor_reads_the_recording_after_the_result(
+    engine: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _sim(tmp_path, monkeypatch, WRITE_RESULT.format(delay=1), sim=RECORDING_SIM)
+    monkeypatch.setattr(run, "RECORDER_STOP", ("echo", RECORDER_SUMMARY))
+    node = _placement(engine, tmp_path, "fake-node")
+
+    outcome = run_composition(_request(node, recording_max_bytes=1024), HOST_DOCKER)
+
+    assert isinstance(outcome, Finished)
+    assert outcome.result.counts == {"/fake/out": 7}
+    assert isinstance(outcome.recording, Recording)
+    assert outcome.recording.video == b"1"
+    assert outcome.recording.summary == RECORDER_SUMMARY
+    assert _remaining(engine) == []
+
+
+def test_cv_executor_records_nothing_unless_the_request_keeps_a_recording(
+    engine: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _sim(tmp_path, monkeypatch, WRITE_RESULT.format(delay=1), sim=RECORDING_SIM)
+    monkeypatch.setattr(run, "RECORDER_STOP", ("echo", RECORDER_SUMMARY))
+
+    outcome = run_composition(
+        _request(_placement(engine, tmp_path, "fake-node")), HOST_DOCKER
+    )
+
+    assert isinstance(outcome, Finished)
+    assert outcome.recording is None
+
+
+def _failed_recording(
+    engine: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_bytes: int
+) -> RecordingFailed:
+    _sim(tmp_path, monkeypatch, WRITE_RESULT.format(delay=1), sim=RECORDING_SIM)
+    node = _placement(engine, tmp_path, "fake-node")
+
+    outcome = run_composition(
+        _request(node, recording_max_bytes=max_bytes), HOST_DOCKER
+    )
+
+    assert isinstance(outcome, Finished)
+    assert outcome.result.mission is not None
+    assert outcome.result.mission.completed
+    assert _remaining(engine) == []
+    assert isinstance(outcome.recording, RecordingFailed)
+    return outcome.recording
+
+
+def test_cv_executor_keeps_the_result_when_the_recorder_fails(
+    engine: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # busybox has no python3, so the real stop command exits 127.
+    failed = _failed_recording(engine, tmp_path, monkeypatch, 1024)
+
+    assert failed.detail.startswith("the recorder stop exited 127")
+
+
+def test_cv_executor_keeps_the_result_when_the_recording_is_over_its_limit(
+    engine: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run, "RECORDER_STOP", ("echo", RECORDER_SUMMARY))
+
+    failed = _failed_recording(engine, tmp_path, monkeypatch, 0)
+
+    assert failed.detail == "the recording is 1 bytes, over 0"
 
 
 def test_cv_executor_reports_a_sim_that_stopped(

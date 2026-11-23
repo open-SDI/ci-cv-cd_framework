@@ -1,0 +1,30 @@
+# G15. Fixture run, all-fixture CI. Spec 9.2, G15. Image build keeps
+# Composition's failure_reason, because within a tier the earliest Stage
+# wins (spec 5.3); its message carries its own code. CV's stage-finished is
+# a pre-spawn skip and its only line; CD prints nothing. The fixture image
+# fields beyond image_ref and platform_status follow spec 4.4.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+composition checking-output [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [N P P P] sdi.fixture.composition-executed
+    ci_status == "RUNNING"
+image_build stage-started [N R P P] sdi.fixture.composition-executed
+image_build adapter-running [N R P P] sdi.fixture.composition-executed
+image_build checking-output [N R P P] sdi.fixture.composition-executed
+image_build publishing [N R P P] sdi.fixture.composition-executed
+image_build stage-finished [N N P P] sdi.fixture.composition-executed
+    ci_status == "NOT_EVALUATED"
+    message == "Image build finished: NOT_EVALUATED (sdi.fixture.image-build-executed)"
+    image_ref == []
+    image_digest == []
+    images_built == 0
+    image_failures == []
+    platform_status == null
+    detected_platform == null
+cv stage-finished [N N K K] sdi.dependency.fixture-evidence
+RUN run-finished final [N N K K] sdi.dependency.fixture-evidence

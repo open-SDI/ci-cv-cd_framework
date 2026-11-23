@@ -34,6 +34,12 @@ outputs:
     schema_version: sdi.validation-evidence/v1
     role: stage_evidence
     max_bytes: 32768
+  - slot: sim_recording
+    path: outputs/sim-recording.mp4
+    media_type: video/mp4
+    schema_version: sdi.sim-recording/v1
+    role: stage_attachment
+    max_bytes: 67108864
 diagnostic:
   path: diagnostic.txt
   media_type: text/plain; charset=utf-8

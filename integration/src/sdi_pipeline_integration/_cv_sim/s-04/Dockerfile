@@ -48,6 +48,15 @@ RUN retry() { for attempt in 1 2 3 4 5; do "$@" && return 0; sleep 60; done; ret
  && dpkg-query -W -f='${Package}=${Version}\n' > /usr/share/sdi/installed-packages.txt \
  && rm -rf /var/lib/apt/lists/*
 
+# The recording layer sits apart so that adding it keeps the Gazebo layer
+# above cached. ffmpeg encodes the overview camera; python3-protobuf lets
+# cv_recorder.py read Gazebo's image messages.
+RUN retry() { for attempt in 1 2 3 4 5; do "$@" && return 0; sleep 60; done; return 1; } \
+ && retry apt-get update --error-on=any \
+ && retry apt-get install -y --no-install-recommends ffmpeg python3-protobuf \
+ && dpkg-query -W -f='${Package}=${Version}\n' > /usr/share/sdi/installed-packages.txt \
+ && rm -rf /var/lib/apt/lists/*
+
 # nav2_minimal_tb3_sim comes first so model://turtlebot3_world resolves to the
 # geometry Nav2's map matches.
 ENV GZ_SIM_RESOURCE_PATH=/opt/ros/jazzy/share/nav2_minimal_tb3_sim/models:/opt/ros/jazzy/share/turtlebot3_gazebo/models
@@ -60,6 +69,6 @@ RUN printf '%s\n' '#!/bin/sh' 'exec python3 /opt/sdi/cv/s-04/cv_orchestrator.py'
 COPY bridge.yaml /opt/sdi/cv/s-04/
 COPY joe/ /opt/sdi/cv/s-04/joe/
 COPY clips/request.wav clips/receipt.wav /opt/sdi/cv/s-04/clips/
-COPY scenario.yaml sim.launch.py cv_orchestrator.py /opt/sdi/cv/s-04/
+COPY scenario.yaml sim.launch.py cv_orchestrator.py cv_recorder.py /opt/sdi/cv/s-04/
 WORKDIR /opt/sdi/cv/s-04
 CMD ["ros2", "launch", "/opt/sdi/cv/s-04/sim.launch.py"]

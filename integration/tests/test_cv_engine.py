@@ -31,6 +31,7 @@ from sdi_pipeline_integration._cv_run import (
     RunRequest,
     run_composition,
 )
+from sdi_pipeline_integration._stage_registry import STAGES
 
 from ._cv_images import amd64_digest
 from ._cv_stage import BURGER, WAFFLE, CvRun, CvStage
@@ -391,3 +392,16 @@ def test_cv_engine_every_run_dumps_the_ros_graph(engine: Engine) -> None:
         assert topics["/clock"].publishers
         diagnostic = (engine.root / name / "diagnostic.txt").read_text()
         assert "graph /clock [rosgraph_msgs/msg/Clock] from " in diagnostic
+
+
+def test_cv_engine_every_adapter_run_attaches_its_recording(engine: Engine) -> None:
+    (grant,) = STAGES["cv"].grant.attachments
+    for name in ADAPTER_RUNS:
+        cv = engine.adapter_run(name)
+        assert grant.name in cv.response.produced_outputs, (name, cv.diagnostic)
+        video = (
+            engine.root / name / "candidate/outputs" / grant.file_name
+        ).read_bytes()
+        assert video[4:8] == b"ftyp", name
+        assert 0 < len(video) <= grant.max_bytes
+        assert "\nrecording: sim-recording.mp4 " in cv.diagnostic, cv.diagnostic

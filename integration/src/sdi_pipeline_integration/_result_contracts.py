@@ -35,9 +35,11 @@ from ._stage_contracts import (
 )
 from ._stage_registry import (
     COMMITTED_SLOTS,
+    EXPECTED_STAGE_ATTACHMENTS,
     EXPECTED_STAGE_EVIDENCE,
     EXPECTED_STAGE_INPUT_SLOTS,
     EXPECTED_STAGE_OUTPUTS,
+    MAX_ATTACHMENT_BYTES,
     SLOT_BY_SCHEMA,
     STAGE_ORDER,
     SUPPLIED_INPUT_SLOTS,
@@ -65,6 +67,7 @@ BoundedEvidenceSize = Annotated[NonNegativeInt, Field(le=MAX_TRANSFER_EVIDENCE_B
 BoundedDiagnosticSize = Annotated[
     NonNegativeInt, Field(le=MAX_TRANSFER_DIAGNOSTIC_BYTES)
 ]
+BoundedAttachmentSize = Annotated[NonNegativeInt, Field(le=MAX_ATTACHMENT_BYTES)]
 INITIAL_SKIP_CODES = frozenset(
     {
         "sdi.stage.not-implemented",
@@ -72,6 +75,12 @@ INITIAL_SKIP_CODES = frozenset(
         "sdi.dependency.implemented-evidence",
         "sdi.run.deadline-exceeded",
     }
+)
+ACCEPTED_ROLE_ORDER = (
+    "domain_output",
+    "stage_evidence",
+    "stage_attachment",
+    "diagnostic",
 )
 RED_DOMAIN_FAILURE_STAGES: frozenset[StageName] = frozenset({"cv", "cd"})
 RED_REASON_CODES = frozenset(
@@ -142,6 +151,25 @@ class BundleEvidenceArtifact(ContractModel):
         return path
 
 
+class BundleAttachmentArtifact(ContractModel):
+    """One unparsed Stage attachment, such as a video, in the archive candidate."""
+
+    role: Literal["stage_attachment"]
+    stage: StageName
+    slot: SlotName
+    path: RepositoryPath
+    media_type: NonBlank
+    schema_version: NonBlank
+    byte_size: BoundedAttachmentSize
+    sha256: Sha256
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, path: str) -> str:
+        validate_repository_path(path)
+        return path
+
+
 class BundleDiagnosticArtifact(ContractModel):
     """One bounded sanitized diagnostic included in the archive candidate."""
 
@@ -162,7 +190,10 @@ class BundleDiagnosticArtifact(ContractModel):
 
 
 type BundleArtifact = Annotated[
-    BundleDomainArtifact | BundleEvidenceArtifact | BundleDiagnosticArtifact,
+    BundleDomainArtifact
+    | BundleEvidenceArtifact
+    | BundleAttachmentArtifact
+    | BundleDiagnosticArtifact,
     Field(discriminator="role"),
 ]
 
@@ -328,14 +359,13 @@ class PipelineIntegrationResult(ContractModel):
                 msg = f"{stage} unsuccessful attempt cannot contribute Domain output"
                 raise ValueError(msg)
             if attempt.execution_conclusion != "succeeded" and any(
-                item.role == "stage_evidence" for item in attempt.accepted_files
+                item.role in {"stage_evidence", "stage_attachment"}
+                for item in attempt.accepted_files
             ):
                 msg = f"{stage} failed attempt cannot contribute evidence"
                 raise ValueError(msg)
             roles = [item.role for item in attempt.accepted_files]
-            if roles != sorted(
-                roles, key=("domain_output", "stage_evidence", "diagnostic").index
-            ):
+            if roles != sorted(roles, key=ACCEPTED_ROLE_ORDER.index):
                 msg = f"{stage} attempt files are not in reviewed order"
                 raise ValueError(msg)
             for accepted in attempt.accepted_files:
@@ -365,6 +395,14 @@ class PipelineIntegrationResult(ContractModel):
                         accepted.schema_version,
                     ) != EXPECTED_STAGE_EVIDENCE[stage].get(accepted.slot):
                         msg = f"{stage} evidence does not match the reviewed profile"
+                        raise ValueError(msg)
+                elif accepted.role == "stage_attachment":
+                    if (
+                        accepted.path,
+                        accepted.media_type,
+                        accepted.schema_version,
+                    ) != EXPECTED_STAGE_ATTACHMENTS[stage].get(accepted.slot):
+                        msg = f"{stage} attachment does not match the reviewed profile"
                         raise ValueError(msg)
                 elif accepted.path != "diagnostic.txt":
                     msg = f"{stage} diagnostic does not match the reviewed profile"

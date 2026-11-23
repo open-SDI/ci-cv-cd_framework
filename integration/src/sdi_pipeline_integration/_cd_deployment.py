@@ -15,6 +15,7 @@ from ._domain_contracts import (
     DeployedPlacement,
     DeploymentResult,
     FailedPlacement,
+    K8sReason,
     KubernetesImageId,
     PodPhase,
     UndeployedPlacement,
@@ -230,6 +231,10 @@ class _PodList(_Kubernetes):
 
 _IMAGE_ID: TypeAdapter[str] = TypeAdapter(KubernetesImageId)
 _PHASES = frozenset(get_args(PodPhase))
+_PULL_REASONS: dict[str, K8sReason] = {
+    "ErrImagePull": "ErrImagePull",
+    "ImagePullBackOff": "ImagePullBackOff",
+}
 
 
 def judge(
@@ -257,7 +262,8 @@ def _judge(pin: Pin, pods: list[_Pod]) -> DeployedPlacement | FailedPlacement:
             "no pod was created" if not pods else f"{len(pods)} pods for one replica"
         )
         return FailedPlacement.model_validate(
-            base | {"status": "failed", "detail": detail}
+            base
+            | {"status": "failed", "detail": detail, "k8s_reason": k8s_reason(pods)}
         )
     pod = pods[0]
     container = next(iter(pod.status.container_statuses), None)
@@ -277,7 +283,41 @@ def _judge(pin: Pin, pods: list[_Pod]) -> DeployedPlacement | FailedPlacement:
         )
     detail = failure_text("; ".join(problems), fallback="the pod broke the pass rule")
     return FailedPlacement.model_validate(
-        base | observed | {"status": "failed", "detail": detail}
+        base
+        | observed
+        | {"status": "failed", "detail": detail, "k8s_reason": k8s_reason(pods)}
+    )
+
+
+def k8s_reason(pods: Sequence[_Pod]) -> K8sReason:
+    """Name Kubernetes' reason one placement's pods failed, by the first rule met."""
+    if len(pods) != 1:
+        return "other"
+    (pod,) = pods
+    containers = pod.status.container_statuses
+    if any(_has_exited(item) for item in containers):
+        return "CrashLoopBackOff"
+    for item in containers:
+        waiting = item.state.waiting
+        if waiting is not None and waiting.reason in _PULL_REASONS:
+            return _PULL_REASONS[waiting.reason]
+    if pod.spec.node_name is None and any(
+        item.type == "PodScheduled"
+        and item.status == "False"
+        and item.reason == "Unschedulable"
+        for item in pod.status.conditions
+    ):
+        return "Unschedulable"
+    return "other"
+
+
+def _has_exited(container: _ContainerStatus) -> bool:
+    waiting = container.state.waiting
+    return (
+        container.restart_count > 0
+        or container.state.terminated is not None
+        or container.last_state.terminated is not None
+        or (waiting is not None and waiting.reason == "CrashLoopBackOff")
     )
 
 

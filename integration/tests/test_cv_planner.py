@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -87,6 +88,24 @@ def test_cv_planner_refuses_any_other_command_shape(command: list[str]) -> None:
     assert sim_time_command(command) is None
 
 
+def test_cv_planner_asks_the_sim_to_record_only_when_the_run_keeps_a_recording() -> (
+    None
+):
+    commands = {
+        "nav2-navigation": ("ros2", "launch", "x", "use_sim_time:=true"),
+        "vosk-speech": ("ros2", "run", "a", "b"),
+    }
+    recorded = plan(
+        replace(_request(), recording_max_bytes=1024), "sdi-cv-sim:tag", commands
+    )
+    unrecorded = plan(_request(), "sdi-cv-sim:tag", commands)
+
+    assert recorded.sim.get("environment", {}).get("CV_RECORDING") == "1"
+    assert unrecorded.sim.get("environment", {}).get("CV_RECORDING") == "0"
+    assert recorded.orchestrator == unrecorded.orchestrator
+    assert recorded.placements == unrecorded.placements
+
+
 def test_cv_planner_joins_every_container_to_the_sims_namespaces() -> None:
     containers = plan(
         _request(),
@@ -103,7 +122,7 @@ def test_cv_planner_joins_every_container_to_the_sims_namespaces() -> None:
     assert sim["ipc_mode"] == "shareable"
     assert sim["shm_size"] == "1g"
     assert "network_mode" not in sim
-    assert sim["environment"] == {"CV_ROBOT": "burger_cam"}
+    assert sim["environment"] == {"CV_ROBOT": "burger_cam", "CV_RECORDING": "0"}
     joined: list[dict[str, object]] = [
         dict(options)
         for options in [*containers.placements.values(), containers.orchestrator]

@@ -411,6 +411,12 @@ def _unscheduled() -> dict[str, Any]:
     }
 
 
+def _pulling(reason: str) -> dict[str, Any]:
+    pod = _recorded("failmodes.json", "badpull", "fixture-localization")
+    pod["status"]["containerStatuses"][0]["state"]["waiting"]["reason"] = reason
+    return pod
+
+
 def _running_with(phase: str | None = None, **container: object) -> dict[str, Any]:
     pod = _running()
     if phase is not None:
@@ -437,13 +443,14 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
 
 
 @pytest.mark.parametrize(
-    ("pinned", "pod", "observed", "detail"),
+    ("pinned", "pod", "observed", "detail", "reason"),
     [
         pytest.param(
             _pinned("fixture-localization", "burger", f"sha256:{'0' * 64}"),
             _recorded("failmodes.json", "badpull", "fixture-localization"),
             {"node": "burger", "phase": "Pending", "restart_count": 0},
             "ImagePullBackOff: Back-off pulling image registry:5000/sdi/probe@",
+            "ImagePullBackOff",
             id="image-pull-back-off",
         ),
         pytest.param(
@@ -456,6 +463,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "CrashLoopBackOff: back-off 40s restarting failed container=c",
+            "CrashLoopBackOff",
             id="crash-loop-back-off",
         ),
         pytest.param(
@@ -468,6 +476,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "Error (exit 1); restarted 3 times, last Error (exit 1)",
+            "CrashLoopBackOff",
             id="crash-between-restarts",
         ),
         pytest.param(
@@ -475,6 +484,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
             _unscheduled(),
             {"phase": "Pending"},
             f"Unschedulable: {UNSCHEDULABLE}",
+            "Unschedulable",
             id="pending-without-a-node",
         ),
         pytest.param(
@@ -487,6 +497,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "on node waffle, not orin",
+            "other",
             id="wrong-node",
         ),
         pytest.param(
@@ -502,6 +513,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
             },
             f"ran {RECORDED_DIGEST}, not the pinned "
             f"{ARM64_DIGESTS['fixture-localization']}",
+            "other",
             id="wrong-digest",
         ),
         pytest.param(
@@ -517,6 +529,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "restarted 1 times, last Error (exit 137)",
+            "CrashLoopBackOff",
             id="restarted",
         ),
         pytest.param(
@@ -524,6 +537,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
             None,
             {},
             "no pod was created",
+            "other",
             id="no-pod",
         ),
         pytest.param(
@@ -536,6 +550,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "phase Unknown",
+            "other",
             id="running-container-in-a-pod-not-running",
         ),
         pytest.param(
@@ -548,6 +563,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
                 "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
             },
             "the container is not running",
+            "other",
             id="container-without-a-state",
         ),
         pytest.param(
@@ -555,6 +571,7 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
             _running_with(imageID=""),
             {"node": "waffle", "phase": "Running", "restart_count": 0},
             "the image ID is not a digest reference",
+            "other",
             id="empty-image-id",
         ),
         pytest.param(
@@ -562,12 +579,158 @@ def test_cd_passes_a_pod_running_its_pinned_digest_on_its_host() -> None:
             _running_with(imageID="registry:5000/sdi/probe:latest"),
             {"node": "waffle", "phase": "Running", "restart_count": 0},
             "the image ID is not a digest reference",
+            "other",
             id="unparseable-image-id",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "burger", f"sha256:{'0' * 64}"),
+            _pulling("ErrImagePull"),
+            {"node": "burger", "phase": "Pending", "restart_count": 0},
+            "ErrImagePull: Back-off pulling image registry:5000/sdi/probe@",
+            "ErrImagePull",
+            id="err-image-pull",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _running_with(
+                "Succeeded",
+                state={"terminated": {"reason": "Completed", "exitCode": 0}},
+            ),
+            {
+                "node": "waffle",
+                "phase": "Succeeded",
+                "restart_count": 0,
+                "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
+            },
+            "Completed (exit 0); phase Succeeded",
+            "CrashLoopBackOff",
+            id="exited-without-a-restart",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _running_with(
+                "Pending",
+                restartCount=2,
+                state={"waiting": {"reason": "ErrImagePull"}},
+                lastState={"terminated": {"reason": "Error", "exitCode": 1}},
+            ),
+            {
+                "node": "waffle",
+                "phase": "Pending",
+                "restart_count": 2,
+                "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
+            },
+            "ErrImagePull; restarted 2 times, last Error (exit 1)",
+            "CrashLoopBackOff",
+            id="restarted-then-a-pull-failure-is-a-crash-loop",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _unscheduled()
+            | {
+                "status": _unscheduled()["status"]
+                | {
+                    "containerStatuses": [
+                        {
+                            "imageID": "",
+                            "restartCount": 0,
+                            "state": {"waiting": {"reason": "ImagePullBackOff"}},
+                        }
+                    ]
+                }
+            },
+            {"phase": "Pending", "restart_count": 0},
+            f"Unschedulable: {UNSCHEDULABLE}",
+            "ImagePullBackOff",
+            id="a-pull-failure-outranks-unschedulable",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "orin"),
+            _crash_looping(),
+            {
+                "node": "waffle",
+                "phase": "Running",
+                "restart_count": 3,
+                "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
+            },
+            "on node waffle, not orin; CrashLoopBackOff: back-off 40s",
+            "CrashLoopBackOff",
+            id="crash-loop-on-the-wrong-node",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _unscheduled() | {"status": {"phase": "Pending"}},
+            {"phase": "Pending"},
+            "Pending: no node",
+            "other",
+            id="pending-without-a-node-or-a-scheduling-verdict",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _unscheduled()
+            | {
+                "status": {
+                    "phase": "Pending",
+                    "conditions": [
+                        {
+                            "type": "PodScheduled",
+                            "status": "False",
+                            "reason": "SchedulerError",
+                        }
+                    ],
+                }
+            },
+            {"phase": "Pending"},
+            "SchedulerError",
+            "other",
+            id="unscheduled-for-another-reason",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "orin"),
+            _running()
+            | {
+                "status": _running()["status"]
+                | {
+                    "conditions": [
+                        {
+                            "type": "PodScheduled",
+                            "status": "False",
+                            "reason": "Unschedulable",
+                        }
+                    ]
+                }
+            },
+            {
+                "node": "waffle",
+                "phase": "Running",
+                "restart_count": 0,
+                "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
+            },
+            "on node waffle, not orin",
+            "other",
+            id="unschedulable-condition-on-a-scheduled-pod",
+        ),
+        pytest.param(
+            _pinned("fixture-localization", "waffle"),
+            _running_with(state={"waiting": {"reason": "CrashLoopBackOff"}}),
+            {
+                "node": "waffle",
+                "phase": "Running",
+                "restart_count": 0,
+                "image_id": f"registry:5000/sdi/probe@{RECORDED_DIGEST}",
+            },
+            "CrashLoopBackOff",
+            "CrashLoopBackOff",
+            id="crash-loop-back-off-before-a-restart-is-counted",
         ),
     ],
 )
 def test_cd_fails_a_pod_that_breaks_the_pass_rule_with_its_reason(
-    pinned: Pin, pod: dict[str, Any] | None, observed: dict[str, Any], detail: str
+    pinned: Pin,
+    pod: dict[str, Any] | None,
+    observed: dict[str, Any],
+    detail: str,
+    reason: str,
 ) -> None:
     (record,) = judge([pinned], _pods() if pod is None else _pods(pod))
 
@@ -580,9 +743,25 @@ def test_cd_fails_a_pod_that_breaks_the_pass_rule_with_its_reason(
             "host": pinned.host,
             "status": "failed",
             "image": pinned.image,
+            "k8s_reason": reason,
         }
         | observed
     )
+
+
+def test_cd_fails_several_pods_for_one_replica_with_no_kubernetes_reason() -> None:
+    pinned = _pinned("fixture-localization", "waffle")
+
+    (record,) = judge([pinned], _pods(_crash_looping(), _running()))
+
+    assert record.model_dump(exclude_none=True) == {
+        "service_id": "fixture-localization",
+        "host": "waffle",
+        "status": "failed",
+        "image": pinned.image,
+        "detail": "2 pods for one replica",
+        "k8s_reason": "other",
+    }
 
 
 def test_cd_cleans_a_kubernetes_message_into_a_detail() -> None:

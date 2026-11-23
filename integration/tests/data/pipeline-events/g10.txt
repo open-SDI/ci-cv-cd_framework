@@ -1,0 +1,6 @@
+# G10. The scheduling timeout fires before any Stage runs. Spec 9.2, G10:
+# the final line is the only line.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-finished final [F K K K] sdi.run.deadline-exceeded

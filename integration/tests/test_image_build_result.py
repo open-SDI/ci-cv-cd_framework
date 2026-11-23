@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from sdi_pipeline_integration._adapter_kit import encode_document
-from sdi_pipeline_integration._domain_contracts import ImageBuildResult
+from sdi_pipeline_integration._domain_contracts import ImageBuildResult, image_tag
 from sdi_pipeline_integration._stage_contracts import (
     contains_sensitive_contract_material,
 )
@@ -177,3 +177,15 @@ def test_forty_eight_worst_case_placements_fit_the_domain_output_limit(
     written = encode_document(_validate(payload))
 
     assert len(written) <= STAGES["image_build"].grant.domain_output_max_bytes
+
+
+def test_image_tag_is_the_name_the_adapter_pushes_and_events_report() -> None:
+    execution_id = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+
+    tag = image_tag(
+        service_id="nav2-navigation",
+        artifact_id="jazzy-debs-arm64",
+        execution_id=execution_id,
+    )
+
+    assert tag == f"registry:5000/sdi/nav2-navigation:jazzy-debs-arm64-{execution_id}"

@@ -27,6 +27,7 @@ from ._domain_contracts import (
 )
 from ._generated_files import check_generated, write_generated
 from ._handoff_contracts import HandoffReceipt
+from ._pipeline_events import PipelineEventRow
 from ._recovery_contracts import RecoveryManifest
 from ._result_contracts import PipelineIntegrationResult
 from ._service_descriptions import ServiceDescription, ServiceRepositoryManifest
@@ -52,6 +53,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "fixture-case-v1.schema.json": FixtureCase,
     "handoff-receipt-v1.schema.json": HandoffReceipt,
     "image-build-result-v1.schema.json": ImageBuildResult,
+    "pipeline-event-v1.schema.json": PipelineEventRow,
     "pipeline-integration-result-v1.schema.json": PipelineIntegrationResult,
     "pipeline-integration-run-request-v1.schema.json": RunRequest,
     "recovery-manifest-v1.schema.json": RecoveryManifest,

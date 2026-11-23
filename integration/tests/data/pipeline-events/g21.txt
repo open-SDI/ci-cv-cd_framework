@@ -1,0 +1,30 @@
+# G21. Partial image failures, then CV not evaluated and CD fails.
+# Spec 9.2, G21. A FAILED CD outranks an earlier NOT_EVALUATED CV.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+composition checking-output [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [S P P P] -
+image_build stage-started [S R P P] -
+image_build adapter-running [S R P P] -
+image_build checking-output [S R P P] -
+image_build publishing [S R P P] -
+image_build stage-finished [S S P P] -
+    images_total != null
+    images_built == @images_total - 1
+    image_failures contains {}
+cv stage-started [S S R P] -
+cv adapter-running [S S R P] -
+cv checking-output [S S R P] -
+cv publishing [S S R P] -
+cv stage-finished [S S N P] sdi.cv.not-evaluated
+cd stage-started [S S N R] sdi.cv.not-evaluated
+cd adapter-running [S S N R] sdi.cv.not-evaluated
+cd checking-output [S S N R] sdi.cv.not-evaluated
+cd publishing [S S N R] sdi.cv.not-evaluated
+cd stage-finished [S S N F] sdi.cd.failed
+RUN run-finished final [S S N F] sdi.cd.failed

@@ -181,6 +181,8 @@ def validate_bundle_documents(  # noqa: C901, PLR0912, PLR0915
         ):
             msg = f"archive artifact does not match its inventory: {artifact.path}"
             raise InputError(msg)
+        if artifact.role == "stage_attachment":
+            continue
         if artifact.role != "diagnostic":
             model = OUTPUT_MODELS.get(artifact.schema_version)
             if model is None:

@@ -86,6 +86,17 @@
           "title": "Image Id",
           "type": "string"
         },
+        "k8s_reason": {
+          "enum": [
+            "CrashLoopBackOff",
+            "ErrImagePull",
+            "ImagePullBackOff",
+            "Unschedulable",
+            "other"
+          ],
+          "title": "K8S Reason",
+          "type": "string"
+        },
         "node": {
           "maxLength": 63,
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",

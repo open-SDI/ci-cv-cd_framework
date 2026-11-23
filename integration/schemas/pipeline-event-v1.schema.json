@@ -1,0 +1,810 @@
+{
+  "$defs": {
+    "CvServiceIssue": {
+      "additionalProperties": true,
+      "description": "One service that did not participate or was not evaluated.",
+      "properties": {
+        "participation": {
+          "examples": [
+            "did_not_participate",
+            "not_evaluated"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Participation",
+          "type": "string"
+        },
+        "reason": {
+          "examples": [
+            "container-exited",
+            "failed-to-start",
+            "no-message",
+            "image-unavailable",
+            "no-amd64",
+            "needs-gpu-or-device",
+            "unsupported-command",
+            "no-counting-output",
+            "unloadable-type"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "participation",
+        "reason"
+      ],
+      "title": "CvServiceIssue",
+      "type": "object"
+    },
+    "ImageFailure": {
+      "additionalProperties": true,
+      "description": "One `failed` image record.",
+      "properties": {
+        "reason": {
+          "examples": [
+            "unresolved-placement",
+            "no-recipe",
+            "build-failed",
+            "work-limit"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "reason"
+      ],
+      "title": "ImageFailure",
+      "type": "object"
+    },
+    "MissionStepEntry": {
+      "additionalProperties": true,
+      "description": "One S-04 mission step; `status` is null until it is reported.",
+      "properties": {
+        "id": {
+          "examples": [
+            "secure-book",
+            "accept-spoken-request",
+            "resolve-rendezvous",
+            "navigate-to-rendezvous",
+            "verify-recipient-face",
+            "transfer-book",
+            "acknowledge-receipt",
+            "return-to-origin"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "examples": [
+                "passed",
+                "failed",
+                "timed_out",
+                "scripted",
+                "not_reached"
+              ],
+              "maxLength": 63,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Status"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "title": "MissionStepEntry",
+      "type": "object"
+    },
+    "PipelineStatus": {
+      "enum": [
+        "PENDING",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "SKIPPED",
+        "NOT_EVALUATED"
+      ],
+      "type": "string"
+    },
+    "PlacementIssue": {
+      "additionalProperties": true,
+      "description": "One placement that is neither deployed nor `blocked`.\n\n`reason` is a Kubernetes reason for a `failed` placement and a deployment\ngap for a `not_evaluated` one.",
+      "properties": {
+        "host": {
+          "anyOf": [
+            {
+              "maxLength": 63,
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Host"
+        },
+        "reason": {
+          "examples": [
+            "CrashLoopBackOff",
+            "ErrImagePull",
+            "ImagePullBackOff",
+            "Unschedulable",
+            "other",
+            "unresolved-placement",
+            "image-not-built",
+            "no-image-for-architecture",
+            "host-not-in-cluster"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Reason",
+          "type": "string"
+        },
+        "service_id": {
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Service Id",
+          "type": "string"
+        },
+        "status": {
+          "examples": [
+            "failed",
+            "not_evaluated"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_id",
+        "host",
+        "status",
+        "reason"
+      ],
+      "title": "PlacementIssue",
+      "type": "object"
+    },
+    "StageName": {
+      "enum": [
+        "composition",
+        "image_build",
+        "cv",
+        "cd"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": true,
+  "description": "One `PRISM_EVENT` line: a full snapshot of the combination's row.\n\nField order is the wire key order. No field has a default: a builder states\nevery value, and a parsed line carries every key. `stage`, `target`,\n`architecture`, the statuses and `platform_status` are closed enums; every\nother code-like value is an open string whose schema lists `examples`.",
+  "properties": {
+    "architecture": {
+      "anyOf": [
+        {
+          "enum": [
+            "amd64",
+            "arm64"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Architecture"
+    },
+    "blueprint_ref": {
+      "anyOf": [
+        {
+          "examples": [
+            "stages/composition/composition-blueprint.json",
+            "stages/composition/deployment-schema.json",
+            "stages/image-build/image-build-result.json",
+            "stages/cv/validation-evidence.json",
+            "stages/cd/deployment-result.json"
+          ],
+          "maxLength": 255,
+          "pattern": "^stages/[a-z][a-z0-9-]*/[a-z][a-z0-9.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Blueprint Ref"
+    },
+    "cd_duration_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cd Duration Ms"
+    },
+    "cd_placements_blocked": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cd Placements Blocked"
+    },
+    "cd_placements_deployed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cd Placements Deployed"
+    },
+    "cd_placements_total": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cd Placements Total"
+    },
+    "cd_status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "ci_duration_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ci Duration Ms"
+    },
+    "ci_status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "composition_id": {
+      "pattern": "^C-[0-9]{2}$",
+      "title": "Composition Id",
+      "type": "string"
+    },
+    "composition_status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "cv_duration_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Duration Ms"
+    },
+    "cv_platform": {
+      "anyOf": [
+        {
+          "examples": [
+            "linux/amd64",
+            "linux/arm64"
+          ],
+          "pattern": "^linux/[a-z0-9]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Platform"
+    },
+    "cv_service_issues": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/CvServiceIssue"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Service Issues"
+    },
+    "cv_services_blocked": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Services Blocked"
+    },
+    "cv_services_participating": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Services Participating"
+    },
+    "cv_services_total": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cv Services Total"
+    },
+    "cv_status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "deployment_result_ref": {
+      "anyOf": [
+        {
+          "examples": [
+            "stages/composition/composition-blueprint.json",
+            "stages/composition/deployment-schema.json",
+            "stages/image-build/image-build-result.json",
+            "stages/cv/validation-evidence.json",
+            "stages/cd/deployment-result.json"
+          ],
+          "maxLength": 255,
+          "pattern": "^stages/[a-z][a-z0-9-]*/[a-z][a-z0-9.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Deployment Result Ref"
+    },
+    "deployment_schema_ref": {
+      "anyOf": [
+        {
+          "examples": [
+            "stages/composition/composition-blueprint.json",
+            "stages/composition/deployment-schema.json",
+            "stages/image-build/image-build-result.json",
+            "stages/cv/validation-evidence.json",
+            "stages/cd/deployment-result.json"
+          ],
+          "maxLength": 255,
+          "pattern": "^stages/[a-z][a-z0-9-]*/[a-z][a-z0-9.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Deployment Schema Ref"
+    },
+    "detected_platform": {
+      "anyOf": [
+        {
+          "examples": [
+            "linux/amd64",
+            "linux/arm64"
+          ],
+          "pattern": "^linux/[a-z0-9]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detected Platform"
+    },
+    "emitted_at": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+      "title": "Emitted At",
+      "type": "string"
+    },
+    "execution_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "failure_reason": {
+      "anyOf": [
+        {
+          "maxLength": 127,
+          "pattern": "^sdi\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failure Reason"
+    },
+    "final": {
+      "title": "Final",
+      "type": "boolean"
+    },
+    "image_archive": {
+      "title": "Image Archive",
+      "type": "null"
+    },
+    "image_build_result_ref": {
+      "anyOf": [
+        {
+          "examples": [
+            "stages/composition/composition-blueprint.json",
+            "stages/composition/deployment-schema.json",
+            "stages/image-build/image-build-result.json",
+            "stages/cv/validation-evidence.json",
+            "stages/cd/deployment-result.json"
+          ],
+          "maxLength": 255,
+          "pattern": "^stages/[a-z][a-z0-9-]*/[a-z][a-z0-9.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Image Build Result Ref"
+    },
+    "image_build_status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "image_digest": {
+      "anyOf": [
+        {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Image Digest"
+    },
+    "image_failures": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ImageFailure"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Image Failures"
+    },
+    "image_ref": {
+      "anyOf": [
+        {
+          "items": {
+            "examples": [
+              "registry:5000/sdi/navigation:navigation-arm64-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+            ],
+            "maxLength": 255,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Image Ref"
+    },
+    "images_built": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Images Built"
+    },
+    "images_total": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Images Total"
+    },
+    "message": {
+      "maxLength": 962,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "mission_setup": {
+      "anyOf": [
+        {
+          "examples": [
+            "passed",
+            "timed_out"
+          ],
+          "maxLength": 63,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mission Setup"
+    },
+    "mission_steps": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/MissionStepEntry"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mission Steps"
+    },
+    "placement_issues": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/PlacementIssue"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Placement Issues"
+    },
+    "platform_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "MATCH",
+            "MISMATCH"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Platform Status"
+    },
+    "profile_id": {
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Profile Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "pattern": "^S-[0-9]{2}$",
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sdi.pipeline-event/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StageName"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "step": {
+      "examples": [
+        "run-accepted",
+        "run-finished",
+        "stage-started",
+        "adapter-running",
+        "work-limit-reached",
+        "run-deadline-reached",
+        "checking-output",
+        "publishing",
+        "stage-finished",
+        "discovery",
+        "generation",
+        "assessment",
+        "builder-check",
+        "building",
+        "image-built",
+        "image-failed",
+        "screening",
+        "service-unfit",
+        "leftover-cleanup",
+        "sim-cached",
+        "sim-build",
+        "pull",
+        "pull-blocked",
+        "start",
+        "mission",
+        "mission-setup-done",
+        "mission-step",
+        "collecting-result",
+        "teardown",
+        "nodes-wait",
+        "nodes-ready",
+        "applying",
+        "pod-running",
+        "pod-not-running",
+        "settling",
+        "judging",
+        "cleanup"
+      ],
+      "maxLength": 63,
+      "pattern": "^[A-Za-z][A-Za-z0-9_.+/-]*$",
+      "title": "Step",
+      "type": "string"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "enum": [
+            "SDV",
+            "SDR"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Target"
+    },
+    "testcase_id": {
+      "pattern": "^TC-[0-9]{2}$",
+      "title": "Testcase Id",
+      "type": "string"
+    },
+    "validation_evidence_ref": {
+      "anyOf": [
+        {
+          "examples": [
+            "stages/composition/composition-blueprint.json",
+            "stages/composition/deployment-schema.json",
+            "stages/image-build/image-build-result.json",
+            "stages/cv/validation-evidence.json",
+            "stages/cd/deployment-result.json"
+          ],
+          "maxLength": 255,
+          "pattern": "^stages/[a-z][a-z0-9-]*/[a-z][a-z0-9.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Validation Evidence Ref"
+    }
+  },
+  "required": [
+    "schema_version",
+    "emitted_at",
+    "execution_id",
+    "final",
+    "stage",
+    "step",
+    "message",
+    "composition_id",
+    "scenario_id",
+    "testcase_id",
+    "profile_id",
+    "target",
+    "architecture",
+    "composition_status",
+    "image_build_status",
+    "ci_status",
+    "cv_status",
+    "cd_status",
+    "failure_reason",
+    "ci_duration_ms",
+    "blueprint_ref",
+    "deployment_schema_ref",
+    "image_build_result_ref",
+    "image_ref",
+    "image_digest",
+    "image_archive",
+    "images_built",
+    "images_total",
+    "image_failures",
+    "platform_status",
+    "detected_platform",
+    "cv_duration_ms",
+    "validation_evidence_ref",
+    "cv_platform",
+    "cv_services_participating",
+    "cv_services_blocked",
+    "cv_services_total",
+    "cv_service_issues",
+    "mission_setup",
+    "mission_steps",
+    "cd_duration_ms",
+    "deployment_result_ref",
+    "cd_placements_deployed",
+    "cd_placements_blocked",
+    "cd_placements_total",
+    "placement_issues"
+  ],
+  "title": "PipelineEventRow",
+  "type": "object"
+}

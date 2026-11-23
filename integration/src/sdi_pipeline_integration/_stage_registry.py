@@ -78,6 +78,8 @@ SLOTS = (
         "image_build",
     ),
 )
+# One overview video of a CV run at 640x480 and 10 fps stays well under this.
+MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024
 SLOT_BY_NAME = {slot.name: slot for slot in SLOTS}
 SLOT_BY_SCHEMA = {slot.schema_version: slot for slot in SLOTS}
 COMMITTED_SLOTS = tuple(slot for slot in SLOTS if slot.origin == "committed")
@@ -103,6 +105,20 @@ class EvidenceGrant:
 
 
 @dataclass(frozen=True)
+class AttachmentGrant:
+    """A file a Stage may attach for people, such as a video, never parsed.
+
+    Attachments are always optional, and no later Stage reads them.
+    """
+
+    name: str
+    file_name: str
+    media_type: str
+    schema_version: str
+    max_bytes: int
+
+
+@dataclass(frozen=True)
 class StageGrant:
     """Everything one Stage is granted."""
 
@@ -112,6 +128,7 @@ class StageGrant:
     domain_output_max_bytes: int
     diagnostic_max_bytes: int
     evidence: tuple[EvidenceGrant, ...] = ()
+    attachments: tuple[AttachmentGrant, ...] = ()
     minimum_work_limit_seconds: int = 1
 
 
@@ -137,6 +154,7 @@ class Stage:
 
     name: StageName
     display_name: str
+    event_label: str
     grant: StageGrant
     agent: Agent
     jenkins_descriptor: str
@@ -148,11 +166,17 @@ class Stage:
         """The descriptor dispatch-local runs."""
         return self.local_override or self.jenkins_descriptor
 
+    @property
+    def event_tag(self) -> str:
+        """The `[sdi]` line's Stage column, such as `IMAGE-BUILD`."""
+        return self.event_label.upper().replace(" ", "-")
+
 
 STAGES: dict[StageName, Stage] = {
     "composition": Stage(
         "composition",
         "Composition",
+        event_label="Composition",
         grant=StageGrant(
             "sdi.composition-stage-profile/v1",
             (
@@ -182,6 +206,7 @@ STAGES: dict[StageName, Stage] = {
     "image_build": Stage(
         "image_build",
         "Image build",
+        event_label="Image build",
         grant=StageGrant(
             "sdi.image-build-stage-profile/v1",
             (
@@ -201,6 +226,7 @@ STAGES: dict[StageName, Stage] = {
     "cv": Stage(
         "cv",
         "Continuous Validation",
+        event_label="CV",
         grant=StageGrant(
             "sdi.cv-stage-profile/v1",
             (
@@ -224,6 +250,15 @@ STAGES: dict[StageName, Stage] = {
                     required=True,
                 ),
             ),
+            attachments=(
+                AttachmentGrant(
+                    "sim_recording",
+                    "sim-recording.mp4",
+                    "video/mp4",
+                    "sdi.sim-recording/v1",
+                    max_bytes=MAX_ATTACHMENT_BYTES,
+                ),
+            ),
         ),
         agent=Agent("cv", "cv"),
         jenkins_descriptor="deployment/jenkins/adapters/cv-v1.yaml",
@@ -231,6 +266,7 @@ STAGES: dict[StageName, Stage] = {
     "cd": Stage(
         "cd",
         "Continuous Deployment",
+        event_label="CD",
         grant=StageGrant(
             "sdi.cd-stage-profile/v1",
             (
@@ -286,6 +322,18 @@ EXPECTED_STAGE_EVIDENCE: dict[StageName, dict[str, tuple[str, str, str]]] = {
             evidence.schema_version,
         )
         for evidence in stage.grant.evidence
+    }
+    for name, stage in STAGES.items()
+}
+
+EXPECTED_STAGE_ATTACHMENTS: dict[StageName, dict[str, tuple[str, str, str]]] = {
+    name: {
+        attachment.name: (
+            f"outputs/{attachment.file_name}",
+            attachment.media_type,
+            attachment.schema_version,
+        )
+        for attachment in stage.grant.attachments
     }
     for name, stage in STAGES.items()
 }

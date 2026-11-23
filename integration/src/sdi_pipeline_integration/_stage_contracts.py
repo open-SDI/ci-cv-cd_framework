@@ -298,7 +298,8 @@ class OutputGrant(ContractModel):
     media_type: NonBlank
     schema_version: NonBlank
     # A Domain output is required whenever the Domain outcome is not failed.
-    role: Literal["domain_output", "stage_evidence"]
+    # A Stage attachment is never parsed and always optional.
+    role: Literal["domain_output", "stage_evidence", "stage_attachment"]
     max_bytes: PositiveInt
 
     @field_validator("path")
@@ -394,6 +395,17 @@ def render_stage_profile(stage: StageName) -> StageProfile:
                         "max_bytes": evidence.max_bytes,
                     }
                     for evidence in grant.evidence
+                ),
+                *(
+                    {
+                        "slot": attachment.name,
+                        "path": f"outputs/{attachment.file_name}",
+                        "media_type": attachment.media_type,
+                        "schema_version": attachment.schema_version,
+                        "role": "stage_attachment",
+                        "max_bytes": attachment.max_bytes,
+                    }
+                    for attachment in grant.attachments
                 ),
             ],
             "diagnostic": {
@@ -533,6 +545,18 @@ class AcceptedEvidenceFile(ContractModel):
     sha256: Sha256
 
 
+class AcceptedAttachmentFile(ContractModel):
+    """One unparsed file, such as a video, that a Stage attached for people."""
+
+    role: Literal["stage_attachment"]
+    slot: SlotName
+    path: RepositoryPath
+    media_type: NonBlank
+    schema_version: NonBlank
+    byte_size: NonNegativeInt
+    sha256: Sha256
+
+
 class AcceptedDiagnosticFile(ContractModel):
     """One bounded sanitized diagnostic accepted by the integration runtime."""
 
@@ -546,7 +570,10 @@ class AcceptedDiagnosticFile(ContractModel):
 
 
 type AcceptedFile = Annotated[
-    AcceptedDomainFile | AcceptedEvidenceFile | AcceptedDiagnosticFile,
+    AcceptedDomainFile
+    | AcceptedEvidenceFile
+    | AcceptedAttachmentFile
+    | AcceptedDiagnosticFile,
     Field(discriminator="role"),
 ]
 

@@ -6,7 +6,7 @@ import json
 import tarfile
 import time
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
@@ -32,6 +32,9 @@ SIM_SHM_SIZE = "1g"
 ORCHESTRATOR_COMMAND = ("cv-orchestrator",)
 RESULT_PATH = "/cv/result.json"
 RESULT_MAX_BYTES = 64 * 1024
+RECORDER_STOP = ("python3", "/opt/sdi/cv/s-04/cv_recorder.py", "stop")
+RECORDING_PATH = "/cv/recording/sim-recording.mp4"
+RECORDING_STOP_SECONDS = 120
 TEARDOWN_RESERVE_SECONDS = 120
 ENGINE_SILENCE_SECONDS = 600
 LOG_TAIL_LINES = 40
@@ -88,6 +91,8 @@ class RunRequest:
     placements: tuple[Placement, ...]
     counting: tuple[CountingOutput, ...]
     deadline_monotonic: float
+    # The largest recording to keep; None records nothing.
+    recording_max_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -129,10 +134,23 @@ class Blocked:
 
 
 @dataclass(frozen=True)
+class Recording:
+    video: bytes
+    summary: str
+    stop_seconds: float
+
+
+@dataclass(frozen=True)
+class RecordingFailed:
+    detail: str
+
+
+@dataclass(frozen=True)
 class Finished:
     result: ScenarioResult
     snapshot: Snapshot
     phases: Mapping[Phase, float]
+    recording: Recording | RecordingFailed | None = None
 
 
 @dataclass(frozen=True)
@@ -202,7 +220,10 @@ def plan(
             "image": sim_image,
             "name": sim,
             "labels": labels,
-            "environment": {"CV_ROBOT": request.robot},
+            "environment": {
+                "CV_ROBOT": request.robot,
+                "CV_RECORDING": "0" if request.recording_max_bytes is None else "1",
+            },
             "ipc_mode": "shareable",
             "shm_size": SIM_SHM_SIZE,
             "detach": True,
@@ -317,7 +338,12 @@ class _Run:
                 f"the sim was {snapshot.sim.status} when the orchestrator exited",
                 snapshot,
             )
-        return self.read_result(orchestrator, snapshot)
+        outcome = self.read_result(orchestrator, snapshot)
+        limit = self.request.recording_max_bytes
+        if isinstance(outcome, Finished) and limit is not None:
+            # The result is read first, so the recording cannot change it.
+            return replace(outcome, recording=self.recording(sim, limit))
+        return outcome
 
     def failed(
         self, error: RunError, detail: str, snapshot: Snapshot | None
@@ -462,6 +488,39 @@ class _Run:
                 snapshot,
             )
         return Finished(result, snapshot, self.phases)
+
+    def recording(self, sim: Container, max_bytes: int) -> Recording | RecordingFailed:
+        from docker.errors import DockerException  # noqa: PLC0415
+
+        seconds = int(min(RECORDING_STOP_SECONDS, self.remaining()))
+        if seconds < 1:
+            return RecordingFailed("no time was left to finish the recording")
+        started = time.monotonic()
+        try:
+            stopped = sim.exec_run(["timeout", str(seconds), *RECORDER_STOP])
+            summary = " ".join(
+                cast("bytes", stopped.output).decode(errors="replace").split()
+            )
+            if stopped.exit_code != 0:
+                return RecordingFailed(
+                    f"the recorder stop exited {stopped.exit_code}: "
+                    f"{summary or 'no output'}"
+                )
+            stream, stat = sim.get_archive(RECORDING_PATH)
+            size = cast("int", cast("dict[str, object]", stat)["size"])
+            if size > max_bytes:
+                return RecordingFailed(
+                    f"the recording is {size} bytes, over {max_bytes}"
+                )
+            with tarfile.open(fileobj=io.BytesIO(b"".join(stream))) as tar:
+                member = tar.next()
+                content = tar.extractfile(member) if member is not None else None
+                video = content.read(max_bytes + 1) if content is not None else b""
+        except (DockerException, tarfile.TarError, *ENGINE_LOST) as error:
+            return RecordingFailed(f"the recording could not be read: {error}")
+        if not video:
+            return RecordingFailed("the recording is empty")
+        return Recording(video, summary, round(time.monotonic() - started, 1))
 
 
 class _StopRunError(Exception):

@@ -1,6 +1,7 @@
 """Run the S-04 sim: headless Gazebo, the ROS bridge, and robot_state_publisher.
 
-The CV_ROBOT environment variable picks the robot.
+The CV_ROBOT environment variable picks the robot. CV_RECORDING=1 adds a fixed
+overview camera and cv_recorder.py, which streams it to an mp4.
 """
 
 import os
@@ -20,6 +21,26 @@ ROBOTS = {
 }
 SCENARIO_DIR = Path(__file__).parent
 WORLD_XACRO = "/opt/ros/jazzy/share/nav2_minimal_tb3_sim/worlds/tb3_sandbox.sdf.xacro"
+# cv_recorder.py reads this camera over Gazebo transport. It has no ROS bridge
+# entry, so the ROS graph is the same with and without it.
+OVERVIEW_CAMERA = """
+    <model name="sdi_overview_camera">
+      <static>true</static>
+      <pose>-0.7 -1.8 2.8 0 1.12 1.5708</pose>
+      <link name="link">
+        <sensor name="overview" type="camera">
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>sdi/overview</topic>
+          <camera>
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>30</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+"""
 
 
 def robot_model() -> str:
@@ -31,8 +52,8 @@ def robot_model() -> str:
     return ROBOTS[name]
 
 
-def world_sdf(model: str, scenario: dict) -> str:
-    """Return tb3_sandbox with the robot and Joe's poster added."""
+def world_sdf(model: str, scenario: dict, *, overview: bool) -> str:
+    """Return tb3_sandbox with the robot, Joe's poster, and any overview camera."""
     world = subprocess.run(
         ["xacro", WORLD_XACRO, "headless:=true"],
         check=True,
@@ -70,22 +91,31 @@ def world_sdf(model: str, scenario: dict) -> str:
       </link>
     </model>
 """  # noqa: E501
+    if overview:
+        additions += OVERVIEW_CAMERA
     return world.replace("</world>", additions + "</world>", 1)
 
 
 def generate_launch_description() -> LaunchDescription:
     """Start the sim; the container exits when any of its processes does."""
     model = robot_model()
+    recording = os.environ.get("CV_RECORDING") == "1"
     scenario = yaml.safe_load((SCENARIO_DIR / "scenario.yaml").read_text())
     with tempfile.NamedTemporaryFile(
         "w", prefix="s-04-world-", suffix=".sdf", delete=False
     ) as world:
-        world.write(world_sdf(model, scenario))
+        world.write(world_sdf(model, scenario, overview=recording))
     urdf_path = Path(
         get_package_share_directory("turtlebot3_gazebo"), "urdf", f"{model}.urdf"
     )
+    # The recorder has no on_exit: a recording that fails never stops the sim.
+    recorder = ExecuteProcess(
+        cmd=["python3", str(SCENARIO_DIR / "cv_recorder.py"), "run"],
+        output="screen",
+    )
     return LaunchDescription(
         [
+            *([recorder] if recording else []),
             ExecuteProcess(
                 cmd=["gz", "sim", "-r", "-s", "-v", "2", world.name],
                 output="screen",

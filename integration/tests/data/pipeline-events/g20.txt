@@ -1,0 +1,12 @@
+# G20. execute-stage image_build. Spec 9.2, G20: no run-accepted and no
+# final line; the Stage's lines are as in G1, with Composition P
+# throughout. On stage-finished, ci_status is Image build's own status.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+image_build stage-started [P R P P] -
+image_build adapter-running [P R P P] -
+image_build checking-output [P R P P] -
+image_build publishing [P R P P] -
+image_build stage-finished [P S P P] -
+    ci_status == @image_build_status

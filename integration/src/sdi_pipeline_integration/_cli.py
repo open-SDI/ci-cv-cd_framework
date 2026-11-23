@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -38,6 +39,7 @@ from ._jenkins_pipeline import (
     write_stage_wiring,
 )
 from ._local_dispatch import dispatch_local
+from ._pipeline_event_check import check_events, load_golden
 from ._recovery_contracts import (
     load_installation_authority,
     validate_repository_authority,
@@ -117,6 +119,17 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     jenkinsfile_action.add_argument("--check", action="store_true")
     jenkinsfile_action.add_argument("--write", action="store_true")
     jenkinsfile.add_argument("--jenkinsfile", type=Path, required=True)
+    check = commands.add_parser(
+        "check-events",
+        help="check the pipeline events in a console against a golden or a real run",
+    )
+    check.add_argument("console", type=Path)
+    check_mode = check.add_mutually_exclusive_group(required=True)
+    check_mode.add_argument("--golden", metavar="NAME")
+    check_mode.add_argument("--real-run", action="store_true")
+    check.add_argument(
+        "--goldens", type=Path, default=Path("tests/data/pipeline-events")
+    )
     code_digest = commands.add_parser(
         "integration-code-digest",
         help="print the digest of the integration code an agent image bakes",
@@ -457,6 +470,27 @@ def _generate_proposals(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _check_events(console: Path, golden_name: str | None, goldens: Path) -> int:
+    if golden_name is not None and not re.fullmatch(r"[a-z0-9-]+", golden_name):
+        sys.stderr.write(f"sdi-integration: {golden_name!r} is not a golden name\n")
+        return 2
+    try:
+        golden = (
+            None if golden_name is None else load_golden(goldens / f"{golden_name}.txt")
+        )
+        data = console.read_bytes()
+    except (InputError, OSError, UnicodeDecodeError) as error:
+        sys.stderr.write(f"sdi-integration: {error}\n")
+        return 2
+    violations = check_events(data, golden)
+    for violation in violations:
+        sys.stdout.write(f"{violation.render(str(console))}\n")
+    if violations:
+        return 1
+    sys.stdout.write(f"{console}: pipeline events conform\n")
+    return 0
+
+
 def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
     argv: Sequence[str] | None = None,
 ) -> int:
@@ -508,6 +542,8 @@ def main(  # noqa: C901, PLR0911, PLR0912, PLR0915
             sys.stderr.write(f"sdi-integration: {error}\n")
             return 2
         return 0
+    if arguments.command == "check-events":
+        return _check_events(arguments.console, arguments.golden, arguments.goldens)
     if arguments.command == "integration-code-digest":
         try:
             digest = integration_code_digest(arguments.root)

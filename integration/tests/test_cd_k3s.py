@@ -267,6 +267,7 @@ def test_cd_a_bad_digest_fails_with_an_image_pull_detail(
     (record,) = run.evidence.placements
     assert isinstance(record, FailedPlacement)
     assert re.search(r"ImagePullBackOff|ErrImagePull", record.detail), record.detail
+    assert record.k8s_reason in {"ErrImagePull", "ImagePullBackOff"}, record
     _assert_detail_is_clean(record.detail)
     _assert_namespace_gone(cluster, stage.namespace)
 
@@ -293,6 +294,7 @@ def test_cd_a_crashing_image_fails_with_its_last_termination_reason(
     assert record.restart_count is not None
     assert record.restart_count > 0
     assert LAST_TERMINATION_SUFFIX.search(record.detail), record.detail
+    assert record.k8s_reason == "CrashLoopBackOff", record
     _assert_detail_is_clean(record.detail)
     _assert_namespace_gone(cluster, stage.namespace)
 

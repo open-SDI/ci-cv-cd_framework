@@ -11,6 +11,8 @@ from ._contracts import TargetExecutionProfile
 from ._cv_diagnostic import describe
 from ._cv_run import (
     ENGINE_LOST,
+    Finished,
+    Recording,
     RunRequest,
     SimBuildFailed,
     SimImage,
@@ -48,6 +50,7 @@ ROBOTS: dict[str, Robot] = {
     "turtlebot3-waffle": "waffle_pi",
     "turtlebot3-burger": "burger_cam",
 }
+RECORDING_SLOT = "sim_recording"
 
 
 @dataclass(frozen=True)
@@ -82,7 +85,13 @@ def validate(invocation: Invocation, *, engine_url: str) -> Verdict:
             ),
         )
     describe(invocation.diagnostic, judgement)
-    return Verdict(judgement.outcome, {"validation_evidence": evidence})
+    run = judgement.run
+    recording = run.recording if isinstance(run, Finished) else None
+    return Verdict(
+        judgement.outcome,
+        {"validation_evidence": evidence},
+        {RECORDING_SLOT: recording.video} if isinstance(recording, Recording) else {},
+    )
 
 
 def _errored(invocation: Invocation, error: CvError) -> Verdict:
@@ -172,6 +181,14 @@ def _runner(invocation: Invocation, robot: Robot, engine_url: str) -> Runner:
             placements,
             counting,
             invocation.deadline_monotonic,
+            recording_max_bytes=next(
+                (
+                    item.max_bytes
+                    for item in invocation.request.outputs
+                    if item.slot == RECORDING_SLOT
+                ),
+                None,
+            ),
         )
         try:
             return run_composition(request, engine_url)

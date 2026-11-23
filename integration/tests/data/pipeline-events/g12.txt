@@ -1,0 +1,18 @@
+# G12. Abort. Spec 9.2, G12. Representative: an abort during CV's
+# adapter-running. There is no stage-finished for CV and no final line.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+composition checking-output [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [S P P P] -
+image_build stage-started [S R P P] -
+image_build adapter-running [S R P P] -
+image_build checking-output [S R P P] -
+image_build publishing [S R P P] -
+image_build stage-finished [S S P P] -
+cv stage-started [S S R P] -
+cv adapter-running [S S R P] -

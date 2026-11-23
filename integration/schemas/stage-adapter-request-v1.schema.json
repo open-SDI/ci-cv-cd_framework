@@ -126,7 +126,8 @@
         "role": {
           "enum": [
             "domain_output",
-            "stage_evidence"
+            "stage_evidence",
+            "stage_attachment"
           ],
           "title": "Role",
           "type": "string"

@@ -62,6 +62,8 @@ SUCCEEDED = Succeeded()
 class Verdict:
     outcome: Outcome | Succeeded
     documents: Mapping[str, BaseModel] = field(default_factory=dict[str, BaseModel])
+    # Raw bytes for attachment slots, such as a video; never parsed.
+    attachments: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
 
 
 class Diagnostic:
@@ -267,12 +269,24 @@ def _read_inputs(request: AdapterRequest, input_root: Path) -> dict[str, bytes]:
 def _publish(output_root: Path, invocation: Invocation, verdict: Verdict) -> None:
     request = invocation.request
     outcome = verdict.outcome
-    outputs = {item.slot: item.path for item in request.outputs}
-    if not verdict.documents.keys() <= outputs.keys():
+    outputs = {item.slot: item for item in request.outputs}
+    documents = {
+        slot
+        for slot in verdict.documents
+        if slot in outputs and outputs[slot].role != "stage_attachment"
+    }
+    attachments = {
+        slot
+        for slot in verdict.attachments
+        if slot in outputs and outputs[slot].role == "stage_attachment"
+    }
+    if documents != set(verdict.documents) or attachments != set(verdict.attachments):
         msg = "the adapter verdict names an output the request does not declare"
         raise InputError(msg)
     for slot, document in verdict.documents.items():
-        atomic_write(output_root, outputs[slot], encode_document(document))
+        atomic_write(output_root, outputs[slot].path, encode_document(document))
+    for slot, content in verdict.attachments.items():
+        atomic_write(output_root, outputs[slot].path, content)
     diagnostic, truncated = invocation.diagnostic.render(outcome)
     atomic_write(output_root, request.diagnostic.path, diagnostic)
     response = AdapterResponse.model_validate(
@@ -294,7 +308,7 @@ def _publish(output_root: Path, invocation: Invocation, verdict: Verdict) -> Non
                 }
             ),
             "consumed_inputs": [item.slot for item in request.inputs],
-            "produced_outputs": list(verdict.documents),
+            "produced_outputs": [*verdict.documents, *verdict.attachments],
             "diagnostic": {"present": True, "truncated": truncated},
         },
         strict=True,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._bundle import assemble_bundle_staging
 from ._git_input import GitRepository
+from ._pipeline_event_printer import RUN_ACCEPTED, RUN_FINISHED, EventPrinter
 from ._run_input import identify_committed_run
 from ._stage_registry import RUN_LIMITS, STAGES, StageName
 from ._stage_runtime import (
@@ -19,6 +20,7 @@ from ._stage_runtime import (
     StageInputSource,
     SuppliedInputs,
     check_key_bindings,
+    committed_stage_sources,
     composition_key_names,
     execute_identified_stage,
     load_stage_adapter,
@@ -55,6 +57,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
     run_request_path: str,
     bundle_root: Path,
     supplied: SuppliedInputs,
+    run_deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """Execute and atomically publish one complete local four-Stage run."""
     run_started_at = datetime.now(UTC)
@@ -77,10 +80,15 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
     descriptor_modes = _descriptor_modes(
         repository, composition_key_names(repository, supplied)
     )
+    events = EventPrinter.for_run(
+        identified, committed_stage_sources(repository, identified), scope="run"
+    )
     run_deadline = (
         run_started_monotonic
         + RUN_LIMITS.run_seconds
         - RUN_LIMITS.finalization_reserve_seconds
+        if run_deadline_monotonic is None
+        else run_deadline_monotonic
     )
 
     bundle_root.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +121,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
         executions: list[StageExecution] = []
         outputs: dict[str, StageInputSource] = {}
         blocker: StageExecution | None = None
+        events.emit(RUN_ACCEPTED)
         for stage in STAGES:
             if blocker is None:
                 execution = execute_identified_stage(
@@ -121,6 +130,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
                     descriptor_path=STAGES[stage].local_descriptor,
                     attempt_root=work_root / stage,
                     available_inputs=granted_inputs[stage] | outputs,
+                    events=events.with_executions(executions),
                     deadline_monotonic=run_deadline,
                 )
             else:
@@ -151,6 +161,7 @@ def dispatch_local(  # noqa: PLR0913, PLR0915
             bundle_staging=bundle_staging,
         )
         bundle_staging.replace(bundle_root)
+        events.with_executions(executions).emit(RUN_FINISHED)
         return result
     finally:
         if work_root is not None:

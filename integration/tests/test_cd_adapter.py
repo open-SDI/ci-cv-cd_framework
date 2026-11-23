@@ -28,6 +28,7 @@ from sdi_pipeline_integration._cd_adapter import (
     deploy,
 )
 from sdi_pipeline_integration._cd_deployment import CLUSTER_HOSTS, manifest_yaml
+from sdi_pipeline_integration._domain_contracts import FailedPlacement
 from sdi_pipeline_integration._stage_registry import STAGES
 
 from ._cd_stage import CdStage, built
@@ -237,6 +238,9 @@ def test_cd_the_adapter_deadline_is_the_invocation_deadline_less_the_margin(
         assert {getattr(item, "detail", None) for item in run.evidence.placements} == {
             WORK_LIMIT_DETAIL
         }
+        assert {
+            getattr(item, "k8s_reason", None) for item in run.evidence.placements
+        } == {"other"}
         assert f"short of the {settle} s settle window" in run.diagnostic
     assert fake.calls()[-1]["argv"][7] == "delete"
 
@@ -316,16 +320,45 @@ def test_cd_a_pod_still_starting_at_the_deadline_fails_on_the_work_limit(
     assert run.evidence is not None
     assert run.evidence.domain_outcome == "failed"
     assert [
-        (item.service_id, item.status, getattr(item, "detail", None))
+        (
+            item.service_id,
+            item.status,
+            getattr(item, "detail", None),
+            getattr(item, "k8s_reason", None),
+        )
         for item in run.evidence.placements
     ] == [
-        ("cd-waffle", "failed", "ErrImagePull"),
-        ("cd-xycar", "failed", WORK_LIMIT_DETAIL),
+        ("cd-waffle", "failed", "ErrImagePull", "ErrImagePull"),
+        ("cd-xycar", "failed", WORK_LIMIT_DETAIL, "other"),
     ]
     assert "the work limit ran out in the wait for Running pods: cd-xycar" in (
         run.diagnostic
     )
     assert fake.calls()[-1]["argv"][7] == "delete"
+
+
+def test_cd_the_work_limit_cut_replaces_a_kubernetes_reason_with_other(
+    tmp_path: Path, fake: _FakeCluster
+) -> None:
+    pods = _pods({"cd-xycar": "ContainerCreating"})
+    (restarted,) = pods["items"][1]["status"]["containerStatuses"]
+    restarted["restartCount"] = 1
+    fake.answer(pods=pods)
+    stage = _stage(tmp_path, work_limit_seconds=TEARDOWN_MARGIN_SECONDS + 3)
+
+    run = stage.run(
+        serve("cd", partial(deploy, cluster=fake.cluster(settle_seconds=0)))
+    )
+
+    assert run.evidence is not None
+    assert [
+        (item.service_id, getattr(item, "detail", None), item.k8s_reason)
+        for item in run.evidence.placements
+        if isinstance(item, FailedPlacement)
+    ] == [
+        ("cd-waffle", WORK_LIMIT_DETAIL, "other"),
+        ("cd-xycar", WORK_LIMIT_DETAIL, "other"),
+    ]
 
 
 @pytest.mark.parametrize(

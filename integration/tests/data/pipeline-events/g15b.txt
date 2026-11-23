@@ -1,0 +1,14 @@
+# G15b. Fixture run with the shipped local overrides (dispatch-local).
+# Spec 9.2, G15b: Composition is implemented, so the fixture Image build is
+# skipped before it starts.
+# Runtime (R) lines only, exact and in order; adapter lines and heartbeats
+# are filtered out by the catalogue's emitter. An indented line asserts an
+# extra field of the line above it.
+RUN run-accepted [P P P P] -
+composition stage-started [R P P P] -
+composition adapter-running [R P P P] -
+composition checking-output [R P P P] -
+composition publishing [R P P P] -
+composition stage-finished [S P P P] -
+image_build stage-finished [S K K K] sdi.dependency.implemented-evidence
+RUN run-finished final [S K K K] sdi.dependency.implemented-evidence

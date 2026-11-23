@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ._adapter_kit import Outcome, block_cost
-from ._cv_run import ContainerState, Finished
+from ._cv_run import ContainerState, Finished, Recording, RecordingFailed
 from ._cv_verdict import MACHINERY_NODES, CvError, Judgement, topic_constant_drift
 from ._domain_contracts import (
     NonParticipatingService,
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from ._adapter_kit import Diagnostic, Succeeded
     from ._cv_result import GraphTopic, ScenarioResult
+    from ._cv_run import RunOutcome
     from ._domain_contracts import ServiceParticipation
 
 GRAPH_MAX_BYTES = 8192
@@ -31,9 +32,7 @@ def describe(diagnostic: Diagnostic, result: Judgement | CvError) -> None:
     if isinstance(result, CvError):
         diagnostic.line(f"error: {result.code}: {_safe(result.detail)}")
     run = result.run
-    if run is not None:
-        for phase, seconds in run.phases.items():
-            diagnostic.line(f"phase {phase}: {seconds} s")
+    _run_lines(diagnostic, run)
     scenario = run.result if isinstance(run, Finished) else None
     if scenario is not None:
         _mission_lines(diagnostic, scenario)
@@ -85,6 +84,25 @@ def water_fill(room: int, sizes: Sequence[int]) -> list[int]:
 
 def _safe(text: str) -> str:
     return redact_line(text) or UNRECORDED
+
+
+def _run_lines(diagnostic: Diagnostic, run: RunOutcome | None) -> None:
+    if run is None:
+        return
+    for phase, seconds in run.phases.items():
+        diagnostic.line(f"phase {phase}: {seconds} s")
+    match run:
+        case Finished(recording=Recording(video=video, summary=summary) as kept):
+            diagnostic.line(
+                _safe(
+                    f"recording: sim-recording.mp4 {len(video)} bytes, {summary}, "
+                    f"stopped in {kept.stop_seconds} s"
+                )
+            )
+        case Finished(recording=RecordingFailed(detail=detail)):
+            diagnostic.line(_safe(f"recording: none: {detail}"))
+        case _:
+            pass
 
 
 def _mission_lines(diagnostic: Diagnostic, scenario: ScenarioResult) -> None:
